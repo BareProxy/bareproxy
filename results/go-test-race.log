@@ -1,0 +1,3 @@
+?   	bareproxy/cmd/bareproxy	[no test files]
+ok  	bareproxy/internal/bp	1.118s
+?   	bareproxy/tools/testapi	[no test files]
