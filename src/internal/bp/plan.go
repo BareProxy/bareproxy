@@ -167,8 +167,12 @@ func noListener(port int) string { return fmt.Sprintf("nothing listens on port %
 
 func routeEffect(s *Site, r *Route) string {
 	if r == nil {
+		// The 404 page comes from the files rule that GET for its path
+		// reaches (Site.ErrorPage); without one a plain 404 is sent.
 		if s.Err404 != "" {
-			return "404, no rule, error page " + s.Err404
+			if er, _ := s.MatchRoute(http.MethodGet, s.Err404, nil); er != nil && er.Act.Kind == "files" {
+				return "404, no rule, error page " + s.Err404 + " from " + er.Act.Dir
+			}
 		}
 		return "404, no rule"
 	}
@@ -1296,9 +1300,9 @@ func (pl *planner) siteChanges() []string {
 				continue
 			}
 			seen[k] = true
-			name := "site " + b.Name
-			if a.Name != b.Name {
-				name += " (was site " + a.Name + ")"
+			name := "site " + siteLabel(b)
+			if siteLabel(a) != siteLabel(b) {
+				name += " (was site " + siteLabel(a) + ")"
 			}
 			tls := func(s *Site) string {
 				switch {
@@ -1332,6 +1336,15 @@ func (pl *planner) siteChanges() []string {
 		}
 	}
 	return out
+}
+
+// siteLabel names a site by its first address as written, so sites with
+// the same host on different ports stay apart.
+func siteLabel(s *Site) string {
+	if len(s.Addrs) > 0 {
+		return s.Addrs[0].Text
+	}
+	return s.Name
 }
 
 func sizeText(n int64) string {
