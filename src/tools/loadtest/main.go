@@ -147,6 +147,7 @@ type stats struct {
 	// Connections: opened, reset (ECONNRESET or EPIPE on an open connection)
 	// and closed by the server (EOF while we hadn't closed it).
 	opened, reset, closedBySrv atomic.Int64
+	lastOpened                 atomic.Int64 // nanoseconds after the start of the load
 
 	mu       sync.Mutex
 	answered int64
@@ -281,6 +282,7 @@ func (l *loader) dial(s *stats, addr string) (*countedConn, error) {
 		return nil, err
 	}
 	s.opened.Add(1)
+	s.lastOpened.Store(int64(time.Since(l.start)))
 	return &countedConn{Conn: c, s: s}, nil
 }
 
@@ -572,6 +574,7 @@ type kindSummary struct {
 	Failed         int64            `json:"failed"`
 	Failures       map[string]int64 `json:"failures,omitempty"`
 	ConnsOpened    int64            `json:"conns_opened"`
+	LastOpenedS    float64          `json:"last_conn_opened_s"`
 	ConnsReset     int64            `json:"conns_reset"`
 	ConnsClosedSrv int64            `json:"conns_closed_by_server"`
 	Lost           int64            `json:"ws_messages_lost,omitempty"`
@@ -666,7 +669,7 @@ loop:
 		s.mu.Lock()
 		slices.Sort(s.lat)
 		k := kindSummary{TargetRate: math.Round(s.rate*10) / 10, Sent: s.sent.Load(), Answered: s.answered, Failed: sumValues(s.fails),
-			Failures: s.fails, ConnsOpened: s.opened.Load(), ConnsReset: s.reset.Load(), ConnsClosedSrv: s.closedBySrv.Load(), Lost: s.lost,
+			Failures: s.fails, ConnsOpened: s.opened.Load(), LastOpenedS: math.Round(float64(s.lastOpened.Load())/1e7) / 100, ConnsReset: s.reset.Load(), ConnsClosedSrv: s.closedBySrv.Load(), Lost: s.lost,
 			P50ms: ms(percentile(s.lat, 0.50)), P99ms: ms(percentile(s.lat, 0.99))}
 		if len(s.lat) > 0 {
 			k.MaxMs = ms(s.lat[len(s.lat)-1])
@@ -708,10 +711,10 @@ func sumValues(m map[string]int64) (n int64) {
 }
 
 func report(out io.Writer, all []*stats, sum summary) {
-	fmt.Fprintf(out, "\n%-6s %9s %9s %7s %6s %6s %7s %8s %8s %8s\n", "kind", "sent", "answered", "failed", "conns", "reset", "closed", "p50 ms", "p99 ms", "max ms")
+	fmt.Fprintf(out, "\n%-6s %9s %9s %7s %6s %9s %6s %7s %8s %8s %8s\n", "kind", "sent", "answered", "failed", "conns", "last open", "reset", "closed", "p50 ms", "p99 ms", "max ms")
 	for _, s := range all {
 		k := sum.Kinds[s.name]
-		fmt.Fprintf(out, "%-6s %9d %9d %7d %6d %6d %7d %8.2f %8.2f %8.2f\n", s.name, k.Sent, k.Answered, k.Failed, k.ConnsOpened, k.ConnsReset, k.ConnsClosedSrv, k.P50ms, k.P99ms, k.MaxMs)
+		fmt.Fprintf(out, "%-6s %9d %9d %7d %6d %8.1fs %6d %7d %8.2f %8.2f %8.2f\n", s.name, k.Sent, k.Answered, k.Failed, k.ConnsOpened, k.LastOpenedS, k.ConnsReset, k.ConnsClosedSrv, k.P50ms, k.P99ms, k.MaxMs)
 	}
 	if ws, ok := sum.Kinds["ws"]; ok {
 		fmt.Fprintf(out, "WebSocket messages: %d sent, %d echoed, %d lost\n", ws.Sent, ws.Answered, ws.Lost)
