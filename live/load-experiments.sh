@@ -12,10 +12,11 @@
 # Usage: live/load-experiments.sh [MODE]   (no MODE runs all five, one after another)
 # Needs Go (to build), curl and python3. Each run takes about 30 seconds.
 set -u
-cd "$(dirname "$0")"
+SELF=$(readlink -f "$0")
+cd "$(dirname "$SELF")"
 MODE=${1:-all}
 if [ "$MODE" = all ]; then
-  for m in drain newpool twostep health swap; do "$0" "$m"; done
+  for m in drain newpool twostep health swap; do "$SELF" "$m"; done
   exit 0
 fi
 (cd ../src &&
