@@ -66,7 +66,7 @@ func (rt *Runtime) record(rec *Record) {
 	if rt.Cfg.TraceMem == 0 && (rt.Trace == nil || rt.Trace.Spec == "off") && rt.Mem.tailers.Load() == 0 {
 		return
 	}
-	if js, err := recordLine(rec); err == nil {
+	if js, err := RecordJSON(rec); err == nil {
 		rt.Trace.WriteLine(js)
 		rt.Mem.Add(rec, js, rt.Cfg.TraceMem)
 	}

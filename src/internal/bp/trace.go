@@ -9,13 +9,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"math"
 	"net/http"
 	"os"
 	"path"
 	"path/filepath"
-	"reflect"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -134,91 +131,6 @@ func RecordJSON(v any) ([]byte, error) {
 		return nil, err
 	}
 	return bytes.TrimSuffix(b.Bytes(), []byte("\n")), nil
-}
-
-// recordLine is RecordJSON for the record of every request, about four times
-// faster. It writes the fields the struct tags name, in order, as
-// encoding/json does; a string with anything but printable ASCII is escaped
-// by encoding/json, and a record holding anything else unusual is handed to
-// it whole, so the bytes are always the same. The line is a copy of its own
-// size, since the memory ring keeps it.
-func recordLine(rec *Record) ([]byte, error) {
-	buf := lineBufs.Get().(*[]byte)
-	defer lineBufs.Put(buf)
-	b, ok := appendJSON((*buf)[:0], reflect.ValueOf(rec).Elem())
-	if *buf = b; ok {
-		return bytes.Clone(b), nil
-	}
-	return RecordJSON(rec)
-}
-
-var lineBufs = sync.Pool{New: func() any { return new([]byte) }}
-
-type jsonField struct {
-	index int
-	key   string // "name":
-	omit  bool   // omitempty
-}
-
-var jsonFields sync.Map // reflect.Type -> []jsonField
-
-func appendJSON(b []byte, v reflect.Value) ([]byte, bool) {
-	ok := true
-	switch v.Kind() {
-	case reflect.Struct:
-		fs, found := jsonFields.Load(v.Type())
-		if !found {
-			var list []jsonField
-			for i := range v.NumField() {
-				name, opt, _ := strings.Cut(v.Type().Field(i).Tag.Get("json"), ",")
-				list = append(list, jsonField{i, `"` + name + `":`, opt == "omitempty"})
-			}
-			fs, _ = jsonFields.LoadOrStore(v.Type(), list)
-		}
-		b = append(b, '{')
-		sep := ""
-		for _, f := range fs.([]jsonField) {
-			fv := v.Field(f.index)
-			if f.omit && (fv.IsZero() || fv.Kind() == reflect.Slice && fv.Len() == 0 || fv.Kind() == reflect.Float64 && fv.Float() == 0) {
-				continue
-			}
-			if b, ok = appendJSON(append(append(b, sep...), f.key...), fv); !ok {
-				return b, false
-			}
-			sep = ","
-		}
-		return append(b, '}'), true
-	case reflect.Slice:
-		if v.IsNil() {
-			return append(b, "null"...), true
-		}
-		b = append(b, '[')
-		for i := range v.Len() {
-			if i > 0 {
-				b = append(b, ',')
-			}
-			if b, ok = appendJSON(b, v.Index(i)); !ok {
-				return b, false
-			}
-		}
-		return append(b, ']'), true
-	case reflect.String:
-		s := v.String()
-		for i := 0; i < len(s); i++ {
-			if c := s[i]; c < 0x20 || c > 0x7e || c == '"' || c == '\\' {
-				js, err := RecordJSON(s)
-				return append(b, js...), err == nil
-			}
-		}
-		return append(append(append(b, '"'), s...), '"'), true
-	case reflect.Int, reflect.Int64:
-		return strconv.AppendInt(b, v.Int(), 10), true
-	case reflect.Float64:
-		if f := math.Abs(v.Float()); f == 0 || f >= 1e-6 && f < 1e21 { // encoding/json writes these without an exponent
-			return strconv.AppendFloat(b, v.Float(), 'f', -1, 64), true
-		}
-	}
-	return b, false
 }
 
 // WriteLine writes one record's JSON as a line. If the line would take the
