@@ -167,8 +167,12 @@ func noListener(port int) string { return fmt.Sprintf("nothing listens on port %
 
 func routeEffect(s *Site, r *Route) string {
 	if r == nil {
+		// The 404 page comes from the files rule that GET for its path
+		// reaches (Site.ErrorPage); without one a plain 404 is sent.
 		if s.Err404 != "" {
-			return "404, no rule, error page " + s.Err404
+			if er, _ := s.MatchRoute(http.MethodGet, s.Err404, nil); er != nil && er.Act.Kind == "files" {
+				return "404, no rule, error page " + s.Err404 + " from " + er.Act.Dir
+			}
 		}
 		return "404, no rule"
 	}

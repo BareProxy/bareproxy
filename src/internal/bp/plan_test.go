@@ -420,7 +420,7 @@ pool api-v2
 	wantLine(t, p, where, "GET and HEAD, every other path (not /api and below)",
 		"files "+filepath.Join(dir, "release-41"), "files "+filepath.Join(dir, "release-42"))
 	wantLine(t, p, where, "any method except GET and HEAD, every other path (not /api and below)",
-		"files "+filepath.Join(dir, "release-41"), "404, no rule, error page /404.html")
+		"files "+filepath.Join(dir, "release-41"), "404, no rule, error page /404.html from "+filepath.Join(dir, "release-42"))
 	if len(p.Changes) != 3 {
 		t.Errorf("want 3 changes, got:\n%s", p.Text())
 	}
