@@ -28,6 +28,7 @@ type TraceMem struct {
 	evicted int64 // records pushed out so far
 	events  []Event
 	subs    map[*Tail]bool
+	tailers atomic.Int32 // len(subs), readable without the lock
 	started time.Time
 }
 
@@ -57,8 +58,13 @@ type tailItem struct {
 	js  []byte
 }
 
-// record writes a finished record to the trace log and to memory.
+// record writes a finished record to the trace log and to memory. With the
+// log off, no ring and nobody tailing, nothing reads the record, so it isn't
+// even turned into JSON.
 func (rt *Runtime) record(rec *Record) {
+	if rt.Cfg.TraceMem == 0 && (rt.Trace == nil || rt.Trace.Spec == "off") && rt.Mem.tailers.Load() == 0 {
+		return
+	}
 	if js, err := RecordJSON(rec); err == nil {
 		rt.Trace.WriteLine(js)
 		rt.Mem.Add(rec, js, rt.Cfg.TraceMem)
@@ -196,6 +202,7 @@ func (m *TraceMem) Subscribe() *Tail {
 		m.subs = map[*Tail]bool{}
 	}
 	m.subs[t] = true
+	m.tailers.Add(1)
 	m.mu.Unlock()
 	return t
 }
@@ -203,7 +210,10 @@ func (m *TraceMem) Subscribe() *Tail {
 // Unsubscribe ends a feed.
 func (m *TraceMem) Unsubscribe(t *Tail) {
 	m.mu.Lock()
-	delete(m.subs, t)
+	if m.subs[t] {
+		delete(m.subs, t)
+		m.tailers.Add(-1)
+	}
 	m.mu.Unlock()
 }
 

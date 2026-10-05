@@ -1167,3 +1167,35 @@ func TestTraceReloadAppliesNewRotationToTheOpenLog(t *testing.T) {
 		t.Errorf("the ring holds %d records, want 40", st.Records)
 	}
 }
+
+func TestTraceRecordCostsNothingWhenNothingReadsIt(t *testing.T) {
+	rt := &Runtime{Cfg: &Config{TraceMem: 0}, Mem: newTraceMem()}
+	rt.Trace, _ = OpenTraceLog("off")
+	rec := traceBenchRecord()
+	if n := testing.AllocsPerRun(100, func() { rt.record(rec) }); n != 0 {
+		t.Errorf("with the log off and no ring, record allocates %v times a request; it should do nothing", n)
+	}
+	tl := rt.Mem.Subscribe() // someone tailing makes it worth encoding
+	rt.record(rec)
+	select {
+	case it := <-tl.C:
+		if it.rec != rec || len(it.js) == 0 {
+			t.Errorf("the tail got %+v", it)
+		}
+	default:
+		t.Errorf("a tail got nothing while the log and ring were off")
+	}
+	rt.Mem.Unsubscribe(tl)
+	rt.Mem.Unsubscribe(tl) // twice is harmless
+	if n := rt.Mem.tailers.Load(); n != 0 {
+		t.Errorf("%d tailers counted after both left", n)
+	}
+	if n := testing.AllocsPerRun(100, func() { rt.record(rec) }); n != 0 {
+		t.Errorf("after the tail left, record allocates %v times again", n)
+	}
+	rt.Cfg.TraceMem = 1 << 20 // the ring on
+	rt.record(rec)
+	if st := rt.Mem.Stats(); st.Records != 1 {
+		t.Errorf("with the ring on, %d records held", st.Records)
+	}
+}
