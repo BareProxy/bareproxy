@@ -141,8 +141,8 @@ func hasToken(values []string, token string) bool {
 // request. A tunnel to any other protocol would carry requests that no rule
 // of ours ever sees.
 func websocketOnly(h http.Header) {
-	if isWebSocketUpgrade(h) {
-		return
+	if h["Connection"] == nil && h["Upgrade"] == nil && h["Http2-Settings"] == nil || isWebSocketUpgrade(h) {
+		return // nothing to strip (the server's header keys are in canonical form)
 	}
 	h.Del("Upgrade")
 	h.Del("HTTP2-Settings")

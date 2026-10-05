@@ -108,39 +108,60 @@ type RuleCheck struct {
 	Why   string
 }
 
-// MatchRoute tries a site's rules from the top and returns the first match.
+// MatchRoute tries a site's rules from the top and returns the first match,
+// with a note for each rule tried, as explain shows them.
 func (s *Site) MatchRoute(method, path string, h http.Header) (*Route, []RuleCheck) {
 	var checks []RuleCheck
+	r := s.match(method, path, h, &checks)
+	return r, checks
+}
+
+// match is MatchRoute's loop. The server passes nil notes: the same code,
+// without building any text.
+func (s *Site) match(method, path string, h http.Header, notes *[]RuleCheck) *Route {
 	for _, r := range s.Routes {
-		ok, why := r.matches(method, path, h)
-		checks = append(checks, RuleCheck{r, ok, why})
+		ok, why := r.test(method, path, h, notes != nil)
+		if notes != nil {
+			*notes = append(*notes, RuleCheck{r, ok, why})
+		}
 		if ok {
-			return r, checks
+			return r
 		}
 	}
-	return nil, checks
+	return nil
 }
 
 func (r *Route) matches(method, path string, h http.Header) (bool, string) {
+	return r.test(method, path, h, true)
+}
+
+// test says whether a rule takes a request and, with notes on, why not.
+func (r *Route) test(method, path string, h http.Header, notes bool) (bool, string) {
+	no := func(why ...string) (bool, string) {
+		if !notes {
+			return false, ""
+		}
+		return false, strings.Join(why, "")
+	}
 	switch {
 	case r.Prefix && r.Path == "":
 	case r.Prefix:
 		if path != r.Path && !strings.HasPrefix(path, r.Path+"/") {
-			return false, "path is not " + r.Path + " or below"
+			return no("path is not ", r.Path, " or below")
 		}
 	case path != r.Path:
-		return false, "path is not " + r.Path
+		return no("path is not ", r.Path)
 	}
 	if len(r.Methods) > 0 && !methodAllowed(r.Methods, method) {
-		return false, "method is not " + strings.Join(r.Methods, ",")
+		return no("method is not ", strings.Join(r.Methods, ","))
 	}
 	for _, c := range r.Headers {
 		vals := h.Values(c.Name)
 		if len(vals) == 0 {
-			return false, "no " + c.Name + " header"
+			return no("no ", c.Name, " header")
 		}
 		if c.HasValue && !slices.Contains(vals, c.Value) {
-			return false, c.Name + " is not " + c.Value
+			return no(c.Name, " is not ", c.Value)
 		}
 	}
 	return true, "match"

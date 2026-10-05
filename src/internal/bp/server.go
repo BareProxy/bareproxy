@@ -397,7 +397,7 @@ func (s *Server) serve(w *respWriter, r *http.Request, rt *Runtime, port int, re
 	if norm != rec.Path {
 		rec.NormPath = norm
 	}
-	route, _ := site.MatchRoute(r.Method, norm, r.Header)
+	route := site.match(r.Method, norm, r.Header, nil)
 	if route == nil {
 		rec.Outcome, rec.Reason = "no_route", "no rule matches"
 		s.notFound(w, r, rec, site)
