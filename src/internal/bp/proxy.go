@@ -140,6 +140,7 @@ func (s *Server) proxy(w *respWriter, r *http.Request, rt *Runtime, site *Site, 
 			pr.SetXForwarded()
 			pr.Out.Header.Del("Forwarded")
 			pr.Out.Header.Set("BareProxy-Id", rec.ID)
+			setTraceparent(pr.Out.Header, pr.In.Header, rec)
 		},
 		Transport: &poolTransport{pool: pool, rec: rec},
 		ModifyResponse: func(resp *http.Response) error {

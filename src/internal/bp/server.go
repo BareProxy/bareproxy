@@ -34,13 +34,17 @@ type Runtime struct {
 	Pools    map[string]*Pool
 	backends map[string]*Backend
 	Trace    *TraceLog
+	Mem      *TraceMem // recent records and events, inherited across reloads
 }
 
 // NewRuntime builds live pools for a config. Backends that old already has
 // are reused, so their health and counters carry over a reload. With checks
 // off (for explain without a server) it starts nothing and opens no log.
 func NewRuntime(c *Config, old *Runtime, version int, logf func(string, ...any), checks bool) (*Runtime, error) {
-	rt := &Runtime{Cfg: c, Version: version, Pools: map[string]*Pool{}, backends: map[string]*Backend{}}
+	rt := &Runtime{Cfg: c, Version: version, Pools: map[string]*Pool{}, backends: map[string]*Backend{}, Mem: newTraceMem()}
+	if old != nil && old.Mem != nil {
+		rt.Mem = old.Mem
+	}
 	if old != nil && old.Trace != nil && old.Trace.Spec == c.TraceLog {
 		rt.Trace = old.Trace
 	} else if checks {
@@ -49,6 +53,9 @@ func NewRuntime(c *Config, old *Runtime, version int, logf func(string, ...any),
 			return nil, fmt.Errorf("can't open the trace log: %v", err)
 		}
 		rt.Trace = t
+	}
+	if rt.Trace != nil {
+		rt.Trace.SetRotation(c.TraceSize, c.TraceCount)
 	}
 	for _, name := range c.PoolOrder {
 		ps := c.Pools[name]
@@ -64,9 +71,12 @@ func NewRuntime(c *Config, old *Runtime, version int, logf func(string, ...any),
 				if ps.Health != nil {
 					b.state = "unknown"
 				}
-				if logf != nil {
-					pname := name
-					b.events = func(s string) { logf("pool %s: %s", pname, s) }
+				pname := name
+				b.events = func(s string) {
+					if logf != nil {
+						logf("pool %s: %s", pname, s)
+					}
+					rt.Mem.Event("backend", "pool "+pname+": "+s)
 				}
 				if checks && ps.Health != nil {
 					ctx, cancel := context.WithCancel(context.Background())
@@ -283,6 +293,7 @@ func (s *Server) Handler(port int, isTLS bool) http.Handler {
 		}
 		rec := &Record{ID: newID(), Time: start.UTC().Format("2006-01-02T15:04:05.000Z"), Config: rt.Version,
 			Client: clientIP(r.RemoteAddr), Proto: r.Proto, Method: r.Method, Scheme: scheme, Host: r.Host}
+		rec.TraceID, _ = requestTrace(r.Header)
 		if r.TLS != nil {
 			rec.TLS = strings.TrimPrefix(tls.VersionName(r.TLS.Version), "TLS ")
 			rec.SNI = r.TLS.ServerName
@@ -308,7 +319,7 @@ func (s *Server) Handler(port int, isTLS bool) http.Handler {
 				rec.BytesIn = body.n
 			}
 			rec.MS = msSince(start)
-			rt.Trace.Write(rec)
+			rt.record(rec)
 		}
 		defer func() {
 			if p := recover(); p != nil {

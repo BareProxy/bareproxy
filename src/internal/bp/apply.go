@@ -134,7 +134,7 @@ func Start(file string) (*Server, error) {
 	}
 	s.mu.Lock()
 	s.cs.mismatch = fmt.Sprintf("%s has errors, so version %d from the history is running; fix the file and apply it", abs, n)
-	s.logf("%s", s.cs.mismatch)
+	s.logEvent("start", "%s", s.cs.mismatch)
 	s.mu.Unlock()
 	return s, nil
 }
@@ -157,7 +157,7 @@ func (s *Server) Reload() {
 	if err != nil {
 		s.mu.Lock()
 		s.cs.mismatch = fmt.Sprintf("%s can't go live (%v), so version %d keeps running", s.file, err, s.Current().Version)
-		s.logf("reload: %s", s.cs.mismatch)
+		s.logEvent("reload", "reload: %s", s.cs.mismatch)
 		s.mu.Unlock()
 	}
 }
@@ -265,6 +265,7 @@ func (s *Server) apply(ch Change) (*Applied, error) {
 	}
 	conns := trackConns(rt)
 	s.rt.Store(rt)
+	rt.certEvents(old)
 	s.switchListeners(c, opened)
 	if old != nil {
 		retire(old, rt)
@@ -292,10 +293,14 @@ func (s *Server) apply(ch Change) (*Applied, error) {
 	if ch.User != "" {
 		how += " by " + ch.User
 	}
+	kind := ch.How
+	if kind == "startup" {
+		kind = "start"
+	}
 	if unchanged {
-		s.logf("version %d reloaded, config unchanged (%s)", res.Version, how)
+		s.logEvent(kind, "version %d reloaded, config unchanged (%s)", res.Version, how)
 	} else {
-		s.logf("version %d running (%s): %s", res.Version, how, Summary(c))
+		s.logEvent(kind, "version %d running (%s): %s", res.Version, how, Summary(c))
 	}
 	return res, nil
 }
