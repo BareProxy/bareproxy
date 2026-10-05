@@ -212,9 +212,7 @@ func TestPlanIDMismatchRefused(t *testing.T) {
 	}
 	// Once another config goes live, a plan made before it is out of date.
 	mustApply(t, l.s, v3)
-	if fresh := planFor(v2); fresh == id {
-		t.Log("plan IDs don't depend on the configs yet (plan.go stub), so the stale plan check is skipped")
-	} else if _, err := l.s.Apply(Change{Text: v2, How: "apply", PlanID: id}); !errors.As(err, &pe) {
+	if _, err := l.s.Apply(Change{Text: v2, How: "apply", PlanID: id}); !errors.As(err, &pe) {
 		t.Fatalf("apply with a stale plan: %v, want a refusal", err)
 	}
 	l.expect(t, 2, "v3")
