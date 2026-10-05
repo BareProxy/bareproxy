@@ -106,10 +106,8 @@ func Start(file string) (*Server, error) {
 	for _, p := range probs {
 		s.logf("%s", p)
 	}
-	if h, err := openHistory(stateDir(c)); err != nil {
+	if s.cs.hist, err = openHistory(stateDir(c)); err != nil {
 		s.logf("no config history: %v (set state in global to a folder BareProxy can write)", err)
-	} else {
-		s.cs.hist = h
 	}
 	if c != nil {
 		c.Close()
@@ -121,7 +119,7 @@ func Start(file string) (*Server, error) {
 		}
 		return s, nil
 	}
-	if s.cs.hist == nil || s.cs.hist.last() == 0 {
+	if s.cs.hist.last() == 0 {
 		return nil, errors.New("the config has errors, so BareProxy didn't start")
 	}
 	n := s.cs.hist.last()
@@ -243,17 +241,11 @@ func (s *Server) apply(ch Change) (*Applied, error) {
 		res.Version, res.Unchanged = old.Version, true
 	case ch.version > 0:
 		res.Version = ch.version
-	case old == nil && h != nil && h.last() > 0 && h.lastText() == ch.Text:
+	case old == nil && h.last() > 0 && h.lastText() == ch.Text:
 		res.Version = h.last()
 	default:
 		save = true
-		res.Version = 1
-		if old != nil {
-			res.Version = old.Version + 1
-		}
-		if h != nil && h.last() >= res.Version {
-			res.Version = h.last() + 1
-		}
+		res.Version = max(res.Previous, h.last()) + 1
 	}
 	rt, err := NewRuntime(c, old, res.Version, s.logf, true)
 	if err != nil {

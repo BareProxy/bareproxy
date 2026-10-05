@@ -18,14 +18,12 @@ func peerContext(ctx context.Context, c net.Conn) context.Context {
 	if !ok {
 		return ctx
 	}
-	raw, err := uc.SyscallConn()
-	if err != nil {
-		return ctx
-	}
 	var cred *syscall.Ucred
-	raw.Control(func(fd uintptr) {
-		cred, _ = syscall.GetsockoptUcred(int(fd), syscall.SOL_SOCKET, syscall.SO_PEERCRED)
-	})
+	if raw, err := uc.SyscallConn(); err == nil {
+		raw.Control(func(fd uintptr) {
+			cred, _ = syscall.GetsockoptUcred(int(fd), syscall.SOL_SOCKET, syscall.SO_PEERCRED)
+		})
+	}
 	if cred == nil {
 		return ctx
 	}

@@ -17,8 +17,9 @@ import (
 	"time"
 )
 
-// The config change endpoints of the admin socket. Each answers in plain
-// text, or in JSON with json=1.
+// The admin socket's endpoints, besides explain. The config change ones
+// (plan, apply, rollback, history) answer in plain text, or in JSON with
+// json=1. The trace ones are in admin_trace.go.
 func init() {
 	adminHandlers = append(adminHandlers, func(s *Server, mux *http.ServeMux) {
 		mux.HandleFunc("GET /plan", s.adminPlan)
@@ -26,6 +27,10 @@ func init() {
 		mux.HandleFunc("POST /apply", s.adminApply)
 		mux.HandleFunc("POST /rollback", s.adminRollback)
 		mux.HandleFunc("GET /history", s.adminHistory)
+		mux.HandleFunc("GET /why", s.adminWhy)
+		mux.HandleFunc("GET /tail", s.adminTail)
+		mux.HandleFunc("GET /status", func(w http.ResponseWriter, r *http.Request) { writeJSON(w, s.Status()) })
+		mux.HandleFunc("GET /events", func(w http.ResponseWriter, r *http.Request) { writeJSON(w, s.Current().Mem.Events()) })
 	})
 }
 
@@ -63,10 +68,9 @@ func replyErr(w http.ResponseWriter, r *http.Request, err error) {
 	code := http.StatusBadRequest
 	var ce *ConfigError
 	var pe *PlanChangedError
-	switch {
-	case errors.As(err, &ce):
+	if errors.As(err, &ce) {
 		code = http.StatusUnprocessableEntity
-	case errors.As(err, &pe):
+	} else if errors.As(err, &pe) {
 		code = http.StatusConflict
 	}
 	reply(w, r, code, map[string]string{"error": err.Error()}, err.Error()+"\n")
@@ -181,12 +185,13 @@ func (s *Server) adminRollback(w http.ResponseWriter, r *http.Request) {
 func (s *Server) adminHistory(w http.ResponseWriter, r *http.Request) {
 	es := s.History()
 	running := s.Current().Version
-	var b strings.Builder
 	if es == nil {
-		b.WriteString("No config history is kept: the state folder couldn't be used (see the log).\n")
-	} else {
-		b.WriteString("Version  Time (UTC)           How       User        Plan\n")
+		reply(w, r, http.StatusOK, map[string]any{"running": running, "versions": []Entry{}},
+			"No config history is kept: the state folder couldn't be used (see the log).\n")
+		return
 	}
+	var b strings.Builder
+	b.WriteString("Version  Time (UTC)           How       User        Plan\n")
 	for _, e := range es {
 		t, _ := time.Parse(time.RFC3339, e.Time)
 		plan := e.Plan
@@ -197,9 +202,6 @@ func (s *Server) adminHistory(w http.ResponseWriter, r *http.Request) {
 			plan += " (running)"
 		}
 		fmt.Fprintf(&b, "%7d  %s  %-8s  %-10s  %s\n", e.Version, t.UTC().Format("2006-01-02 15:04:05"), e.How, e.User, plan)
-	}
-	if es == nil {
-		es = []Entry{}
 	}
 	reply(w, r, http.StatusOK, map[string]any{"running": running, "versions": es}, b.String())
 }

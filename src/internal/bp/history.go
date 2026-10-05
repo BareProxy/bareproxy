@@ -4,6 +4,7 @@
 package bp
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -66,9 +67,10 @@ func (h *history) path(n int) string {
 	return filepath.Join(h.dir, "versions", fmt.Sprintf("%d.conf", n))
 }
 
-// last returns the newest version number, or 0 when the history is empty.
+// last returns the newest version number, or 0 when the history is empty or
+// isn't kept.
 func (h *history) last() int {
-	if len(h.entries) == 0 {
+	if h == nil || len(h.entries) == 0 {
 		return 0
 	}
 	return h.entries[len(h.entries)-1].Version
@@ -105,13 +107,12 @@ func (h *history) save(e Entry, text string) error {
 		os.Remove(h.path(h.entries[0].Version))
 		h.entries = h.entries[1:]
 	}
-	var b strings.Builder
+	var b bytes.Buffer
+	enc := json.NewEncoder(&b)
 	for _, e := range h.entries {
-		line, _ := json.Marshal(e)
-		b.Write(line)
-		b.WriteByte('\n')
+		enc.Encode(e)
 	}
-	return writeFileAtomic(filepath.Join(h.dir, "history.jsonl"), []byte(b.String()), 0o640)
+	return writeFileAtomic(filepath.Join(h.dir, "history.jsonl"), b.Bytes(), 0o640)
 }
 
 // writeFileAtomic writes a file through a temporary file and a rename, so

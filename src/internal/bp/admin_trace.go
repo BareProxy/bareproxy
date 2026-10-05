@@ -11,14 +11,8 @@ import (
 	"strings"
 )
 
-func init() {
-	adminHandlers = append(adminHandlers, func(s *Server, mux *http.ServeMux) {
-		mux.HandleFunc("GET /why", s.adminWhy)
-		mux.HandleFunc("GET /tail", s.adminTail)
-		mux.HandleFunc("GET /status", func(w http.ResponseWriter, r *http.Request) { writeJSON(w, s.Status()) })
-		mux.HandleFunc("GET /events", func(w http.ResponseWriter, r *http.Request) { writeJSON(w, s.Current().Mem.Events()) })
-	})
-}
+// The trace endpoints of the admin socket (why, tail, status, events),
+// registered in admin.go. They answer in JSON.
 
 func writeJSON(w http.ResponseWriter, v any) {
 	b, err := RecordJSON(v)
