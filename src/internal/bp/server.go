@@ -17,6 +17,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -71,12 +72,11 @@ func NewRuntime(c *Config, old *Runtime, version int, logf func(string, ...any),
 				if ps.Health != nil {
 					b.state = "unknown"
 				}
-				pname := name
 				b.events = func(s string) {
 					if logf != nil {
-						logf("pool %s: %s", pname, s)
+						logf("pool %s: %s", name, s)
 					}
-					rt.Mem.Event("backend", "pool "+pname+": "+s)
+					rt.Mem.Event("backend", "pool "+name+": "+s)
 				}
 				if checks && ps.Health != nil {
 					ctx, cancel := context.WithCancel(context.Background())
@@ -190,10 +190,8 @@ func (s *Server) certFor(port int) func(*tls.ClientHelloInfo) (*tls.Certificate,
 			}
 		}
 		for _, site := range c.Sites {
-			for _, a := range site.Addrs {
-				if a.Port == port && site.Cert != nil {
-					return site.Cert, nil
-				}
+			if site.Cert != nil && slices.ContainsFunc(site.Addrs, func(a Addr) bool { return a.Port == port }) {
+				return site.Cert, nil
 			}
 		}
 		return nil, errors.New("no certificate")
@@ -376,15 +374,13 @@ func (s *Server) serve(w *respWriter, r *http.Request, rt *Runtime, port int, re
 			return
 		}
 	}
-	raw := requestPath(r)
-	rec.Path = raw
-	norm, err := NormalizePath(raw, site.KeepEncodedSlash)
+	norm, err := NormalizePath(rec.Path, site.KeepEncodedSlash)
 	if err != nil {
 		rec.Outcome, rec.Reason = "bad_request", err.Error()
 		s.plain(w, r, rec, http.StatusBadRequest, "Bad request: "+err.Error())
 		return
 	}
-	if norm != raw {
+	if norm != rec.Path {
 		rec.NormPath = norm
 	}
 	route, _ := site.MatchRoute(r.Method, norm, r.Header)
@@ -406,10 +402,7 @@ func (s *Server) serve(w *respWriter, r *http.Request, rt *Runtime, port int, re
 	case "redirect", "https":
 		loc := redirectTarget(a.URL, norm, r.URL.RawQuery)
 		if a.Kind == "https" {
-			loc = "https://" + hostOnly(r.Host) + norm
-			if r.URL.RawQuery != "" {
-				loc += "?" + r.URL.RawQuery
-			}
+			loc = withQuery("https://"+hostOnly(r.Host)+norm, r.URL.RawQuery)
 		}
 		rec.Outcome, rec.Location = "local", loc
 		w.Header().Set("Location", loc)
@@ -434,10 +427,7 @@ func (s *Server) files(w *respWriter, r *http.Request, rec *Record, site *Site, 
 	rec.Checked = fr.Checked
 	switch fr.Status {
 	case http.StatusMovedPermanently:
-		loc := fr.Location
-		if r.URL.RawQuery != "" {
-			loc += "?" + r.URL.RawQuery
-		}
+		loc := withQuery(fr.Location, r.URL.RawQuery)
 		rec.Location = loc
 		w.Header().Set("Location", loc)
 		w.WriteHeader(http.StatusMovedPermanently)
@@ -491,10 +481,8 @@ func requestPath(r *http.Request) string {
 		return uri
 	}
 	if strings.HasPrefix(uri, "/") {
-		if i := strings.IndexByte(uri, '?'); i >= 0 {
-			return uri[:i]
-		}
-		return uri
+		path, _, _ := strings.Cut(uri, "?")
+		return path
 	}
 	if p := r.URL.EscapedPath(); p != "" {
 		return p

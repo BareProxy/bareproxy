@@ -118,11 +118,7 @@ func Explain(rt *Runtime, method, rawURL string, h http.Header, live bool) (stri
 	case "redirect":
 		fmt.Fprintf(&b, "Action: redirect %d to %s\n", a.Code, redirectTarget(a.URL, norm, u.RawQuery))
 	case "https":
-		loc := "https://" + host + norm
-		if u.RawQuery != "" {
-			loc += "?" + u.RawQuery
-		}
-		fmt.Fprintf(&b, "Action: redirect 301 to %s\n", loc)
+		fmt.Fprintf(&b, "Action: redirect 301 to %s\n", withQuery("https://"+host+norm, u.RawQuery))
 	case "files":
 		explainFiles(&b, site, route, norm, u.RawQuery, method, h)
 	case "pool":

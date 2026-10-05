@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"slices"
 	"strings"
 )
 
@@ -85,8 +86,7 @@ func NormalizePath(raw string, keepSlash bool) (string, error) {
 	}
 	segs := strings.Split(b.String()[1:], "/")
 	out := make([]string, 0, len(segs))
-	trailing := false
-	for i, s := range segs {
+	for _, s := range segs {
 		switch s {
 		case "", ".":
 		case "..":
@@ -97,15 +97,12 @@ func NormalizePath(raw string, keepSlash bool) (string, error) {
 		default:
 			out = append(out, s)
 		}
-		if i == len(segs)-1 && (s == "" || s == "." || s == "..") {
-			trailing = true
-		}
 	}
 	if len(out) == 0 {
 		return "/", nil
 	}
 	p := "/" + strings.Join(out, "/")
-	if trailing {
+	if last := segs[len(segs)-1]; last == "" || last == "." || last == ".." {
 		p += "/"
 	}
 	return p, nil
@@ -154,52 +151,30 @@ func (r *Route) matches(method, path string, h http.Header) (bool, string) {
 		if len(vals) == 0 {
 			return false, "no " + c.Name + " header"
 		}
-		if c.HasValue {
-			found := false
-			for _, v := range vals {
-				if v == c.Value {
-					found = true
-				}
-			}
-			if !found {
-				return false, c.Name + " is not " + c.Value
-			}
+		if c.HasValue && !slices.Contains(vals, c.Value) {
+			return false, c.Name + " is not " + c.Value
 		}
 	}
 	return true, "match"
 }
 
 func methodAllowed(ms []string, m string) bool {
-	for _, x := range ms {
-		if x == m || (x == "GET" && m == http.MethodHead) {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(ms, m) || (m == http.MethodHead && slices.Contains(ms, http.MethodGet))
 }
 
 // stripPrefix removes a route's prefix from a path, keeping a leading slash.
 func stripPrefix(path, prefix string) string {
-	if prefix == "" {
-		return path
+	if rest := strings.TrimPrefix(path, prefix); rest != "" {
+		return rest
 	}
-	rest := strings.TrimPrefix(path, prefix)
-	if rest == "" {
-		return "/"
-	}
-	return rest
+	return "/"
 }
 
 // redirectTarget builds a redirect's Location. A bare origin keeps the
 // request's path and query; a URL with a path is used exactly.
 func redirectTarget(base, norm, query string) string {
-	u, err := url.Parse(base)
-	if err != nil || u.Path != "" {
+	if u, err := url.Parse(base); err != nil || u.Path != "" {
 		return base
 	}
-	t := base + norm
-	if query != "" {
-		t += "?" + query
-	}
-	return t
+	return withQuery(base+norm, query)
 }
