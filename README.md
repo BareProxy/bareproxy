@@ -170,7 +170,7 @@ HUGO=/path/to/hugo SITE=/path/to/bareproxy.com-main ./live/live-test.sh
 
 ## Measured on 5 October 2026 (Go 1.27.1, linux/amd64)
 
-- **Tests.** 96 test functions, in 6,621 lines of test code. Blank lines and comments aren't counted.
+- **Tests.** 103 test functions, in 7,089 lines of test code. Two of them, a golden check and a timing check for `plan`, run only when `BP_PLAN_GOLDEN` is set. Blank lines and comments aren't counted.
 - **Acceptance tests** (`results/accept-test.log`, 30 seconds on a shared 2-CPU machine):
   - 100,000 generated requests were each asked of `explain` first and then sent to a running server. `explain` agreed with the server on every one. The requests ran over 114 routes on 6 sites and 2 ports. The trace log held 100,000 records with 100,000 distinct IDs.
   - 67 broken configs. Every one is refused by the parser with an error (65 name a line, 2 are about the whole file), refused by a reload on a running server, and stops a start.
@@ -179,7 +179,7 @@ HUGO=/path/to/hugo SITE=/path/to/bareproxy.com-main ./live/live-test.sh
 - **Plan exactness.** 1,000 generated config pairs with 300 random requests each (300,000 requests). Every request whose handling changes falls in a listed class with the right old and new effect, and no request whose handling stays the same does.
 - **Applies under load.** 20 applies while requests ran over HTTP/1.1 and HTTP/2, with 0 failed requests.
 - **Browser demo.** 113 checks pass in headless Chromium (`results/demo-check.log`). They compare the demo's check, explain and plan results with the native commands.
-- **Code size.** The core package and the command are 6,422 lines of Go (5,556 in the core, 866 in the command), against the 5,000-line budget. That is 1,422 lines over. Blank lines and comments aren't counted.
+- **Code size.** The core package and the command are 5,675 lines of Go (4,980 in the core, 695 in the command). File serving (`files.go`, 235 lines) has a budget of its own in the design, so 5,440 lines count against the 5,000-line budget: 440 over. Blank lines and comments aren't counted. The alpha shipped at 6,422 lines; a trim on 5 October took out 747 with no change in behavior (see the changelog).
 - **Binary size.** 8.4 MB for linux/amd64 and 7.7 MB for linux/arm64, static and stripped (8,351,904 and 7,733,408 bytes).
 - **Against nginx.** Measured on 5 October 2026 on a shared 2-CPU cloud machine (Intel Xeon at 2.1 GHz under KVM): each server on one core and the wrk load generator on the other, plain HTTP with keep-alive and 50 connections, 10-second runs, 3 per case, best run shown. All 51 attempts ran with the machine otherwise quiet. Logging was off for both servers; BareProxy kept its default 32 MB in-memory record store, which is most of its memory under load. The full tables, with the setup and caveats, are in `results/bench-summary.md`.
 
@@ -212,7 +212,7 @@ These settings are in the grammar, but they aren't built yet. The config check w
 - **WebSocket tunnels aren't inspected.** After an upgrade the connection is a plain tunnel, so routing rules don't see what travels inside it.
 - **macOS and Windows are untested.** Only Linux has been built and run.
 - **Modules aren't built.** The core is the whole product in this release.
-- **The core is over its line budget.** It is 6,422 lines (core and command) against 5,000.
+- **The core is over its line budget.** It is 5,440 lines (core and command, without file serving) against 5,000.
 
 ## License
 

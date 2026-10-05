@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+- Trimmed the core and the command from 6,422 to 5,675 lines of Go, with no change in behavior. `plan`, the command line, the admin endpoints, config checks, `explain` and the request path give byte-identical output to 0.1.0-alpha, checked against captures made from the untouched code. All tests pass, also under the race detector.
+- The binaries in `releases/v0.1.0-alpha` were built from commit 0da5d2d, before the trim.
+
 ## 0.1.0-alpha (5 October 2026)
 
 Second cut, and the first with release binaries (Linux, amd64 and arm64).

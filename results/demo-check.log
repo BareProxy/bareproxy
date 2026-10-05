@@ -1,7 +1,7 @@
 BareProxy browser demo check
-Run: Mon Oct 05 2026 11:17:17 GMT+0300 (Israel Daylight Time)
+Run: Mon Oct 05 2026 12:35:35 GMT+0300 (Israel Daylight Time)
 Demo folder: /home/claude/out/demo-dist
-bareproxy.wasm: 14860769 bytes raw, 3767689 bytes gzipped (gzip -9)
+bareproxy.wasm: 14877588 bytes raw, 3771708 bytes gzipped (gzip -9)
 
 == What differs between the demo and the native program, and why
   1. The first line names bareproxy.conf, the demo's config name. The native program prints the file's path.
@@ -16,11 +16,11 @@ bareproxy.wasm: 14860769 bytes raw, 3767689 bytes gzipped (gzip -9)
      the rule table lines up. The native build is from the same source tree as the wasm build.
 
 == Setup
-fixture folder: /tmp/bpdc-kWMaQw
+fixture folder: /tmp/bpdc-KN0Lti
 PASS  native bareproxy builds
 PASS  native planref builds
 native: bareproxy 0.1.0-alpha, built with go1.27.1
-serving /home/claude/out/demo-dist at http://127.0.0.1:41449
+serving /home/claude/out/demo-dist at http://127.0.0.1:39631
 browser: Chromium 141.0.7390.37 (headless, Playwright)
 
 == Loading
@@ -271,9 +271,9 @@ PASS  plan of a config against itself says no changes
 PASS  plan with a broken new config lists its problems
 
 == Speed (measured in this browser)
-  check    median 0.20 ms, slowest 22.50 ms
-  explain  median 0.20 ms, slowest 4.30 ms
-  plan     median 0.50 ms, slowest 4.90 ms
+  check    median 0.10 ms, slowest 16.10 ms
+  explain  median 0.20 ms, slowest 4.10 ms
+  plan     median 0.60 ms, slowest 1.30 ms
 PASS  every call is under 100 ms in the median
 
 == Layout and screenshots
@@ -310,4 +310,4 @@ PASS  no request failed except the ones this check forced
 PASS  no console errors or warnings (apart from the forced wrong-content-type case)
 
 == Summary
-113 passed, 0 failed, in 17 s
+113 passed, 0 failed, in 16 s
