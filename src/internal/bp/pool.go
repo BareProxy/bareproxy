@@ -225,7 +225,10 @@ type Pool struct {
 }
 
 // pick chooses the usable backend with the fewest requests in flight; ties
-// go round robin. With peek set it changes nothing, for explain.
+// go round robin. When none is usable, a backend still waiting for its first
+// health check gets the request, so a pool that was just added, or whose
+// backends were just replaced, doesn't answer 503 until its checks run.
+// With peek set it changes nothing, for explain.
 func (p *Pool) pick(skip map[*Backend]bool, peek bool) *Backend {
 	n := uint64(len(p.Backends))
 	if n == 0 {
@@ -247,7 +250,13 @@ func (p *Pool) pick(skip map[*Backend]bool, peek bool) *Backend {
 			best, bestN = b, f
 		}
 	}
-	if best != nil && !peek {
+	if best == nil {
+		for i := uint64(0); i < n && best == nil; i++ {
+			if b := p.Backends[(start+i)%n]; !skip[b] && b.Snapshot().State == "unknown" {
+				best = b
+			}
+		}
+	} else if !peek {
 		best.claimTrial(now)
 	}
 	return best

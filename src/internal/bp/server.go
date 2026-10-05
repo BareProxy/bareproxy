@@ -297,12 +297,12 @@ func (w *respWriter) Flush() { http.NewResponseController(w.ResponseWriter).Flus
 
 type countReader struct {
 	io.ReadCloser
-	n int64
+	n atomic.Int64 // the transport reads the body on its own goroutine
 }
 
 func (c *countReader) Read(p []byte) (int, error) {
 	n, err := c.ReadCloser.Read(p)
-	c.n += int64(n)
+	c.n.Add(int64(n))
 	return n, err
 }
 
@@ -338,7 +338,7 @@ func (s *Server) Handler(port int, isTLS bool) http.Handler {
 			}
 			rec.BytesOut = w.bytes
 			if body != nil {
-				rec.BytesIn = body.n
+				rec.BytesIn = body.n.Load()
 			}
 			rec.MS = msSince(start)
 			rt.record(rec)

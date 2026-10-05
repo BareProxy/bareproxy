@@ -433,6 +433,48 @@ func TestHealthChecksAndLiveExplain(t *testing.T) {
 	}
 }
 
+// A backend waiting for its first health check gets requests only when no
+// backend in its pool is up (a pool just added, or its backends replaced),
+// and why doesn't list a backend as skipped once it was tried.
+func TestUntriedBackendWhenNoneIsUp(t *testing.T) {
+	live := strings.TrimPrefix(echoBackend(t, "live").URL, "http://")
+	dead := deadAddr(t)
+	// checks off: both backends stay "waiting for their first health check"
+	f := newFixture(t, fmt.Sprintf("  backend %s\n  backend %s\n  health /healthz every 30ms timeout 200ms\n", dead, live), false)
+	pool := f.rt.Pools["api"]
+	out, err := Explain(f.rt, "GET", "http://example.com:8080/api/x", nil, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "0 of 2 up") || !strings.Contains(out, "next pick") || strings.Contains(out, "503") {
+		t.Errorf("explain should pick a backend waiting for its first check:\n%s", out)
+	}
+	for i := 0; i < 4; i++ {
+		if rr := f.do("GET", "/api/x"); rr.Code != 200 {
+			t.Fatalf("request %d with no check run yet: %d %q", i, rr.Code, rr.Body.String())
+		}
+	}
+	for _, r := range f.records(t) {
+		for _, s := range r.Skipped {
+			for _, a := range r.Attempts {
+				if a.Backend == s.Backend {
+					t.Errorf("%s is listed as skipped and as tried:\n%s", s.Backend, RenderWhy(&r))
+				}
+			}
+		}
+	}
+	pool.Backends[1].checkResult(true, "") // live is up now, so dead (still waiting) gets nothing
+	n := len(f.records(t))
+	for i := 0; i < 4; i++ {
+		f.do("GET", "/api/x")
+	}
+	for _, r := range f.records(t)[n:] {
+		if len(r.Attempts) != 1 || r.Attempts[0].Backend != live || r.Status != 200 {
+			t.Errorf("with one backend up, the request went elsewhere:\n%s", RenderWhy(&r))
+		}
+	}
+}
+
 func TestExplainFilesOffline(t *testing.T) {
 	f := newFixture(t, "", false)
 	rt, err := NewRuntime(f.c, nil, 0, nil, false)

@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"net/http/httputil"
 	"net/url"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -69,6 +70,9 @@ func (t *poolTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 			return nil, lastErr
 		}
 		tried[b] = true
+		if len(t.rec.Skipped) > 0 { // a down or untried backend can still get a trial request
+			t.rec.Skipped = slices.DeleteFunc(t.rec.Skipped, func(s Skip) bool { return s.Backend == b.Spec.Addr })
+		}
 		out, u := *req, *req.URL // only the URL changes, so the headers are shared, not cloned
 		out.URL, u.Scheme, u.Host = &u, schemeName(b.Spec.HTTPS), b.Spec.Addr
 		b.inflight.Add(1)
