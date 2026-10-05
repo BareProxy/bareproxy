@@ -1107,12 +1107,12 @@ func TestTraceReloadEvents(t *testing.T) {
 	writeFile(t, f.conf, "global\n  admin off\n  trace-log requests.log\nsite http://example.com:8080\n  route /* -> respond 200 \"v2\"\n")
 	s.Reload()
 	defer s.Current().Stop()
-	// The second reload removed pool api, so its backend drains in between.
+	// The second reload removed pool api, so its backend drains after it.
 	evs := s.Current().Mem.Events()
-	if len(evs) != 3 || evs[0].Kind != "reload" || evs[1].Kind != "backend" || evs[2].Kind != "reload" ||
+	if len(evs) != 3 || evs[0].Kind != "reload" || evs[1].Kind != "reload" || evs[2].Kind != "backend" ||
 		!strings.Contains(evs[0].Text, "no pool named nopool") || !strings.Contains(evs[0].Text, "version 1 keeps running") ||
-		!strings.Contains(evs[1].Text, "removed, draining") ||
-		!strings.Contains(evs[2].Text, "version 2 running") || !strings.Contains(evs[2].Text, ": plan ") {
+		!strings.Contains(evs[1].Text, "version 2 running") || !strings.Contains(evs[1].Text, ": plan ") ||
+		!strings.Contains(evs[2].Text, "removed, draining") {
 		t.Errorf("events: %+v", evs)
 	}
 }

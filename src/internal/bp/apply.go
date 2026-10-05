@@ -267,6 +267,24 @@ func (s *Server) apply(ch Change) (*Applied, error) {
 	}
 	conns := trackConns(rt)
 	s.rt.Store(rt)
+	// The event comes first, and what follows from the swap (certificates,
+	// ports, drains) after it.
+	how := ch.How
+	if ch.From > 0 {
+		how = fmt.Sprintf("rollback to version %d", ch.From)
+	}
+	if ch.User != "" {
+		how += " by " + ch.User
+	}
+	kind, what := strings.Replace(ch.How, "startup", "start", 1), Summary(c) // the event kind, and what a startup runs
+	if res.Plan != nil {
+		what = "plan " + res.PlanID + ", " + cmp.Or(res.Plan.counts(), "no changes")
+	}
+	if unchanged {
+		s.logEvent(kind, "version %d reloaded, config unchanged (%s)", res.Version, how)
+	} else {
+		s.logEvent(kind, "version %d running (%s): %s", res.Version, how, what)
+	}
 	rt.certEvents(old)
 	s.switchListeners(c, opened)
 	if old != nil {
@@ -289,22 +307,6 @@ func (s *Server) apply(ch Change) (*Applied, error) {
 		} else if wrote {
 			res.Wrote = file
 		}
-	}
-	how := ch.How
-	if ch.From > 0 {
-		how = fmt.Sprintf("rollback to version %d", ch.From)
-	}
-	if ch.User != "" {
-		how += " by " + ch.User
-	}
-	kind, what := strings.Replace(ch.How, "startup", "start", 1), Summary(c) // the event kind, and what a startup runs
-	if res.Plan != nil {
-		what = "plan " + res.PlanID + ", " + cmp.Or(res.Plan.counts(), "no changes")
-	}
-	if unchanged {
-		s.logEvent(kind, "version %d reloaded, config unchanged (%s)", res.Version, how)
-	} else {
-		s.logEvent(kind, "version %d running (%s): %s", res.Version, how, what)
 	}
 	return res, nil
 }
@@ -449,7 +451,7 @@ func (s *Server) drain(old, rt *Runtime, conns map[string]*connSet) {
 			s.cs.drains = append(s.cs.drains, drainEntry{b, now, now.Add(d)})
 			s.logEvent("backend", "pool %s: %s removed, draining for %s", name, addr, d)
 			time.AfterFunc(d, func() {
-				s.logEvent("backend", "pool %s: %s drained, %d connections closed", name, addr, set.close(addr))
+				s.logEvent("backend", "pool %s: %s drained, %s closed", name, addr, plural(set.close(addr), "connection"))
 			})
 		}
 	}

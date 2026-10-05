@@ -217,6 +217,18 @@ func TestStatusListsDrainingBackends(t *testing.T) {
 			t.Fatalf("pool api is still listed after its drain time: %+v", pool())
 		}
 	}
+	// The drain and its end are events too.
+	event := func(text string) bool {
+		return slices.ContainsFunc(l.s.Current().Mem.Events(), func(e Event) bool { return e.Kind == "backend" && strings.HasPrefix(e.Text, text) })
+	}
+	for deadline := time.Now().Add(5 * time.Second); !event("pool api: " + addrB + " drained, "); time.Sleep(50 * time.Millisecond) {
+		if time.Now().After(deadline) {
+			t.Fatalf("no drained event for B: %+v", l.s.Current().Mem.Events())
+		}
+	}
+	if !event("pool api: "+addrA+" removed, draining for 2s") || !event("pool api: "+addrA+" drained, ") {
+		t.Errorf("events for A: %+v", l.s.Current().Mem.Events())
+	}
 }
 
 // lockedLog collects what a server logs, from any goroutine.
