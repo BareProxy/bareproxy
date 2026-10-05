@@ -355,62 +355,50 @@ func (g *hostGroup) effect(old bool, rules *Site, method, path string, h http.He
 // lineAcc is one routing line before sorting.
 type lineAcc struct {
 	index   int // in Changes, once sorted
-	port    int
-	group   int
 	sortKey string
 	line    PlanLine
 }
 
+// routing lists the routing changes, port by port and host group by host
+// group, each group's lines in order.
 func (pl *planner) routing(res *PlanResult) {
 	for _, pp := range pl.ports {
 		for _, g := range pp.groups {
 			res.TooMany = res.TooMany || g.sp.count() > MaxPlanClasses
 		}
 	}
-	var lines []*lineAcc
 	for _, pp := range pl.ports {
-		for gi, g := range pp.groups {
+		for _, g := range pp.groups {
 			if res.TooMany {
-				for _, l := range ruleDiff(g) {
-					lines = append(lines, &lineAcc{port: pp.num, group: gi, sortKey: fmt.Sprintf("%08d", len(lines)), line: l})
-				}
+				res.Changes = append(res.Changes, ruleDiff(g)...)
 				continue
 			}
-			lines = pl.analyze(g, gi, lines)
+			for _, l := range g.analyze() {
+				l.index = len(res.Changes)
+				res.Changes = append(res.Changes, l.line)
+			}
 		}
-	}
-	slices.SortStableFunc(lines, func(a, b *lineAcc) int {
-		return cmp.Or(cmp.Compare(a.port, b.port), cmp.Compare(a.group, b.group), strings.Compare(a.sortKey, b.sortKey),
-			strings.Compare(a.line.What, b.line.What), strings.Compare(a.line.Old, b.line.Old), strings.Compare(a.line.New, b.line.New))
-	})
-	for i, l := range lines {
-		l.index = i
-		res.Changes = append(res.Changes, l.line)
 	}
 }
 
 type effPair struct{ old, new string }
 
 // analyze runs every class of a host group through both configs and turns
-// the classes whose effect changes into lines.
-func (pl *planner) analyze(g *hostGroup, gi int, lines []*lineAcc) []*lineAcc {
+// the classes whose effect changes into lines, sorted.
+func (g *hostGroup) analyze() []*lineAcc {
 	o, n := g.port.oldP, g.port.newP
 	samePort := o != nil && n != nil && o.TLS == n.TLS
 	if samePort && sameRules(g.oldS, g.newS) {
-		return lines // the matcher picks the same rule with the same effect for every request
+		return nil // the matcher picks the same rule with the same effect for every request
 	}
 	sp := g.sp
 	// A path whose rules (those whose path pattern takes it) are the same
 	// on both sides is handled the same for every method and header.
-	same := make([]bool, len(sp.reps))
-	if samePort && g.oldS != nil && g.newS != nil && routeEffect(g.oldS, nil) == routeEffect(g.newS, nil) {
-		for pi, path := range sp.reps {
-			same[pi] = sameList(rulesFor(g.oldS, path), rulesFor(g.newS, path))
-		}
-	}
-	fo, fn := make([]*Site, len(sp.reps)), make([]*Site, len(sp.reps))
+	sameElse := samePort && g.oldS != nil && g.newS != nil && routeEffect(g.oldS, nil) == routeEffect(g.newS, nil)
+	fo, fn, same := make([]*Site, len(sp.reps)), make([]*Site, len(sp.reps)), make([]bool, len(sp.reps))
 	for pi, path := range sp.reps {
 		fo[pi], fn[pi] = pathSite(g.oldS, path), pathSite(g.newS, path)
+		same[pi] = sameElse && sameList(fo[pi].Routes, fn[pi].Routes)
 	}
 	type pathEff struct {
 		pi int
@@ -443,7 +431,6 @@ func (pl *planner) analyze(g *hostGroup, gi int, lines []*lineAcc) []*lineAcc {
 		paths map[int]bool
 	}
 	groups := map[key]*merged{}
-	var order []key
 	for pe, ts := range changed {
 		digits := make([][]int, len(ts))
 		for i, t := range ts {
@@ -455,14 +442,14 @@ func (pl *planner) analyze(g *hostGroup, gi int, lines []*lineAcc) []*lineAcc {
 			if m == nil {
 				m = &merged{e: pe.e, prod: prod, paths: map[int]bool{}}
 				groups[k] = m
-				order = append(order, k)
 			}
 			m.paths[pe.pi] = true
 		}
 	}
+	// Lines come out of the map in no set order; they are sorted below.
 	g.class = map[[2]int]*lineAcc{}
-	for _, k := range order {
-		m := groups[k]
+	var lines []*lineAcc
+	for _, m := range groups {
 		what := []string{sp.methodPhrase(m.prod[0])}
 		for i := range sp.names {
 			if s := sp.headerPhrase(i, m.prod[i+1]); s != "" {
@@ -474,8 +461,7 @@ func (pl *planner) analyze(g *hostGroup, gi int, lines []*lineAcc) []*lineAcc {
 		for pi := range m.paths {
 			sortKey = min(sortKey, sp.repSort[pi])
 		}
-		l := &lineAcc{port: g.port.num, group: gi, sortKey: sortKey,
-			line: PlanLine{Where: g.where(), What: strings.Join(what, ", "), Old: m.e.old, New: m.e.new}}
+		l := &lineAcc{sortKey: sortKey, line: PlanLine{Where: g.where(), What: strings.Join(what, ", "), Old: m.e.old, New: m.e.new}}
 		lines = append(lines, l)
 		for pi := range m.paths {
 			for _, t := range sp.tuples(m.prod) {
@@ -483,6 +469,10 @@ func (pl *planner) analyze(g *hostGroup, gi int, lines []*lineAcc) []*lineAcc {
 			}
 		}
 	}
+	slices.SortStableFunc(lines, func(a, b *lineAcc) int {
+		return cmp.Or(strings.Compare(a.sortKey, b.sortKey), strings.Compare(a.line.What, b.line.What),
+			strings.Compare(a.line.Old, b.line.Old), strings.Compare(a.line.New, b.line.New))
+	})
 	return lines
 }
 
@@ -581,10 +571,9 @@ func factor(ts [][]int) [][][]int {
 // representatives, method representatives and header combinations.
 type space struct {
 	seg     string
-	reps    []string       // representative paths
-	repSort []string       // sort key per representative
-	patIdx  map[string]int // pattern path -> its representative
-	belowIx map[string]int // pattern path ("" for the root) -> its fresh child
+	reps    []string          // representative paths
+	repSort []string          // sort key per representative
+	nodes   map[string]*pnode // pattern path ("" for the root) -> its node
 	root    *pnode
 	methods []string   // named methods, HEAD when GET is named, then one other
 	names   []string   // header names in conditions, canonical
@@ -626,7 +615,7 @@ func newSpace(a, b *Site) *space {
 	}
 	list := keysOf(pats)
 	// seg is a path segment no pattern holds, for fresh paths.
-	sp := &space{seg: "~bp", patIdx: map[string]int{}, belowIx: map[string]int{}}
+	sp := &space{seg: "~bp"}
 	for n := 2; slices.ContainsFunc(list, func(p string) bool { return strings.Contains(p, sp.seg) }); n++ {
 		sp.seg = "~bp" + strconv.Itoa(n)
 	}
@@ -637,24 +626,21 @@ func newSpace(a, b *Site) *space {
 	}
 	sp.root = &pnode{self: -1}
 	sp.root.below = add("/"+sp.seg, "\xfe")
-	sp.belowIx[""] = sp.root.below
-	nodes := map[string]*pnode{"": sp.root}
+	sp.nodes = map[string]*pnode{"": sp.root}
 	for _, p := range list {
 		n := &pnode{path: p, self: add(p, p), below: -1}
-		sp.patIdx[p] = n.self
 		if !strings.HasSuffix(p, "/") {
 			n.below = add(p+"/"+sp.seg, p+"/\xfe")
-			sp.belowIx[p] = n.below
 		}
-		nodes[p] = n
+		sp.nodes[p] = n
 	}
 	// A pattern's parent is the longest pattern that ends where one of its
 	// slashes starts (the root, "", at worst).
 	for _, p := range list {
 		for q := p; ; {
 			q = q[:strings.LastIndexByte(q, '/')]
-			if parent := nodes[q]; parent != nil {
-				parent.kids = append(parent.kids, nodes[p])
+			if parent := sp.nodes[q]; parent != nil {
+				parent.kids = append(parent.kids, sp.nodes[p])
 				break
 			}
 		}
@@ -715,21 +701,19 @@ func (sp *space) digits(t int) []int {
 	return d
 }
 
-// tuples lists every tuple in a product.
+// tuples lists every tuple in a product, digit by digit (the reverse of
+// digits).
 func (sp *space) tuples(prod [][]int) []int {
 	out := []int{0}
 	for i, set := range prod {
-		radix := sp.ncombo
+		radix := 1 // the method digit comes first, onto 0
 		if i > 0 {
-			radix = 1
-			for _, n := range sp.nstates[i:] {
-				radix *= n
-			}
+			radix = sp.nstates[i-1]
 		}
 		var next []int
 		for _, t := range out {
 			for _, v := range set {
-				next = append(next, t+v*radix)
+				next = append(next, t*radix+v)
 			}
 		}
 		out = next
@@ -740,15 +724,11 @@ func (sp *space) tuples(prod [][]int) []int {
 // header builds the request headers of one combination.
 func (sp *space) header(c int) http.Header {
 	h := http.Header{}
-	for i := len(sp.names) - 1; i >= 0; i-- {
-		st := c % sp.nstates[i]
-		c /= sp.nstates[i]
-		if st == 0 {
-			continue
-		}
-		if st == 1 {
+	for i, st := range sp.digits(c)[1:] {
+		switch {
+		case st == 1:
 			h[sp.names[i]] = []string{sp.other[i]}
-		} else {
+		case st > 1:
 			h[sp.names[i]] = sp.valsIn(i, st-1)
 		}
 	}
@@ -791,16 +771,15 @@ func (sp *space) methodRep(m string) int {
 	return len(sp.methods) - 1
 }
 
-// pathRep returns the representative of a path in normal form.
+// pathRep returns the representative of a path in normal form: the
+// pattern itself, or the fresh child of the nearest pattern above it.
 func (sp *space) pathRep(p string) int {
-	if i, ok := sp.patIdx[p]; ok {
-		return i
+	if n := sp.nodes[p]; n != nil && n.self >= 0 {
+		return n.self
 	}
-	for i := len(p) - 1; i >= 0; i-- {
-		if p[i] == '/' {
-			if b, ok := sp.belowIx[p[:i]]; ok {
-				return b
-			}
+	for i := strings.LastIndexByte(p, '/'); i >= 0; i = strings.LastIndexByte(p[:i], '/') {
+		if n := sp.nodes[p[:i]]; n != nil && n.below >= 0 {
+			return n.below
 		}
 	}
 	return sp.root.below
@@ -954,11 +933,8 @@ func describe(n *pnode, in map[int]bool) []string {
 }
 
 func joinAnd(xs []string) string {
-	switch len(xs) {
-	case 0:
-		return ""
-	case 1:
-		return xs[0]
+	if len(xs) < 2 {
+		return strings.Join(xs, "")
 	}
 	return strings.Join(xs[:len(xs)-1], ", ") + " and " + xs[len(xs)-1]
 }
@@ -1136,11 +1112,10 @@ func globalLines(c *Config) map[string]cfgLine {
 		if err != nil || len(toks) == 0 {
 			continue
 		}
-		if raw[0] != ' ' && raw[0] != '\t' {
+		switch {
+		case raw[0] != ' ' && raw[0] != '\t':
 			in = toks[0].s == "global"
-			continue
-		}
-		if in {
+		case in:
 			out[toks[0].s] = cfgLine{joinTokens(toks), i + 1}
 		}
 	}
