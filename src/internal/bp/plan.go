@@ -218,9 +218,12 @@ type hostGroup struct {
 	port       *portPlan
 	oldS, newS *Site
 	hosts      []string // its host classes, described, in display order
-	where      string
 	sp         *space
 	class      map[[2]int]int // (path rep, method*combos+combo) -> line id
+}
+
+func (g *hostGroup) where() string {
+	return fmt.Sprintf("%s (port %d)", strings.Join(g.hosts, ", "), g.port.num)
 }
 
 func hostDomain(h string) string {
@@ -312,16 +315,12 @@ func newPlanner(old, new *Config) *planner {
 			k := [2]*Site{os, ns}
 			g := byPair[k]
 			if g == nil {
-				g = &hostGroup{port: pp, oldS: os, newS: ns}
+				g = &hostGroup{port: pp, oldS: os, newS: ns, sp: newSpace(os, ns)}
 				byPair[k] = g
 				pp.groups = append(pp.groups, g)
 			}
 			g.hosts = append(g.hosts, pp.describeHost(h))
 			pp.byRep[h] = g
-		}
-		for _, g := range pp.groups {
-			g.where = fmt.Sprintf("%s (port %d)", strings.Join(g.hosts, ", "), n)
-			g.sp = newSpace(g.oldS, g.newS)
 		}
 		pl.ports = append(pl.ports, pp)
 		pl.byNum[n] = pp
@@ -474,13 +473,13 @@ func (pl *planner) analyze(g *hostGroup, gi int, lines []*lineAcc) []*lineAcc {
 				what = append(what, s)
 			}
 		}
-		what = append(what, strings.Join(sp.pathPhrases(m.paths), "; "))
+		what = append(what, strings.Join(describe(sp.root, m.paths), "; "))
 		sortKey := "\xff"
 		for pi := range m.paths {
 			sortKey = min(sortKey, sp.repSort[pi])
 		}
 		lines = append(lines, &lineAcc{id: id, port: g.port.num, group: gi, sortKey: sortKey,
-			line: PlanLine{Where: g.where, What: strings.Join(what, ", "), Old: m.e.old, New: m.e.new}})
+			line: PlanLine{Where: g.where(), What: strings.Join(what, ", "), Old: m.e.old, New: m.e.new}})
 		for pi := range m.paths {
 			for _, t := range sp.tuples(m.prod) {
 				g.class[[2]int{pi, t}] = id
@@ -750,20 +749,24 @@ func (sp *space) header(c int) http.Header {
 		if st == 0 {
 			continue
 		}
-		mask := st - 1
-		if mask == 0 {
+		if st == 1 {
 			h[sp.names[i]] = []string{sp.other[i]}
-			continue
+		} else {
+			h[sp.names[i]] = sp.valsIn(i, st-1)
 		}
-		var vs []string
-		for j, v := range sp.vals[i] {
-			if mask&(1<<j) != 0 {
-				vs = append(vs, v)
-			}
-		}
-		h[sp.names[i]] = vs
 	}
 	return h
+}
+
+// valsIn lists the named values of header i whose bits are set in mask.
+func (sp *space) valsIn(i, mask int) []string {
+	var vs []string
+	for j, v := range sp.vals[i] {
+		if mask&(1<<j) != 0 {
+			vs = append(vs, v)
+		}
+	}
+	return vs
 }
 
 func (sp *space) comboOf(h http.Header) int {
@@ -773,10 +776,8 @@ func (sp *space) comboOf(h http.Header) int {
 		if vals := h.Values(name); len(vals) > 0 {
 			mask := 0
 			for j, v := range sp.vals[i] {
-				for _, x := range vals {
-					if x == v {
-						mask |= 1 << j
-					}
+				if slices.Contains(vals, v) {
+					mask |= 1 << j
 				}
 			}
 			st = 1 + mask
@@ -812,15 +813,11 @@ func (sp *space) methodPhrase(set []int) string {
 	if len(set) == len(sp.methods) {
 		return "any method"
 	}
-	in := map[int]bool{}
-	for _, i := range set {
-		in[i] = true
-	}
 	otherIx := len(sp.methods) - 1
 	var names []string
-	if in[otherIx] {
+	if slices.Contains(set, otherIx) {
 		for i, m := range sp.methods[:otherIx] {
-			if !in[i] {
+			if !slices.Contains(set, i) {
 				names = append(names, m)
 			}
 		}
@@ -852,20 +849,16 @@ func (sp *space) headerPhrase(i int, set []int) string {
 	// with NAME: v, or without NAME: v, when the set is exactly the states
 	// that hold v, or exactly those that don't.
 	for j, v := range vals {
-		with, without := true, true
+		agree := 0 // states where holding v and being in the set agree
 		for st := 0; st < ns; st++ {
-			has := st > 0 && (st-1)&(1<<j) != 0
-			if has != in[st] {
-				with = false
-			}
-			if has == in[st] {
-				without = false
+			if has := st > 0 && (st-1)&(1<<j) != 0; has == in[st] {
+				agree++
 			}
 		}
-		if with {
+		switch agree {
+		case ns:
 			return "with " + name + ": " + v
-		}
-		if without {
+		case 0:
 			return "without " + name + ": " + v
 		}
 	}
@@ -877,22 +870,10 @@ func (sp *space) headerPhrase(i int, set []int) string {
 		case st == 1:
 			parts = append(parts, "with "+name+" other than "+strings.Join(vals, ", "))
 		default:
-			var vs []string
-			for j, v := range vals {
-				if (st-1)&(1<<j) != 0 {
-					vs = append(vs, v)
-				}
-			}
-			parts = append(parts, "with "+name+": "+strings.Join(vs, " and "))
+			parts = append(parts, "with "+name+": "+strings.Join(sp.valsIn(i, st-1), " and "))
 		}
 	}
 	return strings.Join(parts, " or ")
-}
-
-func (sp *space) pathPhrases(in map[int]bool) []string {
-	var out []string
-	sp.describe(sp.root, in, &out)
-	return out
 }
 
 // all reports whether every representative at and below a node is in the
@@ -917,27 +898,28 @@ func subtreeText(n *pnode) string {
 	return n.path + " and below"
 }
 
-func (sp *space) describe(n *pnode, in map[int]bool, out *[]string) {
+// describe phrases the paths at and below a node whose representatives
+// are in the set.
+func describe(n *pnode, in map[int]bool) []string {
 	if all(n, in, false, true) {
-		return
+		return nil
 	}
 	if all(n, in, true, true) {
 		if n.self < 0 {
-			*out = append(*out, "every path")
-		} else {
-			*out = append(*out, subtreeText(n))
+			return []string{"every path"}
 		}
-		return
+		return []string{subtreeText(n)}
 	}
 	selfIn := n.self >= 0 && in[n.self]
+	var out []string
 	if n.below < 0 || !in[n.below] {
 		if selfIn {
-			*out = append(*out, n.path)
+			out = append(out, n.path)
 		}
 		for _, k := range n.kids {
-			sp.describe(k, in, out)
+			out = append(out, describe(k, in)...)
 		}
-		return
+		return out
 	}
 	var exc []string
 	var later []*pnode
@@ -967,10 +949,11 @@ func (sp *space) describe(n *pnode, in map[int]bool, out *[]string) {
 	if len(exc) > 0 {
 		s += " (not " + strings.Join(exc, ", ") + ")"
 	}
-	*out = append(*out, s)
+	out = append(out, s)
 	for _, k := range later {
-		sp.describe(k, in, out)
+		out = append(out, describe(k, in)...)
 	}
+	return out
 }
 
 func joinAnd(xs []string) string {
@@ -1010,10 +993,10 @@ func ruleDiff(g *hostGroup) []PlanLine {
 			i++
 			j++
 		case j >= m || (i < n && lcs[i+1][j] >= lcs[i][j+1]):
-			out = append(out, PlanLine{Where: g.where, What: "rule removed", Old: fmt.Sprintf("line %d: %s", a[i].Line, a[i].Text)})
+			out = append(out, PlanLine{Where: g.where(), What: "rule removed", Old: fmt.Sprintf("line %d: %s", a[i].Line, a[i].Text)})
 			i++
 		default:
-			out = append(out, PlanLine{Where: g.where, What: "rule added", New: fmt.Sprintf("line %d: %s", b[j].Line, b[j].Text)})
+			out = append(out, PlanLine{Where: g.where(), What: "rule added", New: fmt.Sprintf("line %d: %s", b[j].Line, b[j].Text)})
 			j++
 		}
 	}
