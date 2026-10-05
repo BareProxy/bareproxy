@@ -8,6 +8,7 @@ package main
 import (
 	"cmp"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -24,72 +25,94 @@ import (
 	"bareproxy/internal/bp"
 )
 
-const defaultConfig = "/etc/bareproxy/bareproxy.conf"
+// The options that several commands take.
+const withConfig = "-c --config --json"
+const withChange = withConfig + " -y --yes --from --plan"
 
-// commands maps each command name to the function that runs it. Each
-// returns the exit code.
-var commands = map[string]func(args []string) int{
-	"run":      run,
-	"check":    check,
-	"explain":  explain,
-	"why":      why,
-	"plan":     planCmd,
-	"apply":    applyCmd,
-	"rollback": rollbackCmd,
-	"history":  historyCmd,
-	"tail":     tailCmd,
-	"status":   statusCmd,
-	"events":   eventsCmd,
+// commands maps each command name to the function that runs it, the options
+// it takes and how many plain arguments (min to max, -1 for any number). When
+// file is set, the first plain argument is the config file.
+var commands = map[string]struct {
+	run      func(options) int
+	opts     string
+	file     bool
+	min, max int
+}{
+	"run":      {run, "", true, 0, 1},
+	"check":    {check, "", true, 0, 1},
+	"explain":  {explain, "-c --config --offline -H", false, 2, 2},
+	"why":      {why, withConfig, false, 1, 1},
+	"plan":     {planCmd, withChange, true, 0, 1},
+	"apply":    {applyCmd, withChange, true, 0, 1},
+	"rollback": {rollbackCmd, withChange, false, 0, 1},
+	"history":  {historyCmd, withChange, false, 0, 0},
+	"tail":     {tailCmd, withConfig, false, 0, -1},
+	"status":   {statusCmd, withConfig, false, 0, 0},
+	"events":   {eventsCmd, withConfig, false, 0, 0},
 }
 
-func main() {
-	if len(os.Args) < 2 {
-		os.Exit(badUsage())
+func main() { os.Exit(execute(os.Args[1:])) }
+
+// execute runs one command line and returns the exit code.
+func execute(args []string) int {
+	if len(args) == 0 {
+		return badUsage("no command given")
 	}
-	cmd, args := os.Args[1], os.Args[2:]
-	if f, ok := commands[cmd]; ok {
-		os.Exit(f(args))
-	}
-	switch cmd {
+	switch args[0] {
 	case "version", "--version":
 		fmt.Printf("bareproxy %s, built with %s\n", bp.Version, runtime.Version())
+		return 0
 	case "help", "-h", "--help":
 		usage()
-	default:
-		fmt.Fprintf(os.Stderr, "bareproxy: unknown command %q\n", cmd)
-		os.Exit(badUsage())
+		return 0
 	}
+	c, ok := commands[args[0]]
+	if !ok {
+		return badUsage(fmt.Sprintf("unknown command %q", args[0]))
+	}
+	o, err := parse(args[1:], c.opts)
+	if err == nil && (len(o.pos) < c.min || c.max >= 0 && len(o.pos) > c.max) {
+		err = errors.New("wrong number of arguments")
+	}
+	if err != nil {
+		return badUsage(err.Error())
+	}
+	if c.file && len(o.pos) > 0 {
+		o.config, o.pos = o.pos[0], o.pos[1:]
+	}
+	o.config = cmp.Or(o.config, os.Getenv("BAREPROXY_CONFIG"), "/etc/bareproxy/bareproxy.conf")
+	return c.run(o)
 }
 
 func usage() {
 	fmt.Fprint(os.Stderr, `usage:
   bareproxy run [FILE]                  start serving
   bareproxy check [FILE]                check a config without starting
-  bareproxy explain [--config FILE] [--offline] [-H "Name: value"]... METHOD URL
-                                        how a request would be handled
-  bareproxy why [--config FILE] [--json] ID
-                                        what happened to a request (memory first, then the trace log)
+  bareproxy explain [-c FILE] [--offline] [-H "Name: value"]... METHOD URL
+                                        how a request is handled: by the running server, or by FILE with --offline or when none runs
+  bareproxy why [-c FILE] [--json] ID   what happened to a request (memory first, then the trace log)
   bareproxy plan [FILE] [--from FILE]   what FILE would change, against the running config or another file
   bareproxy apply [FILE] [--yes] [--plan ID]
                                         check, show the plan, ask, make FILE live
-  bareproxy rollback [VERSION]          make an earlier version live (default: the one before)
-  bareproxy history                     config versions: time, how, Unix user, plan ID
-  bareproxy tail [--config FILE] [--json] [FILTER]...
+  bareproxy rollback [-c FILE] [VERSION]
+                                        make an earlier version live (default: the one before)
+  bareproxy history [-c FILE]           config versions: time, how, Unix user, plan ID
+  bareproxy tail [-c FILE] [--json] [FILTER]...
                                         records as they happen (times are UTC). Filters, all ANDed:
                                         'status>=500' status=404 pool=api site= host= outcome= method= path=/prefix
-  bareproxy status [--config FILE] [--json]
-                                        listeners, sites, backends, certificates, recent error rates
-  bareproxy events [--config FILE] [--json]
-                                        recent changes: backends up and down, certificates, reloads
+  bareproxy status [-c FILE] [--json]   listeners, sites, backends, certificates, recent error rates
+  bareproxy events [-c FILE] [--json]   recent changes: backends up and down, certificates, reloads
   bareproxy version
 FILE defaults to $BAREPROXY_CONFIG, then /etc/bareproxy/bareproxy.conf.
-plan, apply, rollback and history take --json; rollback and history take --config FILE.
+-c FILE (or --config FILE) names the config for every command but run and check, which take only FILE.
+--json works with every command but run, check and explain.
 `)
 }
 
-// badUsage shows the usage and returns the exit code for a command line
-// that doesn't fit.
-func badUsage() int {
+// badUsage says what is wrong with the command line, shows the usage and
+// returns the exit code 2.
+func badUsage(msg string) int {
+	fmt.Fprintln(os.Stderr, "bareproxy: "+msg)
 	usage()
 	return 2
 }
@@ -100,16 +123,6 @@ func fail(format string, a ...any) int {
 	return 1
 }
 
-func printProblems(w io.Writer, probs []bp.Problem) {
-	for _, p := range probs {
-		fmt.Fprintln(w, p)
-	}
-}
-
-func configFile(given string) string {
-	return cmp.Or(given, os.Getenv("BAREPROXY_CONFIG"), defaultConfig)
-}
-
 // options is what a command line holds. A command takes some of them.
 type options struct {
 	json, yes, offline bool
@@ -118,33 +131,25 @@ type options struct {
 	pos                []string // the arguments that aren't options
 }
 
-// arg is the one argument that a command with at most one takes, or "".
-func (o options) arg() string { return cmp.Or(o.pos...) }
-
-// parse reads the options in names (with the spelling the user types, such
-// as "--config" and "-c") from args, in any position. Other arguments go to
-// pos. Lenient commands keep an unknown option as a plain argument and
-// ignore an option that lacks its value. A strict command refuses both, says
-// why and returns false.
-func parse(args []string, strict bool, names ...string) (o options, ok bool) {
+// parse reads the options in names (the spelling a user types, such as
+// "--config" and "-c", separated by spaces) from args, in any position. Other
+// arguments go to pos. An option that isn't in names, or that lacks its
+// value, is an error.
+func parse(args []string, names string) (o options, err error) {
 	flags := map[string]*bool{"--json": &o.json, "--yes": &o.yes, "-y": &o.yes, "--offline": &o.offline}
 	values := map[string]*string{"--config": &o.config, "-c": &o.config, "--from": &o.from, "--plan": &o.plan}
 	for i := 0; i < len(args); i++ {
 		a := args[i]
 		switch {
-		case !slices.Contains(names, a):
-			if strict && strings.HasPrefix(a, "-") {
-				fmt.Fprintf(os.Stderr, "bareproxy: unknown option %s\n", a)
-				return o, false
+		case !slices.Contains(strings.Fields(names), a):
+			if strings.HasPrefix(a, "-") {
+				return o, fmt.Errorf("unknown option %s", a)
 			}
 			o.pos = append(o.pos, a)
 		case flags[a] != nil:
 			*flags[a] = true
-		case i == len(args)-1: // an option that takes a value, and none is left
-			if strict {
-				fmt.Fprintf(os.Stderr, "bareproxy: %s needs a value\n", a)
-				return o, false
-			}
+		case i == len(args)-1:
+			return o, fmt.Errorf("%s needs a value", a)
 		case a == "-H":
 			i++
 			o.headers = append(o.headers, args[i])
@@ -153,67 +158,130 @@ func parse(args []string, strict bool, names ...string) (o options, ok bool) {
 			*values[a] = args[i]
 		}
 	}
-	return o, true
+	return o, nil
 }
 
-// loadConfig loads a config just to learn where its admin socket and trace
-// log are. A config with errors still has them, so only a file that can't be
-// read at all is reported.
-func loadConfig(file string) *bp.Config {
-	c, probs := bp.Load(configFile(file))
+// settings loads a config just to learn where its admin socket and trace log
+// are. A config with errors still has them, so only a file that can't be read
+// is an error. Like loadChecked, it leaves the config's folders open until the
+// command ends.
+func settings(file string) (*bp.Config, error) {
+	c, probs := bp.Load(file)
 	if c == nil {
-		printProblems(os.Stderr, probs)
-		return nil
+		return nil, fmt.Errorf("can't read the config: %s (--config FILE or $BAREPROXY_CONFIG says which one to use)", probs[0].Msg)
 	}
-	c.Close()
-	return c
+	return c, nil
 }
 
-func run(args []string) int {
-	if len(args) > 1 {
-		return badUsage()
+// loadChecked loads a config to use its rules. It reports the problems on
+// stderr, and a config with errors is an error. The folders it opened stay
+// open until the command ends.
+func loadChecked(file string) (*bp.Config, error) {
+	c, probs := bp.Load(file)
+	for _, p := range probs {
+		fmt.Fprintf(os.Stderr, "%s: %s\n", file, p)
 	}
-	if err := bp.Run(configFile(cmp.Or(args...))); err != nil {
+	if c == nil || bp.HasErrors(probs) {
+		return nil, fmt.Errorf("%s has errors, so it can't be used", file)
+	}
+	return c, nil
+}
+
+// request sends one request to the admin socket that the config of o names.
+// The target is the path with its query. A zero timeout means none, for
+// streams. When nothing can be reached, the error says so in plain words.
+func (o options) request(method, target, body string, timeout time.Duration) (*http.Response, error) {
+	c, err := settings(o.config)
+	if err != nil {
+		return nil, err
+	}
+	if c.Admin == "off" {
+		return nil, errors.New("the config turns the admin socket off, so there is no server to ask")
+	}
+	dial := func(ctx context.Context, _, _ string) (net.Conn, error) {
+		conn, err := (&net.Dialer{}).DialContext(ctx, "unix", c.Admin)
+		if errors.Is(err, syscall.EACCES) {
+			err = fmt.Errorf("no permission to use %s: run as root or as a member of its group", c.Admin)
+		} else if err != nil {
+			err = fmt.Errorf("no BareProxy is running on %s", c.Admin)
+		}
+		return conn, err
+	}
+	req, _ := http.NewRequest(method, "http://bareproxy"+target, strings.NewReader(body)) // the method and target are ours
+	resp, err := (&http.Client{Timeout: timeout, Transport: &http.Transport{DialContext: dial}}).Do(req)
+	return resp, errors.Unwrap(err) // Do wraps every error in a *url.Error, which only repeats the URL
+}
+
+// ask sends a request and reads the whole reply. Anything but a 200 is an
+// error that carries the server's message, and the body comes back too. With
+// --json it asks for JSON, so q must not be nil.
+func (o options) ask(method, path string, q url.Values, body string) (string, error) {
+	if o.json {
+		q.Set("json", "1")
+	}
+	resp, err := o.request(method, path+"?"+q.Encode(), body, time.Minute)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+	b, err := io.ReadAll(resp.Body)
+	if err == nil && resp.StatusCode != http.StatusOK {
+		var e struct{ Error string } // a JSON reply says {"error": "..."}
+		json.Unmarshal(b, &e)
+		err = errors.New(cmp.Or(e.Error, strings.TrimSpace(string(b))))
+	}
+	return string(b), err
+}
+
+// show prints the reply that ask returned. Errors go to stderr, except with
+// --json, where the server's reply is JSON too.
+func (o options) show(out string, err error) int {
+	switch {
+	case err == nil:
+		fmt.Print(out)
+		return 0
+	case o.json && out != "":
+		fmt.Print(out)
+		return 1
+	}
+	return fail("%v", err)
+}
+
+// toJSON renders v as indented JSON.
+func toJSON(v any) string {
+	b, _ := json.MarshalIndent(v, "", "  ")
+	return string(b) + "\n"
+}
+
+func run(o options) int {
+	if err := bp.Run(o.config); err != nil {
 		return fail("%v", err)
 	}
 	return 0
 }
 
-func check(args []string) int {
-	if len(args) > 1 {
-		return badUsage()
+func check(o options) int {
+	c, err := loadChecked(o.config)
+	if err != nil {
+		return fail("%v", err)
 	}
-	file := configFile(cmp.Or(args...))
-	c, probs := bp.Load(file)
-	printProblems(os.Stdout, probs)
-	if c == nil || bp.HasErrors(probs) {
-		fmt.Printf("%s: has errors, so it can't be used\n", file)
-		return 1
-	}
-	defer c.Close()
-	fmt.Printf("%s: ok, %s\n", file, bp.Summary(c))
+	fmt.Printf("%s: ok, %s\n", o.config, bp.Summary(c))
 	return 0
 }
 
-func explain(args []string) int {
-	o, _ := parse(args, false, "--config", "-c", "--offline", "-H")
-	if len(o.pos) != 2 {
-		return badUsage()
-	}
+func explain(o options) int {
 	method, rawURL := strings.ToUpper(o.pos[0]), o.pos[1]
-	c, probs := bp.Load(configFile(o.config))
-	if c == nil || bp.HasErrors(probs) {
-		printProblems(os.Stderr, probs)
-		return 1
-	}
-	defer c.Close()
 	if !o.offline {
 		// Ask the running server first: it knows the live backend states.
 		q := url.Values{"method": {method}, "url": {rawURL}, "h": o.headers}
-		if code, out, err := get(c.Admin, "/explain?"+q.Encode()); err == nil && code == http.StatusOK {
+		if out, err := o.ask("GET", "/explain", q, ""); err == nil {
 			fmt.Print(out)
 			return 0
 		}
+	}
+	c, err := loadChecked(o.config)
+	if err != nil {
+		return fail("%v", err)
 	}
 	h := http.Header{}
 	for _, kv := range o.headers {
@@ -225,30 +293,24 @@ func explain(args []string) int {
 	if err == nil {
 		out, err = bp.Explain(rt, method, rawURL, h, false)
 	}
-	if err != nil {
-		return fail("%v", err)
-	}
-	fmt.Print(out)
-	return 0
+	return o.show(out, err)
 }
 
-func why(args []string) int {
-	o, _ := parse(args, false, traceOptions...)
-	if len(o.pos) != 1 {
-		return badUsage()
-	}
-	c := loadConfig(o.config)
-	if c == nil {
-		return 1
-	}
+func why(o options) int {
 	id := o.pos[0]
-	rec, asked, err := traceWhy(c.Admin, id)
-	if rec == nil && err == nil {
-		if c.TraceLog == "stdout" || c.TraceLog == "off" {
-			if asked {
-				return fail("no request with an ID starting %s in memory, and this config sends the trace log to %s, so there is no file to look in", id, c.TraceLog)
-			}
-			return fail("no running server answered, and this config sends the trace log to %s; point trace-log at a file", c.TraceLog)
+	rec := &bp.Record{}
+	out, err := o.ask("GET", "/why", url.Values{"id": {id}}, "")
+	if err == nil {
+		err = json.Unmarshal([]byte(out), rec)
+	} else {
+		// The running server can't say (nothing answered, or it doesn't have
+		// the request), so the trace log file is next.
+		c, cerr := settings(o.config)
+		switch {
+		case cerr != nil:
+			return fail("%v", cerr)
+		case c.TraceLog == "stdout" || c.TraceLog == "off":
+			return fail("%v, and the trace log goes to %s, so there is no file to look in", err, c.TraceLog)
 		}
 		rec, err = bp.FindRecord(c.TraceLog, id)
 	}
@@ -264,49 +326,212 @@ func why(args []string) int {
 	return 0
 }
 
-// adminClient makes an HTTP client that talks to the admin socket. A zero
-// timeout means none, for streams.
-func adminClient(sock string, timeout time.Duration) *http.Client {
-	dial := func(ctx context.Context, _, _ string) (net.Conn, error) {
-		return (&net.Dialer{}).DialContext(ctx, "unix", sock)
+// The config change commands: plan, apply, rollback and history. Apart from
+// plan --from, they ask the running server over its admin socket.
+
+func planCmd(o options) int {
+	if o.from == "" {
+		text, err := os.ReadFile(o.config)
+		if err != nil {
+			return fail("%v", err)
+		}
+		return o.show(o.ask("POST", "/plan", url.Values{}, string(text)))
 	}
-	return &http.Client{Timeout: timeout, Transport: &http.Transport{DialContext: dial}}
+	// With --from, two files are compared and no server is asked.
+	old, err1 := loadChecked(o.from)
+	cur, err2 := loadChecked(o.config)
+	if err := errors.Join(err1, err2); err != nil {
+		return fail("%v", err)
+	}
+	p := bp.MakePlan(old, cur)
+	if o.json {
+		fmt.Print(toJSON(map[string]any{"plan_id": p.ID, "from": o.from, "file": o.config, "text": p.Text(), "plan": p}))
+	} else {
+		fmt.Printf("%s compared with %s:\n%s", o.config, o.from, p.Text())
+	}
+	return 0
 }
 
-// adminCall sends one request to the admin socket. target is the path with
-// its query. It returns the status code and the body.
-func adminCall(sock, method, target, body string, timeout time.Duration) (int, string, error) {
-	req, err := http.NewRequest(method, "http://bareproxy"+target, strings.NewReader(body))
+func applyCmd(o options) int {
+	text, err := os.ReadFile(o.config)
 	if err != nil {
-		return 0, "", err
+		return fail("%v", err)
 	}
-	resp, err := adminClient(sock, timeout).Do(req)
+	out, err := options{config: o.config, json: true}.ask("POST", "/plan", url.Values{}, string(text))
 	if err != nil {
-		return 0, "", err
+		return o.show(out, err)
+	}
+	var pr struct {
+		PlanID    string `json:"plan_id"`
+		Running   int
+		Unchanged bool
+		Warnings  []string
+		Text      string
+	}
+	if err := json.Unmarshal([]byte(out), &pr); err != nil {
+		return fail("%v", err)
+	}
+	if o.plan != "" && o.plan != pr.PlanID {
+		err := fmt.Errorf("plan %s doesn't match what %s would do now (that is plan %s), so nothing was applied; see the new plan with: bareproxy plan %[2]s", o.plan, o.config, pr.PlanID)
+		return o.show(toJSON(map[string]string{"error": err.Error()}), err)
+	}
+	// The plan goes to stdout, or to stderr when stdout is for JSON. An
+	// unchanged text has none: the server answers for it (it reloads the
+	// certificate files, as SIGHUP does), and nothing needs a yes.
+	planOut := map[bool]*os.File{false: os.Stdout, true: os.Stderr}[o.json]
+	if !pr.Unchanged && (!o.json || !o.yes) {
+		fmt.Fprintf(planOut, "Compared with running version %d:\n%s", pr.Running, pr.Text)
+		for _, w := range pr.Warnings {
+			fmt.Fprintln(planOut, w)
+		}
+	}
+	if !o.yes && !pr.Unchanged {
+		if !isTerminal(os.Stdin) {
+			return fail("nothing applied: apply asks before it changes anything, and there is no terminal to ask in; add --yes to apply without asking")
+		}
+		fmt.Fprint(planOut, "Apply? [y/N] ")
+		var answer string
+		fmt.Fscanln(os.Stdin, &answer)
+		if a := strings.ToLower(answer); a != "y" && a != "yes" {
+			return fail("nothing applied")
+		}
+	}
+	// pr.PlanID is the plan that was shown, and the one --plan named if it did.
+	return o.show(o.ask("POST", "/apply", url.Values{"plan": {pr.PlanID}}, string(text)))
+}
+
+// isTerminal reports whether f looks like a terminal: a character device
+// other than /dev/null.
+func isTerminal(f *os.File) bool {
+	fi, err := f.Stat()
+	null, _ := os.Stat(os.DevNull)
+	return err == nil && fi.Mode()&os.ModeCharDevice != 0 && !os.SameFile(fi, null)
+}
+
+func rollbackCmd(o options) int {
+	return o.show(o.ask("POST", "/rollback", url.Values{"version": o.pos}, ""))
+}
+
+func historyCmd(o options) int { return o.show(o.ask("GET", "/history", url.Values{}, "")) }
+
+// The trace commands: tail, status and events read what a running server
+// knows.
+
+func tailCmd(o options) int {
+	for _, f := range o.pos {
+		if _, err := bp.ParseTailFilter(f); err != nil {
+			return badUsage(err.Error())
+		}
+	}
+	resp, err := o.request("GET", "/tail?"+url.Values{"f": o.pos}.Encode(), "", 0)
+	if err != nil {
+		return fail("%v", err)
 	}
 	defer resp.Body.Close()
-	b, err := io.ReadAll(resp.Body)
-	return resp.StatusCode, string(b), err
+	if resp.StatusCode != http.StatusOK {
+		b, _ := io.ReadAll(resp.Body)
+		return fail("%s", strings.TrimSpace(string(b)))
+	}
+	for dec := json.NewDecoder(resp.Body); ; {
+		var raw json.RawMessage
+		if dec.Decode(&raw) != nil {
+			return fail("the server closed the connection")
+		}
+		if o.json {
+			fmt.Printf("%s\n", raw)
+			continue
+		}
+		var line struct {
+			bp.Record
+			Dropped int // a line that says {"dropped":N} instead of holding a record
+		}
+		json.Unmarshal(raw, &line)
+		if line.ID == "" {
+			fmt.Printf("-- %d records skipped, the reader was too slow --\n", line.Dropped)
+		} else {
+			fmt.Println(tailLine(&line.Record))
+		}
+	}
 }
 
-// get asks the admin socket for a path, for the commands that show what a
-// running server knows.
-func get(sock, target string) (int, string, error) {
-	if sock == "" || sock == "off" {
-		return 0, "", errors.New("the config has no admin socket")
+// tailLine is one record on one line: time (UTC), ID, method, host and path,
+// status, outcome, time taken, and the rule that handled it.
+func tailLine(r *bp.Record) string {
+	_, t, _ := strings.Cut(r.Time, "T")
+	status, rule := "-", "-"
+	if r.Status != 0 {
+		status = fmt.Sprint(r.Status)
 	}
-	return adminCall(sock, "GET", target, "", 5*time.Second)
+	if r.Line != 0 {
+		rule = fmt.Sprintf("line %d: %s", r.Line, r.Rule)
+	}
+	return fmt.Sprintf("%s  %s  %-4s %s%s  %s  %s  %.1f ms  %s", strings.TrimSuffix(t, "Z"), r.ID, r.Method, r.Host, r.Path, status, r.Outcome, r.MS, rule)
 }
 
-// callAdmin sends one request to the admin socket. When nothing answers it
-// says why in plain words.
-func callAdmin(sock, method, path string, q url.Values, body string) (int, string, error) {
-	code, out, err := adminCall(sock, method, path+"?"+q.Encode(), body, time.Minute)
-	switch {
-	case errors.Is(err, syscall.ENOENT), errors.Is(err, syscall.ECONNREFUSED):
-		err = fmt.Errorf("no BareProxy is running with the admin socket %s", sock)
-	case errors.Is(err, syscall.EACCES):
-		err = fmt.Errorf("no permission to use %s: run as root or as a member of its group", sock)
+// view shows what a running server reports at a path. With --json it prints
+// the JSON as it came; otherwise it reads the JSON into a T and calls text.
+func view[T any](o options, path string, text func(T)) int {
+	var v T
+	out, err := o.ask("GET", path, url.Values{}, "")
+	if err != nil || o.json {
+		return o.show(out, err)
 	}
-	return code, out, err
+	if err = json.Unmarshal([]byte(out), &v); err != nil {
+		return fail("%v", err)
+	}
+	text(v)
+	return 0
+}
+
+func statusCmd(o options) int { return view(o, "/status", printStatus) }
+
+func eventsCmd(o options) int { return view(o, "/events", printEvents) }
+
+func printEvents(evs []bp.Event) {
+	if len(evs) == 0 {
+		fmt.Println("No events yet.")
+	}
+	for _, e := range evs {
+		fmt.Printf("%s  %-11s  %s\n", e.Time, e.Kind, e.Text)
+	}
+}
+
+func printStatus(st bp.Status) {
+	fmt.Printf("BareProxy %s, up %s (since %s)\nConfig %s, version %d\n", st.Version, time.Duration(st.UptimeSeconds)*time.Second, st.Started, st.ConfigFile, st.ConfigVersion)
+	fmt.Printf("\nListeners (%d)\n", len(st.Listeners))
+	for _, l := range st.Listeners {
+		fmt.Printf("  :%d %s  %s\n", l.Port, map[bool]string{false: "http", true: "https"}[l.TLS], strings.Join(l.Sites, ", "))
+	}
+	fmt.Printf("\nSites (%d)\n", len(st.Sites))
+	for _, s := range st.Sites {
+		fmt.Printf("  %s (line %d), rules: %d, %s\n", s.Name, s.Line, s.Rules, strings.Join(s.Addresses, " "))
+	}
+	fmt.Printf("\nPools (%d)\n", len(st.Pools))
+	for _, p := range st.Pools {
+		fmt.Printf("  %s (line %d): %d of %d up. Checks: %s\n", p.Name, p.Line, p.Up, p.Size, p.Checks)
+		for _, b := range p.Backends {
+			state := b.State
+			if b.Reason != "" {
+				state += " (" + b.Reason + ")"
+			}
+			fmt.Printf("    %-22s %s since %s, %d in flight, %d failures in a row\n", b.Addr, state, b.Since, b.InFlight, b.Failures)
+		}
+	}
+	fmt.Printf("\nCertificates (%d)\n", len(st.Certificates))
+	for _, c := range st.Certificates {
+		fmt.Printf("  %s  %s  ends %s, %d days left\n", c.Site, c.Subject, c.NotAfter[:10], c.DaysLeft)
+	}
+	r := st.Requests
+	if r.Ring.Limit == 0 {
+		fmt.Println("\nNo requests counted: trace-memory is off, or none has arrived yet")
+		return
+	}
+	fmt.Printf("\nRequests (the %d most recent, held in memory, back to %s)\n", r.Ring.Records, r.Ring.Oldest)
+	rateLine("last minute", r.Last1m)
+	rateLine("last 5 minutes", r.Last5m)
+}
+
+func rateLine(name string, r bp.Rate) {
+	more := map[bool]string{false: " or more (the ring has wrapped)"}[r.Complete]
+	fmt.Printf("  %-15s requests: %d%s, status 5xx: %d, proxy errors: %d\n", name, r.Requests, more, r.Status5xx, r.ProxyErrors)
 }
