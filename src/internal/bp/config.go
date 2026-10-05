@@ -30,10 +30,7 @@ type Problem struct {
 }
 
 func (p Problem) String() string {
-	kind := "error"
-	if p.Warn {
-		kind = "warning"
-	}
+	kind := map[bool]string{false: "error", true: "warning"}[p.Warn]
 	if p.Line == 0 {
 		return kind + ": " + p.Msg
 	}
@@ -69,38 +66,35 @@ type Config struct {
 
 // Port is one listener and the sites it serves.
 type Port struct {
-	Num   int
-	TLS   bool
-	Line  int
-	Exact map[string]*Site
-	Wild  map[string]*Site
-	Any   *Site
+	Num         int
+	TLS         bool
+	Line        int
+	Exact, Wild map[string]*Site
+	Any         *Site
 }
 
 // Site is one site block.
 type Site struct {
-	Line             int
-	Name             string
-	Addrs            []Addr
-	Routes           []*Route
-	CertFile         string
-	KeyFile          string
-	TLSLine          int
-	TLSAuto          bool
-	Cert             *tls.Certificate
-	Err404           string
-	Err404Line       int
-	KeepEncodedSlash bool
-	BodyLimit        int64
-	Synthetic        bool
+	Line              int
+	Name              string
+	Addrs             []Addr
+	Routes            []*Route
+	CertFile, KeyFile string
+	TLSLine           int
+	TLSAuto           bool
+	Cert              *tls.Certificate
+	Err404            string
+	Err404Line        int
+	KeepEncodedSlash  bool
+	BodyLimit         int64
+	Synthetic         bool
 }
 
 // Addr is one site address.
 type Addr struct {
-	Scheme string
-	Host   string
-	Port   int
-	Text   string
+	Scheme, Host string
+	Port         int
+	Text         string
 }
 
 // Route is one route line.
@@ -116,9 +110,8 @@ type Route struct {
 
 // HeaderCond is a header condition on a route.
 type HeaderCond struct {
-	Name     string
-	Value    string
-	HasValue bool
+	Name, Value string
+	HasValue    bool
 }
 
 // Action is what a route does.
@@ -136,15 +129,14 @@ type Action struct {
 
 // PoolSpec is one pool block.
 type PoolSpec struct {
-	Line            int
-	Name            string
-	Backends        []BackendSpec
-	Health          *HealthSpec
-	HostHeader      string
-	ConnectTimeout  time.Duration
-	ResponseTimeout time.Duration
-	Retries         int
-	Drain           time.Duration // how long removed backends drain; 0 means 30 s
+	Line                            int
+	Name                            string
+	Backends                        []BackendSpec
+	Health                          *HealthSpec
+	HostHeader                      string
+	ConnectTimeout, ResponseTimeout time.Duration
+	Retries                         int
+	Drain                           time.Duration // how long removed backends drain; 0 means 30 s
 }
 
 // BackendSpec is one backend line.
@@ -156,11 +148,10 @@ type BackendSpec struct {
 
 // HealthSpec is a pool's active health check.
 type HealthSpec struct {
-	Line    int
-	Path    string
-	Every   time.Duration
-	Timeout time.Duration
-	Lo, Hi  int
+	Line           int
+	Path           string
+	Every, Timeout time.Duration
+	Lo, Hi         int
 }
 
 func (h *HealthSpec) key() string {
@@ -181,11 +172,8 @@ func (c *Config) Close() {
 // Load reads and compiles a config file.
 func Load(file string) (*Config, []Problem) {
 	abs, err := filepath.Abs(file)
-	if err != nil {
-		return nil, []Problem{{Msg: err.Error()}}
-	}
-	data, err := os.ReadFile(abs)
-	if err != nil {
+	data, err2 := os.ReadFile(abs)
+	if err = cmp.Or(err, err2); err != nil {
 		return nil, []Problem{{Msg: err.Error()}}
 	}
 	return Parse(abs, string(data))
@@ -232,10 +220,9 @@ func splitLine(s string) ([]token, error) {
 func joinTokens(toks []token) string {
 	parts := make([]string, len(toks))
 	for i, t := range toks {
+		parts[i] = t.s
 		if t.quoted {
 			parts[i] = strconv.Quote(t.s)
-		} else {
-			parts[i] = t.s
 		}
 	}
 	return strings.Join(parts, " ")
@@ -267,9 +254,7 @@ type ParseOptions struct {
 
 // Parse compiles config source. It returns the config even when there are
 // problems; callers check HasErrors before using it.
-func Parse(file, src string) (*Config, []Problem) {
-	return ParseWith(file, src, ParseOptions{})
-}
+func Parse(file, src string) (*Config, []Problem) { return ParseWith(file, src, ParseOptions{}) }
 
 // ParseWith is Parse with options.
 func ParseWith(file, src string, o ParseOptions) (*Config, []Problem) {
@@ -400,12 +385,9 @@ func (p *parser) global(ln int, w []string) error {
 	case "id-header":
 		c.IDHeader, err = onOff(w[1])
 	case "trace-memory":
-		if w[1] == "off" {
-			c.TraceMem = 0
-		} else if n, e := parseSize(w[1]); e != nil {
-			err = e
-		} else {
-			c.TraceMem = n
+		c.TraceMem = 0
+		if w[1] != "off" {
+			c.TraceMem, err = parseSize(w[1])
 		}
 	case "trace-log":
 		if len(w) != 2 && len(w) != 4 {
@@ -679,7 +661,6 @@ func (p *parser) poolSetting(ps *PoolSpec, ln int, w []string) error {
 // port tables. It runs after the whole file is read.
 func (p *parser) compile() {
 	c := p.c
-	roots := map[string]*os.Root{}
 	for _, s := range c.Sites {
 		if len(s.Routes) == 0 {
 			p.warnf(s.Line, "site %s has no routes, so every request gets 404", s.Name)
@@ -694,18 +675,16 @@ func (p *parser) compile() {
 				if p.opt.NoDisk {
 					continue
 				}
-				root := roots[r.Act.Dir]
-				if root == nil {
-					var err error
-					root, err = os.OpenRoot(r.Act.Dir)
+				i := slices.IndexFunc(c.roots, func(x *os.Root) bool { return x.Name() == r.Act.Dir })
+				if i < 0 { // each folder is opened once
+					root, err := os.OpenRoot(r.Act.Dir)
 					if err != nil {
 						p.errf(r.Line, "can't open folder %s: %v", r.Act.Dir, unwrapPathErr(err))
 						continue
 					}
-					roots[r.Act.Dir] = root
-					c.roots = append(c.roots, root)
+					i, c.roots = len(c.roots), append(c.roots, root)
 				}
-				r.Act.Root = root
+				r.Act.Root = c.roots[i]
 			}
 		}
 		https := slices.ContainsFunc(s.Addrs, func(a Addr) bool { return a.Scheme == "https" })
@@ -878,12 +857,9 @@ func validHeaderName(s string) bool {
 func parseSize(s string) (int64, error) {
 	u := strings.ToUpper(s)
 	mult := int64(1)
-	for _, x := range []struct {
-		suf string
-		m   int64
-	}{{"GB", 1 << 30}, {"MB", 1 << 20}, {"KB", 1 << 10}, {"B", 1}} {
-		if strings.HasSuffix(u, x.suf) {
-			u, mult = strings.TrimSuffix(u, x.suf), x.m
+	for i, suf := range []string{"GB", "MB", "KB", "B"} {
+		if n, ok := strings.CutSuffix(u, suf); ok {
+			u, mult = n, int64(1)<<(30-10*i) // 1 GB, 1 MB, 1 KB, 1 byte
 			break
 		}
 	}
@@ -894,17 +870,12 @@ func parseSize(s string) (int64, error) {
 	return n * mult, nil
 }
 
+// parseRange reads a status range such as 200-399.
 func parseRange(s string) (int, int, bool) {
-	a, b, ok := strings.Cut(s, "-")
-	if !ok {
-		return 0, 0, false
-	}
+	a, b, _ := strings.Cut(s, "-")
 	lo, e1 := strconv.Atoi(a)
 	hi, e2 := strconv.Atoi(b)
-	if e1 != nil || e2 != nil || lo < 100 || hi > 599 || lo > hi {
-		return 0, 0, false
-	}
-	return lo, hi, true
+	return lo, hi, e1 == nil && e2 == nil && lo >= 100 && hi <= 599 && lo <= hi
 }
 
 // schemeName is the URL scheme of a TLS or a plain connection.
