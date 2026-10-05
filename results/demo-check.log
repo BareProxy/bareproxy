@@ -1,7 +1,7 @@
 BareProxy browser demo check
-Run: Mon Oct 05 2026 13:56:00 GMT+0300 (Israel Daylight Time)
+Run: Mon Oct 05 2026 16:55:03 GMT+0300 (Israel Daylight Time)
 Demo folder: /home/claude/out/demo-dist
-bareproxy.wasm: 15800218 bytes raw, 3958359 bytes gzipped (gzip -9)
+bareproxy.wasm: 15815640 bytes raw, 3962131 bytes gzipped (gzip -9)
 
 == What differs between the demo and the native program, and why
   1. The first line names bareproxy.conf, the demo's config name. The native program prints the file's path.
@@ -16,11 +16,11 @@ bareproxy.wasm: 15800218 bytes raw, 3958359 bytes gzipped (gzip -9)
      the rule table lines up. The native build is from the same source tree as the wasm build.
 
 == Setup
-fixture folder: /tmp/bpdc-X6Hwyk
+fixture folder: /tmp/bpdc-a2b8Ef
 PASS  native bareproxy builds
 PASS  native planref builds
 native: bareproxy 0.1.0-alpha, built with go1.27.1
-serving /home/claude/out/demo-dist at http://127.0.0.1:43803
+serving /home/claude/out/demo-dist at http://127.0.0.1:33907
 browser: Chromium 141.0.7390.37 (headless, Playwright)
 
 == Loading
@@ -47,7 +47,6 @@ demo problems:
         line 5: error: unknown site setting "bogus"
         line 7: error: example.com on port 443 already belongs to the site on line 1
         line 10: error: pool api has no backends
-        line 10: warning: pool api isn't used by any route
         line 11: error: a backend address is host:port, such as 10.0.0.11:8080
 PASS  broken config: the problem list equals native, line numbers included
 PASS  broken config: summary says it has errors
@@ -275,9 +274,9 @@ PASS  plan of a config against itself says no changes
 PASS  plan with a broken new config lists its problems
 
 == Speed (measured in this browser)
-  check    median 0.10 ms, slowest 12.30 ms
-  explain  median 0.20 ms, slowest 3.00 ms
-  plan     median 0.60 ms, slowest 1.00 ms
+  check    median 0.20 ms, slowest 11.50 ms
+  explain  median 0.20 ms, slowest 7.60 ms
+  plan     median 0.60 ms, slowest 7.20 ms
 PASS  every call is under 100 ms in the median
 
 == Layout and screenshots
@@ -314,4 +313,4 @@ PASS  no request failed except the ones this check forced
 PASS  no console errors or warnings (apart from the forced wrong-content-type case)
 
 == Summary
-114 passed, 0 failed, in 15 s
+114 passed, 0 failed, in 16 s

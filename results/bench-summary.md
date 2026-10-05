@@ -1,13 +1,13 @@
 # BareProxy against nginx: measurements
 
-Measured without targets. BareProxy (bareproxy 0.1.0-alpha, built with go1.27.1) and nginx (nginx/1.24.0 (Ubuntu)) served the same routes over plain HTTP on localhost, each on one CPU core, on a shared cloud VM. Run on 2026-10-05 11:04:31 IDT (UTC+0300). Raw log: `results/bench-2026-10-05.log`. Harness: `live/bench/`. A run that was allowed to finish took 12 min 21 s.
+Measured without targets. BareProxy (bareproxy 0.1.0-alpha, built with go1.27.1) and nginx (nginx/1.24.0 (Ubuntu)) served the same routes over plain HTTP on localhost, each on one CPU core, on a shared cloud VM. Run on 2026-10-05 16:35:40 IDT (UTC+0300). Raw log: `results/bench-2026-10-05.log`. Harness: `live/bench/`. A run that was allowed to finish took 12 min 22 s.
 
 Read the caveats at the end before quoting any number. The machine was shared with other workers, and latency in this test follows throughput.
 
-**In one line (computed from the best runs below):** with logging off, nginx handled 2.1 to 3.4 times as many requests per second as BareProxy; with logging to a file, nginx handled 1.9 to 3.4 times as many requests per second as BareProxy.
-The server process itself used 45 to 86 microseconds of CPU per request in BareProxy and 14 to 24 in nginx (medians; this figure stayed steady even when other processes disturbed the machine).
+**In one line (computed from the best runs below):** with logging off, nginx handled 1.9 to 3.2 times as many requests per second as BareProxy; with logging to a file, nginx handled 2.0 to 3.4 times as many requests per second as BareProxy.
+The server process itself used 41 to 72 microseconds of CPU per request in BareProxy and 14 to 23 in nginx (medians; this figure stayed steady even when other processes disturbed the machine).
 
-**Why best runs.** Every attempt is in the raw log. This run had the machine to itself: none of the 51 attempts lost more than 10% of a core to other processes, so the best run and the median of all attempts sit close together in the tables.
+**Why best runs.** This machine is shared, and other processes can take CPU time during a run. Of 51 attempts, 0 lost more than 10% of a core to other processes. That can only slow a run down. Among the 17 cases that have two or more clean attempts, the req/s of the clean attempts differed by at most 8%. Across the cases with repeats, the weakest attempt reached as little as 92% of the best run of its case. So the main figure is the best run of each case (highest req/s over all attempts, with the p50 and p99 of that same run), and the median of all attempts is shown beside it for comparison. The median of disturbed runs measures the neighbours as much as the servers.
 
 ## Throughput and latency, logging off
 
@@ -15,15 +15,15 @@ Keep-alive, 50 connections, 2 s warm-up, 10 s per run, every attempt logged. An 
 
 | Case | Server | req/s, best run | req/s, median of all attempts (lowest to highest) | Attempts, clean of all | p50 (ms), best run | p99 (ms), best run | Server CPU per request (us, median) | Generator core busy (all processes), best run |
 | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| `GET /` (200, 11,596 bytes) | BareProxy | 20,872 | 20,692 (20,211 to 20,872) | 3 of 3 | 2.47 | 11.07 | 48.0 | 38% |
-|  | nginx | 61,593 | 60,340 (59,468 to 61,593) | 3 of 3 | 0.81 | 1.59 | 16.0 | 71% |
-| `GET /images/plan-demo.png` (200, 72,732 bytes) | BareProxy | 17,084 | 16,620 (16,439 to 17,084) | 3 of 3 | 2.94 | 7.71 | 59.4 | 46% |
-|  | nginx | 53,809 † | 53,018 (52,033 to 53,809) | 3 of 3 | 0.38 | 41.54 | 15.4 | 99% |
-| `GET /no-such-page/` (404, 4,686 bytes) | BareProxy | 22,397 | 22,121 (22,041 to 22,397) | 3 of 3 | 2.57 | 23.10 | 44.5 | 31% |
-|  | nginx | 46,273 | 46,031 (45,541 to 46,273) | 3 of 3 | 1.12 | 2.08 | 21.4 | 55% |
-| `GET /api/orders` (200, 153 bytes) | BareProxy | 10,430 | 10,028 (9,904 to 10,430) | 3 of 3 | 4.48 | 12.50 | 80.1 | 16% |
-|  | nginx | 35,414 | 34,326 (34,231 to 35,414) | 3 of 3 | 1.31 | 3.10 | 13.9 | 30% |
-|  | testapi alone (no proxy) | 47,832 | 47,593 (47,193 to 47,832) | 3 of 3 | 1.05 | 2.68 | n/a | 51% |
+| `GET /` (200, 11,596 bytes) | BareProxy | 21,819 | 21,642 (21,621 to 21,819) | 3 of 3 | 2.35 | 28.30 | 45.8 | 34% |
+|  | nginx | 66,136 | 64,784 (61,276 to 66,136) | 3 of 3 | 0.76 | 1.52 | 15.2 | 74% |
+| `GET /images/plan-demo.png` (200, 72,732 bytes) | BareProxy | 17,769 | 17,512 (17,145 to 17,769) | 3 of 3 | 2.84 | 7.58 | 57.0 | 44% |
+|  | nginx | 57,095 † | 56,595 (54,999 to 57,095) | 3 of 3 | 0.36 | 40.63 | 15.4 | 98% |
+| `GET /no-such-page/` (404, 4,686 bytes) | BareProxy | 24,278 | 24,260 (23,076 to 24,278) | 3 of 3 | 2.36 | 18.78 | 40.8 | 34% |
+|  | nginx | 46,762 | 46,691 (46,185 to 46,762) | 3 of 3 | 1.06 | 2.31 | 21.0 | 53% |
+| `GET /api/orders` (200, 153 bytes) | BareProxy | 12,055 | 11,946 (11,176 to 12,055) | 3 of 3 | 3.95 | 9.09 | 65.6 | 19% |
+|  | nginx | 35,432 | 34,516 (34,454 to 35,432) | 3 of 3 | 1.28 | 3.56 | 13.7 | 35% |
+|  | testapi alone (no proxy) | 51,022 | 50,887 (50,367 to 51,022) | 3 of 3 | 0.99 | 2.40 | n/a | 51% |
 
 † The load generator's core was more than 90% busy in the best run, so the server could have gone faster: treat the number as a floor. ‡ Even the best run was disturbed by other processes (more than 10% of a core): the number is a floor too.
 
@@ -31,10 +31,10 @@ Ratios (computed):
 
 | Case | req/s, nginx over BareProxy (best runs) | req/s, nginx over BareProxy (medians of all attempts) | CPU per request, BareProxy over nginx | p50, BareProxy over nginx (best runs) |
 | --- | ---: | ---: | ---: | ---: |
-| `GET /` (200, 11,596 bytes) | 3.0 | 2.9 | 3.0 | 3.1 |
-| `GET /images/plan-demo.png` (200, 72,732 bytes) | 3.1 | 3.2 | 3.8 | 7.7 |
-| `GET /no-such-page/` (404, 4,686 bytes) | 2.1 | 2.1 | 2.1 | 2.3 |
-| `GET /api/orders` (200, 153 bytes) | 3.4 | 3.4 | 5.8 | 3.4 |
+| `GET /` (200, 11,596 bytes) | 3.0 | 3.0 | 3.0 | 3.1 |
+| `GET /images/plan-demo.png` (200, 72,732 bytes) | 3.2 | 3.2 | 3.7 | 7.9 |
+| `GET /no-such-page/` (404, 4,686 bytes) | 1.9 | 1.9 | 1.9 | 2.2 |
+| `GET /api/orders` (200, 153 bytes) | 2.9 | 2.9 | 4.8 | 3.1 |
 
 ## Throughput and latency, logging to a file
 
@@ -42,15 +42,15 @@ Keep-alive, 50 connections, 2 s warm-up, 10 s per run, every attempt logged. An 
 
 | Case | Server | req/s, best run | req/s, median of all attempts (lowest to highest) | Attempts, clean of all | p50 (ms), best run | p99 (ms), best run | Server CPU per request (us, median) | Generator core busy (all processes), best run |
 | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| `GET /` (200, 11,596 bytes) | BareProxy | 20,617 | 20,385 (19,357 to 20,617) | 3 of 3 | 2.64 | 18.80 | 48.5 | 35% |
-|  | nginx | 51,474 | 49,767 (36,507 to 51,474) | 3 of 3 | 0.99 | 1.68 | 19.6 | 64% |
-| `GET /images/plan-demo.png` (200, 72,732 bytes) | BareProxy | 17,029 | 15,979 (14,114 to 17,029) | 3 of 3 | 2.97 | 7.95 | 62.5 | 44% |
-|  | nginx | 55,333 † | 54,809 (53,949 to 55,333) | 3 of 3 | 0.38 | 40.39 | 16.3 | 98% |
-| `GET /no-such-page/` (404, 4,686 bytes) | BareProxy | 21,652 | 21,632 (21,595 to 21,652) | 3 of 3 | 2.64 | 29.45 | 46.0 | 34% |
-|  | nginx | 41,489 | 40,819 (40,598 to 41,489) | 3 of 3 | 1.20 | 2.49 | 24.1 | 49% |
-| `GET /api/orders` (200, 153 bytes) | BareProxy | 9,827 | 9,359 (9,357 to 9,827) | 3 of 3 | 4.76 | 13.19 | 86.0 | 15% |
-|  | nginx | 33,193 | 33,006 (31,480 to 33,193) | 3 of 3 | 1.42 | 3.24 | 15.4 | 33% |
-|  | testapi alone (no proxy) | 47,832 | 47,593 (47,193 to 47,832) | 3 of 3 | 1.05 | 2.68 | n/a | 51% |
+| `GET /` (200, 11,596 bytes) | BareProxy | 21,964 | 21,720 (20,327 to 21,964) | 3 of 3 | 2.42 | 7.22 | 45.5 | 34% |
+|  | nginx | 52,819 | 52,035 (49,869 to 52,819) | 3 of 3 | 0.97 | 1.65 | 19.0 | 66% |
+| `GET /images/plan-demo.png` (200, 72,732 bytes) | BareProxy | 16,642 | 16,516 (16,105 to 16,642) | 3 of 3 | 3.06 | 8.27 | 60.3 | 44% |
+|  | nginx | 55,940 † | 55,921 (55,602 to 55,940) | 3 of 3 | 0.55 | 40.33 | 16.8 | 98% |
+| `GET /no-such-page/` (404, 4,686 bytes) | BareProxy | 22,261 | 21,648 (21,382 to 22,261) | 3 of 3 | 2.58 | 34.49 | 46.1 | 31% |
+|  | nginx | 43,549 | 43,337 (41,162 to 43,549) | 3 of 3 | 1.17 | 1.95 | 22.8 | 52% |
+| `GET /api/orders` (200, 153 bytes) | BareProxy | 11,592 | 11,011 (10,658 to 11,592) | 3 of 3 | 4.16 | 9.01 | 71.5 | 17% |
+|  | nginx | 34,234 | 34,211 (33,547 to 34,234) | 3 of 3 | 1.37 | 3.26 | 14.6 | 31% |
+|  | testapi alone (no proxy) | 51,022 | 50,887 (50,367 to 51,022) | 3 of 3 | 0.99 | 2.40 | n/a | 51% |
 
 † The load generator's core was more than 90% busy in the best run, so the server could have gone faster: treat the number as a floor. ‡ Even the best run was disturbed by other processes (more than 10% of a core): the number is a floor too.
 
@@ -58,10 +58,10 @@ Ratios (computed):
 
 | Case | req/s, nginx over BareProxy (best runs) | req/s, nginx over BareProxy (medians of all attempts) | CPU per request, BareProxy over nginx | p50, BareProxy over nginx (best runs) |
 | --- | ---: | ---: | ---: | ---: |
-| `GET /` (200, 11,596 bytes) | 2.5 | 2.4 | 2.5 | 2.7 |
-| `GET /images/plan-demo.png` (200, 72,732 bytes) | 3.2 | 3.4 | 3.8 | 7.9 |
-| `GET /no-such-page/` (404, 4,686 bytes) | 1.9 | 1.9 | 1.9 | 2.2 |
-| `GET /api/orders` (200, 153 bytes) | 3.4 | 3.5 | 5.6 | 3.4 |
+| `GET /` (200, 11,596 bytes) | 2.4 | 2.4 | 2.4 | 2.5 |
+| `GET /images/plan-demo.png` (200, 72,732 bytes) | 3.4 | 3.4 | 3.6 | 5.6 |
+| `GET /no-such-page/` (404, 4,686 bytes) | 2.0 | 2.0 | 2.0 | 2.2 |
+| `GET /api/orders` (200, 153 bytes) | 3.0 | 3.1 | 4.9 | 3.0 |
 
 ## What logging to a file costs
 
@@ -69,10 +69,10 @@ Change in best-run req/s when each server writes one log record per request to a
 
 | Case | BareProxy | nginx |
 | --- | ---: | ---: |
-| `GET /` (200, 11,596 bytes) | -1.2% | -16.4% |
-| `GET /images/plan-demo.png` (200, 72,732 bytes) | -0.3% | +2.8% |
-| `GET /no-such-page/` (404, 4,686 bytes) | -3.3% | -10.3% |
-| `GET /api/orders` (200, 153 bytes) | -5.8% | -6.3% |
+| `GET /` (200, 11,596 bytes) | +0.7% | -20.1% |
+| `GET /images/plan-demo.png` (200, 72,732 bytes) | -6.3% | -2.0% |
+| `GET /no-such-page/` (404, 4,686 bytes) | -8.3% | -6.9% |
+| `GET /api/orders` (200, 153 bytes) | -3.8% | -3.4% |
 
 Log check: BareProxy: 12 of 12 runs had at least as many log lines as requests counted by wrk (lowest ratio 1.0004; a few more lines than requests is normal, because requests still in flight when wrk stops are logged but not counted); nginx: 12 of 12 runs had at least as many log lines as requests counted by wrk (lowest ratio 1.0001; a few more lines than requests is normal, because requests still in flight when wrk stops are logged but not counted).
 
@@ -87,7 +87,7 @@ Connections accepted on the machine during a measured run, from `/proc/net/snmp`
 | logging off | `GET /` (200, 11,596 bytes) | 51 | 51 |
 | logging off | `GET /images/plan-demo.png` (200, 72,732 bytes) | 51 | 51 |
 | logging off | `GET /no-such-page/` (404, 4,686 bytes) | 51 | 51 |
-| logging off | `GET /api/orders` (200, 153 bytes) | 51 | 51 |
+| logging off | `GET /api/orders` (200, 153 bytes) | 71 | 51 |
 | logging to a file | `GET /` (200, 11,596 bytes) | 51 | 51 |
 | logging to a file | `GET /images/plan-demo.png` (200, 72,732 bytes) | 51 | 51 |
 | logging to a file | `GET /no-such-page/` (404, 4,686 bytes) | 51 | 51 |
@@ -99,20 +99,17 @@ VmRSS from `/proc/PID/status`, summed over the processes of a server (nginx is i
 
 | Logging | Server | Idle RSS | Idle PSS | Peak RSS under load (highest of all runs) | Peak PSS under load | Peak RSS by case, median of runs (home / file / 404 / api) | High-water mark at the end |
 | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| logging off | BareProxy | 7.6 | 7.6 | 111.1 | 111.1 | 106.4 / 106.4 / 106.5 / 110.9 | 118.2 |
-| logging off | nginx | 11.3 | 6.0 | 12.3 | 6.5 | 12.3 / 12.3 / 12.3 / 12.3 | 12.3 |
-| logging to a file | BareProxy | 7.6 | 7.6 | 111.8 | 111.8 | 107.1 / 107.1 / 106.1 / 111.2 | 119.9 |
-| logging to a file | nginx | 11.4 | 6.1 | 12.4 | 6.6 | 12.4 / 12.4 / 12.4 / 12.4 | 12.4 |
-
-BareProxy ran with its default `trace-memory 32MB` in every run, including "logging off", so its in-memory record store filled up under load. That store is most of the peak: when full it holds about 68,000 records in about 38 MB of heap (measured in the trace tests), and Go's garbage collector lets the heap grow to about twice what is live. `trace-memory off` would lower the peak; it was not measured in this run.
+| logging off | BareProxy | 8.0 | 8.0 | 38.8 | 38.8 | 38.2 / 38.2 / 38.3 / 38.3 | 38.8 |
+| logging off | nginx | 11.4 | 6.0 | 12.4 | 6.5 | 12.4 / 12.4 / 12.4 / 12.4 | 12.4 |
+| logging to a file | BareProxy | 8.0 | 8.0 | 38.7 | 38.7 | 38.1 / 38.1 / 38.7 / 38.7 | 38.7 |
+| logging to a file | nginx | 11.4 | 6.0 | 12.4 | 6.5 | 12.4 / 12.4 / 12.2 / 12.4 | 12.4 |
 
 ## Binary size
 
 | What | Bytes | MiB (computed) | Notes |
 | --- | ---: | ---: | --- |
-| BareProxy as built | 11,852,861 | 11.3 | `go build`, default flags |
-| BareProxy stripped | 8,069,383 | 7.7 | `-trimpath -ldflags="-s -w"` |
-| testapi (stripped) | 5,878,023 | 5.6 | the test backend, for reference |
+| BareProxy as measured | 8,917,152 | 8.5 | the binary under test, named in the environment below |
+| testapi (stripped) | 5,894,407 | 5.6 | the test backend, for reference |
 | nginx binary alone | 1,314,136 | 1.3 | `/usr/sbin/nginx`, Ubuntu package |
 | nginx binary plus shared libraries | 10,386,480 | 9.9 | from `ldd`: libcrypt.so.1 0.2, libpcre2-8.so.0 0.6, libssl.so.3 0.7, libcrypto.so.3 5.1, libz.so.1 0.1, libc.so.6 2.0 (MiB each); the libraries are shared with the rest of the system |
 
@@ -121,8 +118,8 @@ Linkage of the BareProxy binary that was measured (`ldd`, run when this summary 
 ## Environment
 
 ```
-date: 2026-10-05 11:04:31 IDT (UTC+0300)
-date utc: 2026-10-05 08:04:31
+date: 2026-10-05 16:35:40 IDT (UTC+0300)
+date utc: 2026-10-05 13:35:40
 lscpu:
 CPU(s):                                  2
 Model name:                              Intel(R) Xeon(R) Processor @ 2.10GHz
@@ -135,14 +132,14 @@ L3 cache:                                260 MiB (1 instance)
 cpu MHz: 2100.000
 kernel: Linux 6.18.44-fc-v70 #1 SMP PREEMPT_DYNAMIC @0 x86_64
 memory: total        used        free      shared  buff/cache   available
-Mem:            8031         770        6744          13         811        7260
+Mem:            8031         669        5255          13        2400        7361
 go (build tool): go version go1.27.1 linux/amd64
-bareproxy binary: /home/claude/final/bareproxy
+bareproxy binary: /home/claude/bench/bin/bareproxy-final
 bareproxy version: bareproxy 0.1.0-alpha, built with go1.27.1
-bareproxy binary sha256: a8587f81f998a1d0 (first 16 hex digits)
-bareproxy binary built: 2026-10-05 11:04:25
-bareproxy source tree at run time: git 0017b3f Merge branch 'release'; uncommitted files: 0
-go version of the binary: /home/claude/final/bareproxy: go1.27.1
+bareproxy binary sha256: be4f37d5efd08d9d (first 16 hex digits)
+bareproxy binary built: 2026-10-05 16:35:34
+bareproxy source tree at run time: git fff3e3b The in-memory record store defaults to 8 MB (was 32 MB): peak memory under the full load test 46 MiB (w
+go version of the binary: /home/claude/bench/bin/bareproxy-final: go1.27.1
 nginx: nginx version: nginx/1.24.0 (Ubuntu)
 nginx build: nginx 1.24.0-2ubuntu7.18 nginx-light 1.24.0-2ubuntu7.18
 nginx package: nginx: /usr/sbin/nginx
@@ -151,20 +148,20 @@ wrk: wrk debian/4.1.0-4build2 [epoll] Copyright (C) 2012 Will Glozer
 h2load: h2load nghttp2/1.59.0
 openssl: OpenSSL 3.0.13 30 Jan 2024 (Library: OpenSSL 3.0.13 30 Jan 2024)
 python: 3.13.16
-load average at start: 0.73 0.30 0.23
+load average at start: 0.75 1.04 1.24
 busiest processes at start (other agents share this machine):
 PID %CPU %MEM     ELAPSED COMMAND
-27585 25.9  0.2       00:00 python3 /home/claude/bench/bench.py
-   69  3.4  5.3    02:08:02 /opt/node22/bin/claude --preload /home/claude/.claude/remote/spare.sock
-    1  0.0  0.0    02:08:04 /process_api --firecracker-init --addr 0.0.0.0:2024 --max-ws-buffer-size 32768 --block-local-connections --listen-vsock-po
-   97  0.0  0.5    02:07:40 /usr/local/bin/environment-manager task-run --stdin --session cse_01XhCycMqABUGhDzHctCRQVC --session-mode new --upgrade-cl
-   43  0.0  0.0    02:08:04 [kworker/1:1H-kblockd]
+32206  8.8  0.2       00:00 python3 /home/claude/bench/bench.py
+   88  2.4  4.6    01:08:28 /opt/claude-code/bin/claude --preload /home/claude/.claude/remote/spare.sock
+    1  0.0  0.0    01:08:31 /process_api --firecracker-init --addr 0.0.0.0:2024 --max-ws-buffer-size 32768 --block-local-connections --listen-vsock-po
+   81  0.0  0.5    01:08:28 /usr/local/bin/environment-manager task-run --stdin --session cse_01XhCycMqABUGhDzHctCRQVC --session-mode resume --upgrade
+   64  0.0  0.3    01:08:29 /opt/rclone/rclone-filestore multimount --config /dev/shm/rclone-boot/config.json
 settings: server cpu 0, load cpu 1, connections 50, warm-up 2 s, measured 10 s, runs 3, modes off,file, routes home,file,404,api; a run that other pro
 ports: bareproxy 18080, nginx 18081, backend 19001
 ```
 
-Load average (1 minute) before each measured run: lowest 0.83, highest 1.84. 
-Attempts disturbed by other processes (they used more than 10% of the server or generator core): 0 of 51. Cases with no clean attempt at all: 0 of 17. CPU steal ticks seen during measured runs: 18.
+Load average (1 minute) before each measured run: lowest 0.85, highest 2.31. 
+Attempts disturbed by other processes (they used more than 10% of the server or generator core): 0 of 51. Cases with no clean attempt at all: 0 of 17. CPU steal ticks seen during measured runs: 24.
 
 ## Setup
 
@@ -177,7 +174,7 @@ Attempts disturbed by other processes (they used more than 10% of the server or 
 
 ## Caveats
 
-- **A shared two-CPU cloud VM.** This is a KVM guest with two vCPUs, shared with other workers who were building and testing at the same time, and the host under it is shared too. Run-to-run differences of several percent are normal here, and a run can be hit by a neighbour's burst. The tables show the range of runs. The flag ‡ comes from the busy time of a core that was not spent by the server, the backend, wrk or the harness (read from `/proc/stat`, in 10 ms ticks, so a few percent either way is rounding). Treat a difference under about 10% as noise.
+- **A shared two-CPU cloud VM.** This is a KVM guest with two vCPUs; other work can run on it during a measurement (the count of disturbed attempts above says how much did), and the host under it is shared too. Run-to-run differences of several percent are normal here, and a run can be hit by a neighbour's burst. The tables show the range of runs. The flag ‡ comes from the busy time of a core that was not spent by the server, the backend, wrk or the harness (read from `/proc/stat`, in 10 ms ticks, so a few percent either way is rounding). Treat a difference under about 10% as noise.
 - **One core each, by design.** The server gets one core and the generator the other. This compares the two servers per core. It does not show what either does with more cores (nginx with several workers, BareProxy with GOMAXPROCS above 1).
 - **Latency follows throughput in this test.** Fifty connections each send the next request as soon as the last one is answered, so the average latency is about 50 divided by req/s. A server that is faster shows a lower p50 for that reason alone. The p99 shows the tail. Latency at an equal, fixed request rate is not measured here.
 - **The generator can be the limit.** wrk runs on one thread. Where its core was above 90% busy (marked †), the server's number is a floor.
@@ -185,5 +182,5 @@ Attempts disturbed by other processes (they used more than 10% of the server or 
 - **API case shares a core with the backend.** The proxy's own cost is the column `Server CPU per request`, taken from the CPU time of the server processes alone (computed from `/proc` ticks of 10 ms, over a 10 s run).
 - **The two logs differ.** BareProxy's trace record is a JSON line with the routing decision; nginx's default line is shorter. Both servers write one line per request, and the log check above confirms it.
 - **Keep-alive is set up alike on both sides.** nginx has `keepalive_requests` raised to 1,000,000 and an upstream pool of 64 idle connections; BareProxy's backend transport also keeps up to 64 idle connections per backend (checked in `pool.go` when this was written). The keep-alive table above shows how many connections each server really opened.
-- **One build, one day.** BareProxy here is the first 0.1.0-alpha build (before the afternoon trims and automatic certificates); nginx is Ubuntu's 1.24.0 package. The numbers are for these two builds on this machine and not a general claim.
+- **One build, one day.** BareProxy here is the binary named in the environment section (source tree at run time: fff3e3b); nginx is Ubuntu's 1.24.0 package. The numbers are for these two builds on this machine and not a general claim.
 

@@ -14,7 +14,7 @@ come from a busy machine and differ between runs for that reason. 'Busy' is the 
 from /proc/stat, and it counts everything on the machine. 'Others' is the CPU time of the busiest processes that aren't part of
 the test and were still alive when the run ended: builds and test binaries that finished during the run aren't in it.
 
-Runs, in order. All 9 passed.
+Runs, in order. All 14 passed.
 
 run  start     sent    failed  resets  ws lost  applies  busy  others  BareProxy CPU/peak   records  result
 1    15:43:16  120020       0       0        0  20 of 20   43%    0.0s   22.5s / 110 MiB    equal    PASS
@@ -26,6 +26,11 @@ run  start     sent    failed  resets  ws lost  applies  busy  others  BareProxy
 7    16:01:07  120020       0       0        0  20 of 20   56%    0.0s   22.2s / 114 MiB    equal    PASS
 8    16:02:12  120020       0       0        0  20 of 20   68%    0.0s   20.0s / 115 MiB    equal    PASS
 9    16:03:51  120020       0       0        0  20 of 20   86%    5.3s   22.3s / 122 MiB    equal    PASS
+10   16:27:10  120020       0       0        0  20 of 20   43%    0.0s   22.4s /  25 MiB    equal    PASS
+11   16:28:13  120020       0       0        0  20 of 20   41%    0.0s   21.5s /  46 MiB    equal    PASS
+12   16:29:16  120020       0       0        0  20 of 20   41%    0.0s   21.4s /  74 MiB    equal    PASS
+13   16:30:19  120020       0       0        0  20 of 20   41%    0.0s   21.4s / 111 MiB    equal    PASS
+14   16:49:47  120020       0       0        0  20 of 20   43%    0.0s   21.8s /  47 MiB    equal    PASS
 
 Latency per run and kind, in milliseconds (p50 / p99 / max), counted from each request's scheduled time:
 
@@ -39,7 +44,11 @@ run  HTTP/1.1                HTTP/2                  WebSocket echo
 7     1.04 /  6.41 /  122.7   1.11 /  7.76 /  100.0   0.94 /  6.12 /   68.7
 8     1.06 /  5.24 /   45.5   1.11 /  5.46 /   37.0   1.01 /  5.19 /   36.7
 9     1.18 / 16.44 /   71.0   1.30 / 18.25 /   73.8   1.11 / 16.09 /   78.3
-
+10    1.00 /  2.77 /   28.9   1.07 /  2.95 /   26.5   0.89 /  2.53 /   30.2
+11    0.97 /  2.45 /   12.2   1.04 /  2.68 /   14.1   0.87 /  2.31 /    8.9
+12    0.97 /  2.35 /   27.8   1.04 /  2.54 /   28.4   0.85 /  2.22 /   25.7
+13    0.97 /  2.52 /   33.1   1.05 /  2.75 /   39.3   0.87 /  2.29 /   30.6
+14    0.99 /  2.47 /   34.1   1.05 /  2.70 /   34.2   0.88 /  2.33 /   34.1
 Notes on the runs
   run 1: all 20 applies ran in under a second (script bug, fixed); no probes
   run 2: applies spread over the run; no probes after the applies
@@ -49,7 +58,14 @@ Notes on the runs
   run 6: committed script and tool
   run 7: committed script and tool
   run 8: committed script and tool
-  run 9: committed tree 98bdda2, nothing uncommitted (this run's full output is below)
+  run 9: committed tree 98bdda2, nothing uncommitted
+  run 10: tree ea04f9e plus the TRACE_MEMORY setting of load-test.sh (not yet committed), trace-memory off
+  run 11: tree ea04f9e plus the TRACE_MEMORY setting of load-test.sh (not yet committed), trace-memory 8MB
+  run 12: tree ea04f9e plus the TRACE_MEMORY setting of load-test.sh (not yet committed), trace-memory 16MB
+  run 13: tree ea04f9e plus the TRACE_MEMORY setting of load-test.sh (not yet committed), trace-memory 32MB, the old default
+  run 14: tree fff3e3b plus uncommitted edits to the README, the changelog and the results files (no code), the final code, trace-memory at its new default (8 MB)
+  Runs 10 to 14 ran on a quiet machine (nothing else was building or testing); their 'others' column leaves out this session's own
+  processes, as the earlier runs do. Runs 10 to 13 measure memory: results/memory-test.log. Run 14's full output is below.
   'records' compares the trace log with what BareProxy was sent (HTTP requests, WebSocket handshakes and the probes): equal in every run.
   Connections: HTTP/1.1 used 16 and WebSocket 20 in every run, none reset and none closed by the server. HTTP/2 opened 4 to 10 in the
   runs. The tool records when the last connection of each kind was opened (the 'last open' column in run 9): 0.0 s for all three kinds,
@@ -57,23 +73,23 @@ Notes on the runs
   most likely the first requests of each client dialling in parallel before its first connection is up; that was not checked further.
 
 ====================================================================================================
-Full output of run 9
+Full output of run 14
 ====================================================================================================
 
 ## The test and the machine
-BareProxy load test, 2026-10-05 16:03:51 IDT
+BareProxy load test, 2026-10-05 16:49:45 IDT
 target: 2000 requests per second for 60 seconds over HTTP/1.1, HTTP/2 and WebSocket, 20 applies during the run
 machine: 2 CPUs (Intel(R) Xeon(R) Processor @ 2.10GHz), 7.8 GB memory, Linux 6.18.44-fc-v70
 The CPUs are shared with other workers' builds, tests and servers; the results depend on what they were doing.
-load average before the test (1, 5, 15 minutes): 2.39 3.38 2.72
-tree: 98bdda2
+load average before the test (1, 5, 15 minutes): 0.33 1.25 1.38
+tree: fff3e3b plus uncommitted changes
 
 ## Build from the tree
 bareproxy 0.1.0-alpha, built with go1.27.1
 go version go1.27.1 linux/amd64
 
 ## Setup: certificate, ports, config
-ports: http 59905, https 46279, backends api-1 45163, api-2 40665, api-3 34863
+ports: http 59199, https 55117, backends api-1 49951, api-2 46805, api-3 59829
 
 ## The starting config (line numbers added for reading)
      1	# BareProxy load test
@@ -82,14 +98,14 @@ ports: http 59905, https 46279, backends api-1 45163, api-2 40665, api-3 34863
      4	  state state
      5	  trace-log requests.log
      6	
-     7	site http://plain.test:59905
+     7	site http://plain.test:59199
      8	  route /hello -> respond 200 "hello v1"
      9	  route /api/* -> api strip
     10	  route /moved/* -> api strip
     11	  route /ws -> ws
     12	  route /spare/* -> api2 strip
     13	
-    14	site https://secure.test:46279
+    14	site https://secure.test:55117
     15	  tls cert.pem key.pem
     16	  route /hello -> respond 200 "hello v1"
     17	  route /api/* -> api strip
@@ -98,52 +114,52 @@ ports: http 59905, https 46279, backends api-1 45163, api-2 40665, api-3 34863
     20	  route /spare/* -> api2 strip
     21	
     22	pool api
-    23	  backend 127.0.0.1:45163
-    24	  backend 127.0.0.1:40665
+    23	  backend 127.0.0.1:49951
+    24	  backend 127.0.0.1:46805
     25	  health /healthz every 1s
     26	
     27	pool api2
-    28	  backend 127.0.0.1:34863
+    28	  backend 127.0.0.1:59829
     29	  health /healthz every 1s
     30	
     31	pool ws
-    32	  backend 127.0.0.1:45163
-    33	  backend 127.0.0.1:40665
-    34	  backend 127.0.0.1:34863
+    32	  backend 127.0.0.1:49951
+    33	  backend 127.0.0.1:46805
+    34	  backend 127.0.0.1:59829
     35	  health /healthz every 1s
-run/load/load.conf: ok, 2 sites, 3 pools, 10 rules; listening on :46279 (https), :59905 (http)
+run/load/load.conf: ok, 2 sites, 3 pools, 10 rules; listening on :55117 (https), :59199 (http)
 
 ## Start three backends and BareProxy
-http://plain.test:59905/hello -> HTTP/1.1 hello v1 
-http://plain.test:59905/api/x -> HTTP/1.1 {"backend":"api-1","path":"/x","host":"plain.test:59905","x_forwarded_
-https://secure.test:46279/hello -> HTTP/2 hello v1 
-https://secure.test:46279/moved/x -> HTTP/2 {"backend":"api-2","path":"/x","host":"secure.test:46279","x_forwarded
-BareProxy 0.1.0-alpha, up 0s (since 2026-10-05T13:03:52Z)
-Config /home/claude/wt/load/live/run/load/load.conf, version 1
+http://plain.test:59199/hello -> HTTP/1.1 hello v1 
+http://plain.test:59199/api/x -> HTTP/1.1 {"backend":"api-1","path":"/x","host":"plain.test:59199","x_forwarded_
+https://secure.test:55117/hello -> HTTP/2 hello v1 
+https://secure.test:55117/moved/x -> HTTP/2 {"backend":"api-2","path":"/x","host":"secure.test:55117","x_forwarded
+BareProxy 0.1.0-alpha, up 0s (since 2026-10-05T13:49:46Z)
+Config /home/claude/bareproxy/live/run/load/load.conf, version 1
 
 Listeners (2)
-  :46279 https  secure.test
-  :59905 http  plain.test
+  :55117 https  secure.test
+  :59199 http  plain.test
 
 Sites (2)
-  plain.test (line 7), rules: 5, http://plain.test:59905
-  secure.test (line 14), rules: 5, https://secure.test:46279
+  plain.test (line 7), rules: 5, http://plain.test:59199
+  secure.test (line 14), rules: 5, https://secure.test:55117
 
 Pools (3)
   api (line 22): 2 of 2 up. Checks: GET /healthz every 1s, timeout 2s, pass on 200 to 399
-    127.0.0.1:45163        up since 2026-10-05T13:03:52Z, 0 in flight, 0 failures in a row
-    127.0.0.1:40665        up since 2026-10-05T13:03:52Z, 0 in flight, 0 failures in a row
+    127.0.0.1:49951        up since 2026-10-05T13:49:46Z, 0 in flight, 0 failures in a row
+    127.0.0.1:46805        up since 2026-10-05T13:49:46Z, 0 in flight, 0 failures in a row
   api2 (line 27): 1 of 1 up. Checks: GET /healthz every 1s, timeout 2s, pass on 200 to 399
-    127.0.0.1:34863        up since 2026-10-05T13:03:52Z, 0 in flight, 0 failures in a row
+    127.0.0.1:59829        up since 2026-10-05T13:49:46Z, 0 in flight, 0 failures in a row
   ws (line 31): 3 of 3 up. Checks: GET /healthz every 1s, timeout 2s, pass on 200 to 399
-    127.0.0.1:45163        up since 2026-10-05T13:03:52Z, 0 in flight, 0 failures in a row
-    127.0.0.1:40665        up since 2026-10-05T13:03:52Z, 0 in flight, 0 failures in a row
-    127.0.0.1:34863        up since 2026-10-05T13:03:52Z, 0 in flight, 0 failures in a row
+    127.0.0.1:49951        up since 2026-10-05T13:49:46Z, 0 in flight, 0 failures in a row
+    127.0.0.1:46805        up since 2026-10-05T13:49:46Z, 0 in flight, 0 failures in a row
+    127.0.0.1:59829        up since 2026-10-05T13:49:46Z, 0 in flight, 0 failures in a row
 
 Certificates (1)
   secure.test  CN=secure.test  ends 2026-10-07, 1 days left
 
-Requests (the 7 most recent, held in memory, back to 2026-10-05T13:03:52.514Z)
+Requests (the 7 most recent, held in memory, back to 2026-10-05T13:49:46.711Z)
   last minute     requests: 7, status 5xx: 0, proxy errors: 0
   last 5 minutes  requests: 7, status 5xx: 0, proxy errors: 0
 
@@ -151,260 +167,266 @@ Requests (the 7 most recent, held in memory, back to 2026-10-05T13:03:52.514Z)
 
 apply 1 at 4.0 s, took 13 ms: add backend api-3 to pool api
   Compared with running version 1:
-  Plan 0b5039da4a65: 1 other change
+  Plan f33a76622c0e: 1 other change
   Other changes
-    pool api: backend 127.0.0.1:34863 added (line 25)
+    pool api: backend 127.0.0.1:59829 added (line 25)
   Version 2 is running (it was 1).
 
-apply 2 at 6.6 s, took 26 ms: change the /hello text to v2
+apply 2 at 6.6 s, took 12 ms: change the /hello text to v2
   Compared with running version 2:
-  Plan c3e1a0e56fc7: 2 routing changes
+  Plan ae57a72bb8c2: 2 routing changes
   Routing
-    secure.test (port 46279), any method, /hello
+    secure.test (port 55117), any method, /hello
         respond 200 "hello v1"  ->  respond 200 "hello v2"
-    plain.test (port 59905), any method, /hello
+    plain.test (port 59199), any method, /hello
         respond 200 "hello v1"  ->  respond 200 "hello v2"
   Version 3 is running (it was 2).
 
-apply 3 at 9.1 s, took 29 ms: move /moved/* to pool api2
+apply 3 at 9.1 s, took 17 ms: move /moved/* to pool api2
   Compared with running version 3:
-  Plan 746051b0d534: 2 routing changes
+  Plan d28dcb6755ff: 2 routing changes
   Routing
-    secure.test (port 46279), any method, /moved and below
+    secure.test (port 55117), any method, /moved and below
         pool api, strip /moved  ->  pool api2, strip /moved
-    plain.test (port 59905), any method, /moved and below
+    plain.test (port 59199), any method, /moved and below
         pool api, strip /moved  ->  pool api2, strip /moved
   Version 4 is running (it was 3).
 
-apply 4 at 11.7 s, took 42 ms: remove backend api-1 from pool api
+apply 4 at 11.7 s, took 13 ms: remove backend api-1 from pool api
   Compared with running version 4:
-  Plan 847e7f5215a8: 1 other change
+  Plan 2c6da739f918: 1 other change
   Other changes
-    pool api: backend 127.0.0.1:45163 removed (was line 23)
+    pool api: backend 127.0.0.1:49951 removed (was line 23)
   Version 5 is running (it was 4).
 
-apply 5 at 14.2 s, took 20 ms: change the /hello text back to v1
+apply 5 at 14.2 s, took 13 ms: change the /hello text back to v1
   Compared with running version 5:
-  Plan 91ace7953d50: 2 routing changes
+  Plan 942cd519f62e: 2 routing changes
   Routing
-    secure.test (port 46279), any method, /hello
+    secure.test (port 55117), any method, /hello
         respond 200 "hello v2"  ->  respond 200 "hello v1"
-    plain.test (port 59905), any method, /hello
+    plain.test (port 59199), any method, /hello
         respond 200 "hello v2"  ->  respond 200 "hello v1"
   Version 6 is running (it was 5).
 
-apply 6 at 16.8 s, took 60 ms: move /moved/* back to pool api
+apply 6 at 16.8 s, took 13 ms: move /moved/* back to pool api
   Compared with running version 6:
-  Plan e389e6a981d8: 2 routing changes
+  Plan 8ffc90b82ed7: 2 routing changes
   Routing
-    secure.test (port 46279), any method, /moved and below
+    secure.test (port 55117), any method, /moved and below
         pool api2, strip /moved  ->  pool api, strip /moved
-    plain.test (port 59905), any method, /moved and below
+    plain.test (port 59199), any method, /moved and below
         pool api2, strip /moved  ->  pool api, strip /moved
   Version 7 is running (it was 6).
 
-apply 7 at 19.3 s, took 27 ms: add backend api-1 to pool api again
+apply 7 at 19.3 s, took 13 ms: add backend api-1 to pool api again
   Compared with running version 7:
-  Plan f18852857134: 1 other change
+  Plan 636cac5796b3: 1 other change
   Other changes
-    pool api: backend 127.0.0.1:45163 added (line 25)
+    pool api: backend 127.0.0.1:49951 added (line 25)
   Version 8 is running (it was 7).
 
-apply 8 at 21.9 s, took 37 ms: remove backend api-2 from pool api
+apply 8 at 21.9 s, took 14 ms: remove backend api-2 from pool api
   Compared with running version 8:
-  Plan a9aa9e301be3: 1 other change
+  Plan a06614a78117: 1 other change
   Other changes
-    pool api: backend 127.0.0.1:40665 removed (was line 23)
+    pool api: backend 127.0.0.1:46805 removed (was line 23)
   Version 9 is running (it was 8).
 
-apply 9 at 24.5 s, took 63 ms: change the /hello text to v3
+apply 9 at 24.4 s, took 18 ms: change the /hello text to v3
   Compared with running version 9:
-  Plan 4fa8a692496c: 2 routing changes
+  Plan da547c649c43: 2 routing changes
   Routing
-    secure.test (port 46279), any method, /hello
+    secure.test (port 55117), any method, /hello
         respond 200 "hello v1"  ->  respond 200 "hello v3"
-    plain.test (port 59905), any method, /hello
+    plain.test (port 59199), any method, /hello
         respond 200 "hello v1"  ->  respond 200 "hello v3"
   Version 10 is running (it was 9).
 
-apply 10 at 27.0 s, took 27 ms: move /moved/* to pool api2
+apply 10 at 27.0 s, took 14 ms: move /moved/* to pool api2
   Compared with running version 10:
-  Plan dd653e0c0582: 2 routing changes
+  Plan d42ccb4408f8: 2 routing changes
   Routing
-    secure.test (port 46279), any method, /moved and below
+    secure.test (port 55117), any method, /moved and below
         pool api, strip /moved  ->  pool api2, strip /moved
-    plain.test (port 59905), any method, /moved and below
+    plain.test (port 59199), any method, /moved and below
         pool api, strip /moved  ->  pool api2, strip /moved
   Version 11 is running (it was 10).
 
-apply 11 at 29.5 s, took 78 ms: add backend api-2 to pool api again
+apply 11 at 29.5 s, took 13 ms: add backend api-2 to pool api again
   Compared with running version 11:
-  Plan bf7b85dcbec9: 1 other change
+  Plan 7e332a3d1238: 1 other change
   Other changes
-    pool api: backend 127.0.0.1:40665 added (line 25)
+    pool api: backend 127.0.0.1:46805 added (line 25)
   Version 12 is running (it was 11).
 
-apply 12 at 32.1 s, took 41 ms: add backend api-2 to pool api2
+apply 12 at 32.1 s, took 15 ms: add backend api-2 to pool api2
   Compared with running version 12:
-  Plan 41053fd9a54d: 1 other change
+  Plan 0991f577f5f4: 1 other change
   Other changes
-    pool api2: backend 127.0.0.1:40665 added (line 30)
+    pool api2: backend 127.0.0.1:46805 added (line 30)
   Version 13 is running (it was 12).
 
-apply 13 at 34.6 s, took 70 ms: change the /hello text back to v1
+apply 13 at 34.6 s, took 13 ms: change the /hello text back to v1
   Compared with running version 13:
-  Plan 4883e1e45f68: 2 routing changes
+  Plan bff9c4d833c8: 2 routing changes
   Routing
-    secure.test (port 46279), any method, /hello
+    secure.test (port 55117), any method, /hello
         respond 200 "hello v3"  ->  respond 200 "hello v1"
-    plain.test (port 59905), any method, /hello
+    plain.test (port 59199), any method, /hello
         respond 200 "hello v3"  ->  respond 200 "hello v1"
   Version 14 is running (it was 13).
 
-apply 14 at 37.2 s, took 18 ms: move /moved/* back to pool api
+apply 14 at 37.2 s, took 13 ms: move /moved/* back to pool api
   Compared with running version 14:
-  Plan 9c3dcefe0628: 2 routing changes
+  Plan d38bf6106658: 2 routing changes
   Routing
-    secure.test (port 46279), any method, /moved and below
+    secure.test (port 55117), any method, /moved and below
         pool api2, strip /moved  ->  pool api, strip /moved
-    plain.test (port 59905), any method, /moved and below
+    plain.test (port 59199), any method, /moved and below
         pool api2, strip /moved  ->  pool api, strip /moved
   Version 15 is running (it was 14).
 
-apply 15 at 39.7 s, took 44 ms: remove backend api-3 from pool api
+apply 15 at 39.7 s, took 12 ms: remove backend api-3 from pool api
   Compared with running version 15:
-  Plan 92b1b48629c9: 1 other change
+  Plan 18a301d1e6b1: 1 other change
   Other changes
-    pool api: backend 127.0.0.1:34863 removed (was line 23)
+    pool api: backend 127.0.0.1:59829 removed (was line 23)
   Version 16 is running (it was 15).
 
-apply 16 at 42.3 s, took 30 ms: remove backend api-2 from pool api2
+apply 16 at 42.3 s, took 12 ms: remove backend api-2 from pool api2
   Compared with running version 16:
-  Plan 81354356f66a: 1 other change
+  Plan f5c423f749b7: 1 other change
   Other changes
-    pool api2: backend 127.0.0.1:40665 removed (was line 29)
+    pool api2: backend 127.0.0.1:46805 removed (was line 29)
   Version 17 is running (it was 16).
 
-apply 17 at 44.8 s, took 23 ms: change the /hello text to v4
+apply 17 at 44.8 s, took 13 ms: change the /hello text to v4
   Compared with running version 17:
-  Plan 378d4805c7eb: 2 routing changes
+  Plan 90bad80f6306: 2 routing changes
   Routing
-    secure.test (port 46279), any method, /hello
+    secure.test (port 55117), any method, /hello
         respond 200 "hello v1"  ->  respond 200 "hello v4"
-    plain.test (port 59905), any method, /hello
+    plain.test (port 59199), any method, /hello
         respond 200 "hello v1"  ->  respond 200 "hello v4"
   Version 18 is running (it was 17).
 
-apply 18 at 47.4 s, took 33 ms: add backend api-3 to pool api
+apply 18 at 47.4 s, took 15 ms: add backend api-3 to pool api
   Compared with running version 18:
-  Plan 1400184f2306: 1 other change
+  Plan ea6e784c5375: 1 other change
   Other changes
-    pool api: backend 127.0.0.1:34863 added (line 25)
+    pool api: backend 127.0.0.1:59829 added (line 25)
   Version 19 is running (it was 18).
 
-apply 19 at 49.9 s, took 26 ms: move /moved/* to pool api2
+apply 19 at 49.9 s, took 11 ms: move /moved/* to pool api2
   Compared with running version 19:
-  Plan fbccfbb8ba0d: 2 routing changes
+  Plan f8b4c8bdd84c: 2 routing changes
   Routing
-    secure.test (port 46279), any method, /moved and below
+    secure.test (port 55117), any method, /moved and below
         pool api, strip /moved  ->  pool api2, strip /moved
-    plain.test (port 59905), any method, /moved and below
+    plain.test (port 59199), any method, /moved and below
         pool api, strip /moved  ->  pool api2, strip /moved
   Version 20 is running (it was 19).
 
-apply 20 at 52.5 s, took 23 ms: change the /hello text back to v1 and move /moved/* back to pool api
+apply 20 at 52.5 s, took 21 ms: change the /hello text back to v1 and move /moved/* back to pool api
   Compared with running version 20:
-  Plan f3a0f8294da2: 4 routing changes
+  Plan 1fa3d30b9edd: 4 routing changes
   Routing
-    secure.test (port 46279), any method, /hello
+    secure.test (port 55117), any method, /hello
         respond 200 "hello v4"  ->  respond 200 "hello v1"
-    secure.test (port 46279), any method, /moved and below
+    secure.test (port 55117), any method, /moved and below
         pool api2, strip /moved  ->  pool api, strip /moved
-    plain.test (port 59905), any method, /hello
+    plain.test (port 59199), any method, /hello
         respond 200 "hello v4"  ->  respond 200 "hello v1"
-    plain.test (port 59905), any method, /moved and below
+    plain.test (port 59199), any method, /moved and below
         pool api2, strip /moved  ->  pool api, strip /moved
   Version 21 is running (it was 20).
 
 ## What the load tool counted
-load starts at 16:03:52.910: 2000 requests per second for 1m0s (http1 800/s, http2 800/s, ws 400/s)
-t=  5s  http1 sent 3762 answered 3760 failed 0  http2 sent 3762 answered 3759 failed 0  ws sent 1881 answered 1881 failed 0
-t= 10s  http1 sent 7760 answered 7759 failed 0  http2 sent 7761 answered 7759 failed 0  ws sent 3880 answered 3880 failed 0
-t= 15s  http1 sent 11762 answered 11760 failed 0  http2 sent 11762 answered 11760 failed 0  ws sent 5881 answered 5880 failed 0
-t= 20s  http1 sent 15761 answered 15760 failed 0  http2 sent 15760 answered 15760 failed 0  ws sent 7880 answered 7880 failed 0
-t= 25s  http1 sent 19760 answered 19759 failed 0  http2 sent 19760 answered 19759 failed 0  ws sent 9880 answered 9880 failed 0
-t= 30s  http1 sent 23761 answered 23760 failed 0  http2 sent 23761 answered 23760 failed 0  ws sent 11881 answered 11881 failed 0
-t= 35s  http1 sent 27761 answered 27759 failed 0  http2 sent 27760 answered 27760 failed 0  ws sent 13880 answered 13880 failed 0
-t= 40s  http1 sent 31761 answered 31759 failed 0  http2 sent 31760 answered 31759 failed 0  ws sent 15881 answered 15880 failed 0
-t= 45s  http1 sent 35754 answered 35737 failed 0  http2 sent 35757 answered 35735 failed 0  ws sent 17881 answered 17867 failed 0
-t= 50s  http1 sent 39761 answered 39760 failed 0  http2 sent 39761 answered 39760 failed 0  ws sent 19881 answered 19880 failed 0
-t= 55s  http1 sent 43760 answered 43760 failed 0  http2 sent 43760 answered 43760 failed 0  ws sent 21881 answered 21880 failed 0
-t= 60s  http1 sent 47761 answered 47758 failed 0  http2 sent 47760 answered 47759 failed 0  ws sent 23881 answered 23879 failed 0
+load starts at 16:49:47.119: 2000 requests per second for 1m0s (http1 800/s, http2 800/s, ws 400/s)
+t=  5s  http1 sent 3760 answered 3760 failed 0  http2 sent 3760 answered 3760 failed 0  ws sent 1880 answered 1880 failed 0
+t= 10s  http1 sent 7760 answered 7760 failed 0  http2 sent 7760 answered 7760 failed 0  ws sent 3880 answered 3880 failed 0
+t= 15s  http1 sent 11760 answered 11760 failed 0  http2 sent 11760 answered 11760 failed 0  ws sent 5881 answered 5880 failed 0
+t= 20s  http1 sent 15761 answered 15759 failed 0  http2 sent 15761 answered 15759 failed 0  ws sent 7881 answered 7880 failed 0
+t= 25s  http1 sent 19761 answered 19760 failed 0  http2 sent 19760 answered 19760 failed 0  ws sent 9880 answered 9880 failed 0
+t= 30s  http1 sent 23760 answered 23759 failed 0  http2 sent 23760 answered 23759 failed 0  ws sent 11881 answered 11880 failed 0
+t= 35s  http1 sent 27760 answered 27760 failed 0  http2 sent 27760 answered 27760 failed 0  ws sent 13881 answered 13880 failed 0
+t= 40s  http1 sent 31760 answered 31760 failed 0  http2 sent 31761 answered 31760 failed 0  ws sent 15880 answered 15880 failed 0
+t= 45s  http1 sent 35761 answered 35761 failed 0  http2 sent 35761 answered 35760 failed 0  ws sent 17881 answered 17880 failed 0
+t= 50s  http1 sent 39760 answered 39760 failed 0  http2 sent 39761 answered 39760 failed 0  ws sent 19881 answered 19880 failed 0
+t= 55s  http1 sent 43760 answered 43760 failed 0  http2 sent 43760 answered 43760 failed 0  ws sent 21880 answered 21880 failed 0
+t= 60s  http1 sent 47760 answered 47760 failed 0  http2 sent 47761 answered 47760 failed 0  ws sent 23880 answered 23880 failed 0
 
 kind        sent  answered  failed  conns last open  reset  closed   p50 ms   p99 ms   max ms
-http1      48000     48000       0     16      0.0s      0       0     1.18    16.44    70.96
-http2      48000     48000       0      5      0.0s      0       0     1.30    18.25    73.78
-ws         24020     24020       0     20      0.0s      0       0     1.11    16.09    78.35
+http1      48000     48000       0     16      0.0s      0       0     0.99     2.47    34.11
+http2      48000     48000       0      4      0.0s      0       0     1.05     2.70    34.22
+ws         24020     24020       0     20      0.0s      0       0     0.88     2.33    34.06
 WebSocket messages: 24020 sent, 24020 echoed, 0 lost
-total: 120020 sent, 120020 answered, 0 failed, 0 connections reset, 60.1 s, rate held: true, loadtest CPU 15.9 s
+total: 120020 sent, 120020 answered, 0 failed, 0 connections reset, 60.1 s, rate held: true, loadtest CPU 20.5 s
 loadtest: PASS
-{"duration_s":60.1,"target_rate":2000,"kinds":{"http1":{"target_rate":800,"sent":48000,"answered":48000,"failed":0,"conns_opened":16,"last_conn_opened_s":0.02,"conns_reset":0,"conns_closed_by_server":0,"p50_ms":1.18,"p99_ms":16.44,"max_ms":70.96},"http2":{"target_rate":800,"sent":48000,"answered":48000,"failed":0,"conns_opened":5,"last_conn_opened_s":0.01,"conns_reset":0,"conns_closed_by_server":0,"p50_ms":1.3,"p99_ms":18.25,"max_ms":73.78},"ws":{"target_rate":400,"sent":24020,"answered":24020,"failed":0,"conns_opened":20,"last_conn_opened_s":0,"conns_reset":0,"conns_closed_by_server":0,"p50_ms":1.11,"p99_ms":16.09,"max_ms":78.35}},"sent":120020,"answered":120020,"failed":0,"resets":0,"ws_messages_lost":0,"rate_ok":true,"loadtest_cpu_s":15.9,"pass":true}
+{"duration_s":60.1,"target_rate":2000,"kinds":{"http1":{"target_rate":800,"sent":48000,"answered":48000,"failed":0,"conns_opened":16,"last_conn_opened_s":0.02,"conns_reset":0,"conns_closed_by_server":0,"p50_ms":0.99,"p99_ms":2.47,"max_ms":34.11},"http2":{"target_rate":800,"sent":48000,"answered":48000,"failed":0,"conns_opened":4,"last_conn_opened_s":0.01,"conns_reset":0,"conns_closed_by_server":0,"p50_ms":1.05,"p99_ms":2.7,"max_ms":34.22},"ws":{"target_rate":400,"sent":24020,"answered":24020,"failed":0,"conns_opened":20,"last_conn_opened_s":0,"conns_reset":0,"conns_closed_by_server":0,"p50_ms":0.88,"p99_ms":2.33,"max_ms":34.06}},"sent":120020,"answered":120020,"failed":0,"resets":0,"ws_messages_lost":0,"rate_ok":true,"loadtest_cpu_s":20.5,"pass":true}
 
 ## The machine during the run
-load average before (1, 5, 15 minutes): 2.44 3.37 2.72; after: 4.25 3.69 2.87
-machine, over the run: 86% of both CPUs busy (idle 14%, taken by the host 0%)
+load average before (1, 5, 15 minutes): 0.33 1.25 1.38; after: 0.94 1.28 1.39
+machine, over the run: 43% of both CPUs busy (idle 57%, taken by the host 0%)
 CPU seconds used during the run, busiest processes:
-    22.3 s  bareproxy        pid 22367
-     5.2 s  bp-base          pid 23216
-     3.4 s  testapi          pid 22366
-     2.9 s  testapi          pid 22364
-     2.8 s  testapi          pid 22365
-     0.7 s  claude           pid 88
-     0.1 s  bash             pid 22245
-     0.1 s  wrk              pid 23230
-BareProxy: 22.3 CPU seconds in 60 seconds, peak memory 122 MiB
+    21.8 s  bareproxy        pid 534
+     3.2 s  testapi          pid 533
+     2.8 s  testapi          pid 532
+     2.8 s  testapi          pid 531
+     1.6 s  claude           pid 88
+     0.1 s  bash             pid 410
+     0.0 s  process_api      pid 1
+     0.0 s  environment-man  pid 81
+BareProxy: 21.8 CPU seconds in 60 seconds, peak memory 47 MiB
 
 ## BareProxy's events (bareproxy events)
-2026-10-05T13:03:52.508Z  certificate  secure.test: certificate for CN=secure.test loaded, ends 2026-10-07 (1 days left)
-2026-10-05T13:03:52.510Z  backend      pool ws: 127.0.0.1:45163 up (health check passed)
-2026-10-05T13:03:52.510Z  backend      pool api: 127.0.0.1:45163 up (health check passed)
-2026-10-05T13:03:52.510Z  backend      pool ws: 127.0.0.1:34863 up (health check passed)
-2026-10-05T13:03:52.510Z  backend      pool ws: 127.0.0.1:40665 up (health check passed)
-2026-10-05T13:03:52.510Z  backend      pool api: 127.0.0.1:40665 up (health check passed)
-2026-10-05T13:03:52.510Z  backend      pool api2: 127.0.0.1:34863 up (health check passed)
-2026-10-05T13:03:52.512Z  start        version 1 running (startup by root): 2 sites, 3 pools, 10 rules; listening on :46279 (https), :59905 (http)
-2026-10-05T13:03:56.631Z  backend      pool api: 127.0.0.1:34863 up (health check passed)
-2026-10-05T13:03:56.633Z  apply        version 2 running (apply by root): 2 sites, 3 pools, 10 rules; listening on :46279 (https), :59905 (http)
-2026-10-05T13:03:59.205Z  apply        version 3 running (apply by root): 2 sites, 3 pools, 10 rules; listening on :46279 (https), :59905 (http)
-2026-10-05T13:04:01.761Z  apply        version 4 running (apply by root): 2 sites, 3 pools, 10 rules; listening on :46279 (https), :59905 (http)
-2026-10-05T13:04:04.329Z  apply        version 5 running (apply by root): 2 sites, 3 pools, 10 rules; listening on :46279 (https), :59905 (http)
-2026-10-05T13:04:06.844Z  apply        version 6 running (apply by root): 2 sites, 3 pools, 10 rules; listening on :46279 (https), :59905 (http)
-2026-10-05T13:04:09.441Z  apply        version 7 running (apply by root): 2 sites, 3 pools, 10 rules; listening on :46279 (https), :59905 (http)
-2026-10-05T13:04:11.953Z  backend      pool api: 127.0.0.1:45163 up (health check passed)
-2026-10-05T13:04:11.957Z  apply        version 8 running (apply by root): 2 sites, 3 pools, 10 rules; listening on :46279 (https), :59905 (http)
-2026-10-05T13:04:14.533Z  apply        version 9 running (apply by root): 2 sites, 3 pools, 10 rules; listening on :46279 (https), :59905 (http)
-2026-10-05T13:04:17.121Z  apply        version 10 running (apply by root): 2 sites, 3 pools, 10 rules; listening on :46279 (https), :59905 (http)
-2026-10-05T13:04:19.606Z  apply        version 11 running (apply by root): 2 sites, 3 pools, 10 rules; listening on :46279 (https), :59905 (http)
-2026-10-05T13:04:22.178Z  backend      pool api: 127.0.0.1:40665 up (health check passed)
-2026-10-05T13:04:22.200Z  apply        version 12 running (apply by root): 2 sites, 3 pools, 10 rules; listening on :46279 (https), :59905 (http)
-2026-10-05T13:04:24.719Z  apply        version 13 running (apply by root): 2 sites, 3 pools, 10 rules; listening on :46279 (https), :59905 (http)
-2026-10-05T13:04:24.720Z  backend      pool api2: 127.0.0.1:40665 up (health check passed)
-2026-10-05T13:04:27.293Z  apply        version 14 running (apply by root): 2 sites, 3 pools, 10 rules; listening on :46279 (https), :59905 (http)
-2026-10-05T13:04:29.797Z  apply        version 15 running (apply by root): 2 sites, 3 pools, 10 rules; listening on :46279 (https), :59905 (http)
-2026-10-05T13:04:32.391Z  apply        version 16 running (apply by root): 2 sites, 3 pools, 10 rules; listening on :46279 (https), :59905 (http)
-2026-10-05T13:04:34.914Z  apply        version 17 running (apply by root): 2 sites, 3 pools, 10 rules; listening on :46279 (https), :59905 (http)
-2026-10-05T13:04:37.448Z  apply        version 18 running (apply by root): 2 sites, 3 pools, 10 rules; listening on :46279 (https), :59905 (http)
-2026-10-05T13:04:40.004Z  backend      pool api: 127.0.0.1:34863 up (health check passed)
-2026-10-05T13:04:40.008Z  apply        version 19 running (apply by root): 2 sites, 3 pools, 10 rules; listening on :46279 (https), :59905 (http)
-2026-10-05T13:04:42.555Z  apply        version 20 running (apply by root): 2 sites, 3 pools, 10 rules; listening on :46279 (https), :59905 (http)
-2026-10-05T13:04:45.133Z  apply        version 21 running (apply by root): 2 sites, 3 pools, 10 rules; listening on :46279 (https), :59905 (http)
+2026-10-05T13:49:46.704Z  start        version 1 running (startup by root): 2 sites, 3 pools, 10 rules; listening on :55117 (https), :59199 (http)
+2026-10-05T13:49:46.704Z  certificate  secure.test: certificate for CN=secure.test loaded, ends 2026-10-07 (1 days left)
+2026-10-05T13:49:46.707Z  backend      pool api2: 127.0.0.1:59829 up (health check passed)
+2026-10-05T13:49:46.707Z  backend      pool ws: 127.0.0.1:59829 up (health check passed)
+2026-10-05T13:49:46.708Z  backend      pool ws: 127.0.0.1:49951 up (health check passed)
+2026-10-05T13:49:46.708Z  backend      pool api: 127.0.0.1:49951 up (health check passed)
+2026-10-05T13:49:46.708Z  backend      pool api: 127.0.0.1:46805 up (health check passed)
+2026-10-05T13:49:46.708Z  backend      pool ws: 127.0.0.1:46805 up (health check passed)
+2026-10-05T13:49:50.841Z  apply        version 2 running (apply by root): plan f33a76622c0e, 1 other change
+2026-10-05T13:49:50.841Z  backend      pool api: 127.0.0.1:59829 up (health check passed)
+2026-10-05T13:49:53.390Z  apply        version 3 running (apply by root): plan ae57a72bb8c2, 2 routing changes
+2026-10-05T13:49:55.944Z  apply        version 4 running (apply by root): plan d28dcb6755ff, 2 routing changes
+2026-10-05T13:49:58.493Z  apply        version 5 running (apply by root): plan 2c6da739f918, 1 other change
+2026-10-05T13:49:58.493Z  backend      pool api: 127.0.0.1:49951 removed, draining for 30s
+2026-10-05T13:50:01.040Z  apply        version 6 running (apply by root): plan 942cd519f62e, 2 routing changes
+2026-10-05T13:50:03.592Z  apply        version 7 running (apply by root): plan 8ffc90b82ed7, 2 routing changes
+2026-10-05T13:50:06.144Z  apply        version 8 running (apply by root): plan 636cac5796b3, 1 other change
+2026-10-05T13:50:06.146Z  backend      pool api: 127.0.0.1:49951 up (health check passed)
+2026-10-05T13:50:08.696Z  apply        version 9 running (apply by root): plan a06614a78117, 1 other change
+2026-10-05T13:50:08.696Z  backend      pool api: 127.0.0.1:46805 removed, draining for 30s
+2026-10-05T13:50:11.249Z  apply        version 10 running (apply by root): plan da547c649c43, 2 routing changes
+2026-10-05T13:50:13.791Z  apply        version 11 running (apply by root): plan d42ccb4408f8, 2 routing changes
+2026-10-05T13:50:16.342Z  apply        version 12 running (apply by root): plan 7e332a3d1238, 1 other change
+2026-10-05T13:50:16.344Z  backend      pool api: 127.0.0.1:46805 up (health check passed)
+2026-10-05T13:50:18.895Z  apply        version 13 running (apply by root): plan 0991f577f5f4, 1 other change
+2026-10-05T13:50:18.896Z  backend      pool api2: 127.0.0.1:46805 up (health check passed)
+2026-10-05T13:50:21.440Z  apply        version 14 running (apply by root): plan bff9c4d833c8, 2 routing changes
+2026-10-05T13:50:23.993Z  apply        version 15 running (apply by root): plan d38bf6106658, 2 routing changes
+2026-10-05T13:50:26.540Z  apply        version 16 running (apply by root): plan 18a301d1e6b1, 1 other change
+2026-10-05T13:50:26.540Z  backend      pool api: 127.0.0.1:59829 removed, draining for 30s
+2026-10-05T13:50:28.493Z  backend      pool api: 127.0.0.1:49951 drained, 1 connection closed
+2026-10-05T13:50:29.091Z  apply        version 17 running (apply by root): plan f5c423f749b7, 1 other change
+2026-10-05T13:50:29.091Z  backend      pool api2: 127.0.0.1:46805 removed, draining for 30s
+2026-10-05T13:50:31.642Z  apply        version 18 running (apply by root): plan 90bad80f6306, 2 routing changes
+2026-10-05T13:50:34.192Z  apply        version 19 running (apply by root): plan ea6e784c5375, 1 other change
+2026-10-05T13:50:34.192Z  backend      pool api: 127.0.0.1:59829 up (health check passed)
+2026-10-05T13:50:36.740Z  apply        version 20 running (apply by root): plan f8b4c8bdd84c, 2 routing changes
+2026-10-05T13:50:38.696Z  backend      pool api: 127.0.0.1:46805 drained, 2 connections closed
+2026-10-05T13:50:39.297Z  apply        version 21 running (apply by root): plan 1fa3d30b9edd, 4 routing changes
 
 ## Versions (bareproxy history, the first line and the last 4)
 Version  Time (UTC)           How       User        Plan
-     18  2026-10-05 13:04:37  apply     root        378d4805c7eb
-     19  2026-10-05 13:04:40  apply     root        1400184f2306
-     20  2026-10-05 13:04:42  apply     root        fbccfbb8ba0d
-     21  2026-10-05 13:04:45  apply     root        f3a0f8294da2 (running)
+     18  2026-10-05 13:50:31  apply     root        90bad80f6306
+     19  2026-10-05 13:50:34  apply     root        ea6e784c5375
+     20  2026-10-05 13:50:36  apply     root        f8b4c8bdd84c
+     21  2026-10-05 13:50:39  apply     root        1fa3d30b9edd (running)
 
 ## Trace records
 requests BareProxy was sent: 96300 (48000 HTTP/1.1, 48000 HTTP/2, 20 WebSocket handshakes, 280 probes after the applies); records written: 96300 (equal)

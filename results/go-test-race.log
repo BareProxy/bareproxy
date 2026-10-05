@@ -1,6 +1,7 @@
 go version go1.27.1 linux/amd64
 $ go test -race -count=1 ./...
-ok  	bareproxy/cmd/bareproxy	1.089s
+ok  	bareproxy/cmd/bareproxy	1.098s
 ?   	bareproxy/cmd/bareproxy-wasm/planref	[no test files]
-ok  	bareproxy/internal/bp	74.041s
-?   	bareproxy/tools/testapi	[no test files]
+ok  	bareproxy/internal/bp	72.630s
+ok  	bareproxy/tools/loadtest	3.779s
+ok  	bareproxy/tools/testapi	1.022s

@@ -28,41 +28,41 @@ live.conf: ok, 1 site, 1 pool, 2 rules; listening on :8080 (http), :8443 (https)
 
 $ curl https://bareproxy.com:8443/
 HTTP/2 200 
-  bareproxy-id: 1952b85fa33bb829
+  bareproxy-id: d9a803aee0a2b3ad
   content-type: text/html; charset=utf-8
-  etag: "18db9cdeacd95fb7-31c5"
+  etag: "18dba6ae5e7bfcfd-31e4"
   vary: Accept-Encoding
   page title: BareProxy.com
 
 $ curl https://bareproxy.com:8443/platform/
 HTTP/2 200 
-  bareproxy-id: 92c3ec31cd9fd193
+  bareproxy-id: c77ddb0dcccece41
   content-type: text/html; charset=utf-8
-  etag: "18db9cdeadbdc229-53eb"
+  etag: "18dba6ae61b62a42-54fe"
   vary: Accept-Encoding
   page title: The Platform | BareProxy.com
 
 $ curl https://bareproxy.com:8443/platform
 HTTP/2 301 
-  bareproxy-id: 9da63a50a7a0e4b9
+  bareproxy-id: dfed899d999f5a74
   location: /platform/
 
 $ curl https://bareproxy.com:8443/platform?ref=x
 HTTP/2 301 
-  bareproxy-id: ff56997ec0ad52af
+  bareproxy-id: ce62fce4f0d6bc27
   location: /platform/?ref=x
 
 $ curl https://bareproxy.com:8443/no-such-page/
 HTTP/2 404 
-  bareproxy-id: fcf6ca767f9af6fd
+  bareproxy-id: 1c7e6b42bf1f449c
   content-type: text/html; charset=utf-8
   page title: BareProxy.com
 
 $ curl http://bareproxy.com:8080/modules/
 HTTP/1.1 200 OK
-  Bareproxy-Id: cd700479bc39ba24
+  Bareproxy-Id: 375f2039bfbfeb41
   Content-Type: text/html; charset=utf-8
-  Etag: "18db9cdead8394b6-2b82"
+  Etag: "18dba6ae61607451-2b82"
   Vary: Accept-Encoding
   page title: Modules | BareProxy.com
 
@@ -70,97 +70,97 @@ HTTP/1.1 200 OK
 
 $ curl -H Accept-Encoding: gzip https://bareproxy.com:8443/platform/
 HTTP/2 200 
-  bareproxy-id: 0bf08077709bd288
+  bareproxy-id: 2ca3efce18d42fc5
   content-encoding: gzip
   content-type: text/html; charset=utf-8
-  etag: "18db9cdeadbdc229-df3-gz"
+  etag: "18dba6ae61b62a42-e0d-gz"
   vary: Accept-Encoding
 
-$ curl -H If-None-Match: "18db9cdeadbdc229-53eb" https://bareproxy.com:8443/platform/
+$ curl -H If-None-Match: "18dba6ae61b62a42-54fe" https://bareproxy.com:8443/platform/
 HTTP/2 304 
-  bareproxy-id: 37f38bc85c15b454
-  etag: "18db9cdeadbdc229-53eb"
+  bareproxy-id: f6a8d4720a123068
+  etag: "18dba6ae61b62a42-54fe"
   vary: Accept-Encoding
 
 $ curl -r 0-99 https://bareproxy.com:8443/images/plan-demo.png
 HTTP/2 206 
-  bareproxy-id: 3e0a263d13c73061
-  content-range: bytes 0-99/71088
+  bareproxy-id: 1adf2908af52f076
+  content-range: bytes 0-99/72581
   content-type: image/png
-  etag: "18db927ad0ffe200-115b0"
+  etag: "18db9d931e26cf1c-11b85"
 
 $ curl -I https://bareproxy.com:8443/about/
 HTTP/2 200 
-  bareproxy-id: eb58e4e71148dddb
+  bareproxy-id: d3c0c84bcc1c09ed
   content-type: text/html; charset=utf-8
-  etag: "18db9cdeada8f220-2a0d"
+  etag: "18dba6ae61d5cdc2-2a0d"
   vary: Accept-Encoding
 
 ## Refused: hidden files, symlinks out of the folder, tricky paths, other methods
 
 $ curl https://bareproxy.com:8443/.git/config
 HTTP/2 404 
-  bareproxy-id: 302239d99b34c0ef
+  bareproxy-id: d89f9189e1b2a680
   content-type: text/html; charset=utf-8
   page title: BareProxy.com
 
 $ curl https://bareproxy.com:8443/etc-link/passwd
 HTTP/2 404 
-  bareproxy-id: 7690a87bfa3a5143
+  bareproxy-id: bc7d8974cd732cc1
   content-type: text/html; charset=utf-8
   page title: BareProxy.com
 
 $ curl https://bareproxy.com:8443/etc-link/
 HTTP/2 404 
-  bareproxy-id: 4fbf1e32e5ac5ab8
+  bareproxy-id: 086b6d32dbf1942d
   content-type: text/html; charset=utf-8
   page title: BareProxy.com
 
 $ curl https://bareproxy.com:8443/etc-rel/passwd
 HTTP/2 404 
-  bareproxy-id: 7f98050bc27b805a
+  bareproxy-id: b60452ade4529488
   content-type: text/html; charset=utf-8
   page title: BareProxy.com
 
 $ curl --path-as-is https://bareproxy.com:8443/../etc/passwd
 HTTP/2 400 
-  bareproxy-id: bff52533d8324568
+  bareproxy-id: 1a1d1535b8900a76
   content-type: text/plain; charset=utf-8
-  body: Bad request: the path climbs above / Request ID: bff52533d8324568 
+  body: Bad request: the path climbs above / Request ID: 1a1d1535b8900a76 
 
 $ curl https://bareproxy.com:8443/files/a%2Fb
 HTTP/2 400 
-  bareproxy-id: 03337895afb55527
+  bareproxy-id: ab028b223369087b
   content-type: text/plain; charset=utf-8
-  body: Bad request: encoded slash or backslash (%2F or %5C) Request ID: 03337895afb55527 
+  body: Bad request: encoded slash or backslash (%2F or %5C) Request ID: ab028b223369087b 
 
 $ curl --path-as-is https://bareproxy.com:8443/api/%2e%2e/platform/
 HTTP/2 200 
-  bareproxy-id: ec5ac86e43d33e15
+  bareproxy-id: 77f1fd72bf90e1a0
   content-type: text/html; charset=utf-8
-  etag: "18db9cdeadbdc229-53eb"
+  etag: "18dba6ae61b62a42-54fe"
   vary: Accept-Encoding
   page title: The Platform | BareProxy.com
 
 $ curl -X POST https://bareproxy.com:8443/platform/
 HTTP/2 405 
-  bareproxy-id: 12ebff33d309e810
+  bareproxy-id: 5227b169e8261daf
   content-type: text/plain; charset=utf-8
-  body: Method not allowed Request ID: 12ebff33d309e810 
+  body: Method not allowed Request ID: 5227b169e8261daf 
 
 ## The API behind /api/: prefix stripped, forwarded headers, request ID passed on
 
 $ curl https://bareproxy.com:8443/api/orders?x=1
 HTTP/2 200 
-  bareproxy-id: 2aa0673a978502cc
+  bareproxy-id: ac033077e5a23d37
   content-type: application/json
-  body: {"backend":"api-1","path":"/orders?x=1","host":"bareproxy.com:8443","x_forwarded_for":"127.0.0.1","x_forwarded_proto":"https","bareproxy_id":"2aa0673a978502cc"} 
+  body: {"backend":"api-1","path":"/orders?x=1","host":"bareproxy.com:8443","x_forwarded_for":"127.0.0.1","x_forwarded_proto":"https","bareproxy_id":"ac033077e5a23d37"} 
 
 $ curl https://bareproxy.com:8443/api/orders?x=2
 HTTP/2 200 
-  bareproxy-id: ef93d14b0b199e7c
+  bareproxy-id: 1e55a38f07a33695
   content-type: application/json
-  body: {"backend":"api-2","path":"/orders?x=2","host":"bareproxy.com:8443","x_forwarded_for":"127.0.0.1","x_forwarded_proto":"https","bareproxy_id":"ef93d14b0b199e7c"} 
+  body: {"backend":"api-2","path":"/orders?x=2","host":"bareproxy.com:8443","x_forwarded_for":"127.0.0.1","x_forwarded_proto":"https","bareproxy_id":"1e55a38f07a33695"} 
 
 ## explain, answered by the running server over its admin socket
 
@@ -224,12 +224,12 @@ Sent upstream as GET /orders with Host: bareproxy.com:8443
 Pool api (line 13): 2 of 3 up, fewest in flight wins
   127.0.0.1:9081   up, 0 in flight                                          next pick
   127.0.0.1:9082   up, 0 in flight                                          
-  127.0.0.1:9083   down since 10:55:59, 5 failed checks (connect refused)   
+  127.0.0.1:9083   down since 13:55:46, 5 failed checks (connect refused)   
 
 ## why, read back from the trace log
 
-$ ../bin/bareproxy why --config live.conf 0bf08077
-Request 0bf08077709bd288, 5 Oct 2026 10:56:01.334 UTC, config version 1
+$ ../bin/bareproxy why --config live.conf 2ca3efce
+Request 2ca3efce18d42fc5, 5 Oct 2026 13:55:49.014 UTC, config version 1
 GET https://bareproxy.com:8443/platform/ from 127.0.0.1, TLS 1.3, HTTP/2.0
 
 Site bareproxy.com (line 7)
@@ -239,8 +239,8 @@ Representation: index.html.gz (Content-Encoding gzip)
 Content-Type: text/html; charset=utf-8
 Response 200, 3.5 KB, 0.1 ms in total (outcome file)
 
-$ ../bin/bareproxy why --config live.conf fcf6ca76
-Request fcf6ca767f9af6fd, 5 Oct 2026 10:56:01.271 UTC, config version 1
+$ ../bin/bareproxy why --config live.conf 1c7e6b42
+Request 1c7e6b42bf1f449c, 5 Oct 2026 13:55:48.971 UTC, config version 1
 GET https://bareproxy.com:8443/no-such-page/ from 127.0.0.1, TLS 1.3, HTTP/2.0
 
 Site bareproxy.com (line 7)
@@ -250,8 +250,8 @@ Reason: no such file
 Error page: /home/claude/bareproxy/live/public/404.html
 Response 404, 4.9 KB, 0.2 ms in total (outcome file)
 
-$ ../bin/bareproxy why --config live.conf 7690a87b
-Request 7690a87bfa3a5143, 5 Oct 2026 10:56:01.497 UTC, config version 1
+$ ../bin/bareproxy why --config live.conf bc7d8974
+Request bc7d8974cd732cc1, 5 Oct 2026 13:55:49.127 UTC, config version 1
 GET https://bareproxy.com:8443/etc-link/passwd from 127.0.0.1, TLS 1.3, HTTP/2.0
 
 Site bareproxy.com (line 7)
@@ -261,17 +261,17 @@ Reason: it leads outside the site folder
 Error page: /home/claude/bareproxy/live/public/404.html
 Response 404, 4.9 KB, 0.2 ms in total (outcome file)
 
-$ ../bin/bareproxy why --config live.conf 2aa0673a
-Request 2aa0673a978502cc, 5 Oct 2026 10:56:01.735 UTC, config version 1
+$ ../bin/bareproxy why --config live.conf ac033077
+Request ac033077e5a23d37, 5 Oct 2026 13:55:49.292 UTC, config version 1
 GET https://bareproxy.com:8443/api/orders from 127.0.0.1, TLS 1.3, HTTP/2.0
 
 Site bareproxy.com (line 7)
 Rule line 10: route /api/* -> api strip
   sent upstream as /orders
 Pool api (line 13): 2 of 3 up
-  127.0.0.1:9083   skipped: down since 10:55:59, 5 failed checks (connect refused)
+  127.0.0.1:9083   skipped: down since 13:55:46, 5 failed checks (connect refused)
   127.0.0.1:9081   tried first, fewest in flight: 200 OK, first byte after 0.5 ms
-Response 200, 161 B, 0.8 ms in total (outcome ok)
+Response 200, 161 B, 0.5 ms in total (outcome ok)
 
 ## Stop one API backend: health checks take it out, requests keep working
 
@@ -284,34 +284,34 @@ Path: /api/orders
 Sent upstream as GET /orders with Host: bareproxy.com:8443
 Pool api (line 13): 1 of 3 up, fewest in flight wins
   127.0.0.1:9081   up, 0 in flight                                          next pick
-  127.0.0.1:9082   down since 10:56:04, 4 failed checks (connect refused)   
-  127.0.0.1:9083   down since 10:55:59, 9 failed checks (connect refused)   
+  127.0.0.1:9082   down since 13:55:51, 4 failed checks (connect refused)   
+  127.0.0.1:9083   down since 13:55:46, 9 failed checks (connect refused)   
 
 $ curl https://bareproxy.com:8443/api/orders
 HTTP/2 200 
-  bareproxy-id: 276590ab06e1a530
+  bareproxy-id: 4bee5b517f023a14
   content-type: application/json
-  body: {"backend":"api-1","path":"/orders","host":"bareproxy.com:8443","x_forwarded_for":"127.0.0.1","x_forwarded_proto":"https","bareproxy_id":"276590ab06e1a530"} 
+  body: {"backend":"api-1","path":"/orders","host":"bareproxy.com:8443","x_forwarded_for":"127.0.0.1","x_forwarded_proto":"https","bareproxy_id":"4bee5b517f023a14"} 
 
 ## Reload with a broken config: the running version keeps serving
-bareproxy: 2026/10/05 13:55:59 pool api: 127.0.0.1:9083 down after 3 failed checks (connect refused)
-bareproxy: 2026/10/05 13:56:04 pool api: 127.0.0.1:9082 down after 3 failed checks (connect refused)
-bareproxy: 2026/10/05 13:56:05 reload: live.conf can't go live (the config has errors, so nothing changed; line 10: error: no pool named apix; line 13: warning: pool api isn't used by any route), so version 1 keeps running
+bareproxy: 2026/10/05 16:55:46 pool api: 127.0.0.1:9083 down after 3 failed checks (connect refused)
+bareproxy: 2026/10/05 16:55:51 pool api: 127.0.0.1:9082 down after 3 failed checks (connect refused)
+bareproxy: 2026/10/05 16:55:53 reload: live.conf can't go live (the config has errors, so nothing changed; line 10: error: no pool named apix), so version 1 keeps running
 
 $ curl https://bareproxy.com:8443/platform/
 HTTP/2 200 
-  bareproxy-id: 537ec4268831e3f1
+  bareproxy-id: dde6ea9bb23d6934
   content-type: text/html; charset=utf-8
-  etag: "18db9cdeadbdc229-53eb"
+  etag: "18dba6ae61b62a42-54fe"
   vary: Accept-Encoding
   page title: The Platform | BareProxy.com
 
 ## Reload with a good change: a new rule, version 2
-bareproxy: 2026/10/05 13:56:06 version 2 running (reload by root): 1 site, 1 pool, 3 rules; listening on :8080 (http), :8443 (https)
+bareproxy: 2026/10/05 16:55:54 version 2 running (reload by root): plan 9bff491a21e9, 2 routing changes
 
 $ curl https://bareproxy.com:8443/hello
 HTTP/2 200 
-  bareproxy-id: 43d6d5dacced895c
+  bareproxy-id: 88c4e79e8698c7aa
   content-type: text/plain; charset=utf-8
   body: hello from version 2 
 
@@ -319,13 +319,13 @@ HTTP/2 200
 24 records
 outcomes: {'file': 18, 'bad_request': 2, 'ok': 3, 'local': 1}
 protocols: {'HTTP/2.0': 23, 'HTTP/1.1': 1}
-last record: {"id": "43d6d5dacced895c", "time": "2026-10-05T10:56:07.947Z", "config": 2, "client": "127.0.0.1", "tls": "1.3", "sni": "bareproxy.com", "proto": "HTTP/2.0", "method": "GET", "scheme": "https", "host": "bareproxy.com:8443", "path": "/hello", "site": "bareproxy.com", "site_line": 7, "line": 11, "rule": "route /hello -> respond 200 \"hello from version 2\"", "status": 200, "bytes_in": 0, "bytes_out": 21, "ms": 0.039, "outcome": "local"}
+last record: {"id": "88c4e79e8698c7aa", "time": "2026-10-05T13:55:55.461Z", "config": 2, "client": "127.0.0.1", "tls": "1.3", "sni": "bareproxy.com", "proto": "HTTP/2.0", "method": "GET", "scheme": "https", "host": "bareproxy.com:8443", "path": "/hello", "site": "bareproxy.com", "site_line": 7, "line": 11, "rule": "route /hello -> respond 200 \"hello from version 2\"", "status": 200, "bytes_in": 0, "bytes_out": 21, "ms": 0.038, "outcome": "local"}
 
 ## BareProxy's own log
-bareproxy: 2026/10/05 13:55:57 pool api: 127.0.0.1:9081 up (health check passed)
-bareproxy: 2026/10/05 13:55:57 pool api: 127.0.0.1:9082 up (health check passed)
-bareproxy: 2026/10/05 13:55:57 version 1 running (startup by root): 1 site, 1 pool, 2 rules; listening on :8080 (http), :8443 (https)
-bareproxy: 2026/10/05 13:55:59 pool api: 127.0.0.1:9083 down after 3 failed checks (connect refused)
-bareproxy: 2026/10/05 13:56:04 pool api: 127.0.0.1:9082 down after 3 failed checks (connect refused)
-bareproxy: 2026/10/05 13:56:05 reload: live.conf can't go live (the config has errors, so nothing changed; line 10: error: no pool named apix; line 13: warning: pool api isn't used by any route), so version 1 keeps running
-bareproxy: 2026/10/05 13:56:06 version 2 running (reload by root): 1 site, 1 pool, 3 rules; listening on :8080 (http), :8443 (https)
+bareproxy: 2026/10/05 16:55:44 version 1 running (startup by root): 1 site, 1 pool, 2 rules; listening on :8080 (http), :8443 (https)
+bareproxy: 2026/10/05 16:55:44 pool api: 127.0.0.1:9081 up (health check passed)
+bareproxy: 2026/10/05 16:55:44 pool api: 127.0.0.1:9082 up (health check passed)
+bareproxy: 2026/10/05 16:55:46 pool api: 127.0.0.1:9083 down after 3 failed checks (connect refused)
+bareproxy: 2026/10/05 16:55:51 pool api: 127.0.0.1:9082 down after 3 failed checks (connect refused)
+bareproxy: 2026/10/05 16:55:53 reload: live.conf can't go live (the config has errors, so nothing changed; line 10: error: no pool named apix), so version 1 keeps running
+bareproxy: 2026/10/05 16:55:54 version 2 running (reload by root): plan 9bff491a21e9, 2 routing changes

@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.1.0-alpha, finished (5 October 2026, evening)
+
+The binaries in `releases/v0.1.0-alpha` were rebuilt with these changes. The version name stays 0.1.0-alpha.
+
+- The review's minor items: apply shows each warning once; `check` and a startup give the warnings `plan` gives (rules that never match, pools no rule uses); apply, rollback and reload events name the plan and count its changes; `status` lists removed backends as draining until their drain ends, and `events` notes each drain; the "no BareProxy is running" message says that a running BareProxy keeps its old admin socket until a restart.
+- A backend still waiting for its first health check takes requests when no backend in its pool is up. Before, a route moved to a new pool, a changed health line or a replaced only backend answered 503 for the millisecond or two before the first check (1 to 2.5 failed requests per apply at 1,000 requests per second; now none, `results/load-experiments.log`). A backend that gets such a trial request is no longer listed as skipped in its record.
+- The in-memory record store defaults to 8 MB (was 32 MB). Peak memory under the load test is 46 MiB (was 111 MiB); `results/memory-test.log` has runs with the store off, 8 MB, 16 MB and 32 MB.
+- Faster proxying: the 32 KB copy buffers come from a pool, each attempt copies the request without cloning its headers, and the server matches routes without writing explain's notes. CPU per proxied request fell from about 80 to 72 microseconds in the speed runs, and memory allocated per proxied request from 43.7 KB to 10.3 KB.
+- The load test at the design's full size: `live/load-test.sh` runs 2,000 requests per second for 60 seconds over HTTP/1.1, HTTP/2 and WebSocket with 20 applies, with its own load tool (`src/tools/loadtest`) and a WebSocket echo in `testapi` (`results/load-test.log`). `live/load-experiments.sh` runs five cases the applies stay clear of.
+- Fixed a data race: the bytes-in count of a record was written by the transport's goroutine while the handler read it.
+- The config parser lost 30 lines with no change in behavior, which keeps the core within its 5,000-line budget (4,990).
+- New measurements against nginx on this build (`results/bench-summary.md`).
+
 ## 0.1.0-alpha, rebuilt (5 October 2026, afternoon)
 
 The binaries in `releases/v0.1.0-alpha` were rebuilt with these changes. The version name stays 0.1.0-alpha.

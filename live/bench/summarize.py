@@ -249,7 +249,7 @@ def main(paths):
         if len(rs) >= 2:
             weakest.append(min(r["rps"] for r in rs) / max(r["rps"] for r in rs) * 100.0)
     n_dist = sum(1 for r in d["results"] if other_of(r) > NOISE_LIMIT)
-    txt = ("**Why best runs.** The other workers on this machine were building and testing all through the measurements. "
+    txt = ("**Why best runs.** This machine is shared, and other processes can take CPU time during a run. "
            f"Of {len(d['results'])} attempts, {n_dist} lost more than {NOISE_LIMIT:.0f}% of a core to other processes. "
            "That can only slow a run down. ")
     if spreads:
@@ -417,7 +417,10 @@ def main(paths):
     ngx = (d["sizes"] or {}).get("nginx_binary")
     ngx_all = (d["sizes"] or {}).get("nginx_with_libs")
     rows = []
-    for k in ("bareproxy built plain", "bareproxy built stripped", "testapi (stripped)"):
+    if "bareproxy under test" in sz:
+        rows.append(["BareProxy as measured", f"{sz['bareproxy under test']:,}", f"{sz['bareproxy under test'] / 1048576:.1f}",
+                     "the binary under test, named in the environment below"])
+    for k in ("testapi (stripped)",) if "bareproxy under test" in sz else ("bareproxy built plain", "bareproxy built stripped", "testapi (stripped)"):
         if k in sz:
             note = {"bareproxy built plain": "`go build`, default flags",
                     "bareproxy built stripped": "`-trimpath -ldflags=\"-s -w\"`; this is the binary that was measured"
@@ -490,8 +493,8 @@ def main(paths):
 
     w("## Caveats")
     w("")
-    w("- **A shared two-CPU cloud VM.** This is a KVM guest with two vCPUs, shared with other workers who were building and "
-      "testing at the same time, and the host under it is shared too. Run-to-run differences of several percent are normal here, "
+    w("- **A shared two-CPU cloud VM.** This is a KVM guest with two vCPUs; other work can run on it during a measurement "
+      "(the count of disturbed attempts above says how much did), and the host under it is shared too. Run-to-run differences of several percent are normal here, "
       "and a run can be hit by a neighbour's burst. The tables show the range of runs. The flag ‡ comes from the busy time of a core "
       "that was not spent by the server, the backend, wrk or the harness (read from `/proc/stat`, in 10 ms ticks, so a few percent "
       "either way is rounding). Treat a difference under about 10% as noise.")
@@ -512,8 +515,10 @@ def main(paths):
     w("- **Keep-alive is set up alike on both sides.** nginx has `keepalive_requests` raised to 1,000,000 and an upstream pool of 64 idle "
       "connections; BareProxy's backend transport also keeps up to 64 idle connections per backend (checked in `pool.go` when this was written). "
       "The keep-alive table above shows how many connections each server really opened.")
-    w("- **One build, one day.** BareProxy here is the 0.1.0-dev first cut as built at the start of the day; "
-      "nginx is Ubuntu's 1.24.0 package. The numbers are for these two builds on this machine and not a general claim.")
+    src = env_value(env, "bareproxy source tree at run time:")
+    w("- **One build, one day.** BareProxy here is the binary named in the environment section"
+      + (f" (source tree at run time: {src.split(' ', 2)[1] if src.startswith('git ') else src})" if src else "")
+      + "; nginx is Ubuntu's 1.24.0 package. The numbers are for these two builds on this machine and not a general claim.")
     w("")
     return "\n".join(lines)
 
