@@ -69,11 +69,11 @@ func (t *poolTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 			return nil, lastErr
 		}
 		tried[b] = true
-		out := req.Clone(req.Context())
-		out.URL.Scheme, out.URL.Host = schemeName(b.Spec.HTTPS), b.Spec.Addr
+		out, u := *req, *req.URL // only the URL changes, so the headers are shared, not cloned
+		out.URL, u.Scheme, u.Host = &u, schemeName(b.Spec.HTTPS), b.Spec.Addr
 		b.inflight.Add(1)
 		start := time.Now()
-		resp, err := t.pool.transport.RoundTrip(out)
+		resp, err := t.pool.transport.RoundTrip(&out)
 		ms := msSince(start)
 		if err != nil {
 			b.inflight.Add(-1)
@@ -219,11 +219,13 @@ func (s *Server) proxy(w *respWriter, r *http.Request, rt *Runtime, site *Site, 
 			}
 			s.proxyError(w, r, rec, err)
 		},
-		ErrorLog:   log.New(io.Discard, "", 0),
+		ErrorLog:   discardLog,
 		BufferPool: copyBufs,
 	}
 	rp.ServeHTTP(w, r)
 }
+
+var discardLog = log.New(io.Discard, "", 0)
 
 // copyBufs lends the proxy its 32 KB copy buffers, which it would otherwise
 // allocate for every response.
