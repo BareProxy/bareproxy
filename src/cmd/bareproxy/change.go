@@ -5,12 +5,10 @@ package main
 
 import (
 	"bufio"
-	"context"
+	"cmp"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
-	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -23,63 +21,15 @@ import (
 
 // The config change commands: plan, apply, rollback and history. Apart
 // from plan --from, they ask the running server over its admin socket.
-func init() {
-	extraCommands["plan"] = planCmd
-	extraCommands["apply"] = applyCmd
-	extraCommands["rollback"] = rollbackCmd
-	extraCommands["history"] = historyCmd
+
+// parseChangeFlags reads the options the four commands share. They take at
+// most one argument, which arg returns.
+func parseChangeFlags(args []string) (o options, ok bool) {
+	o, ok = parse(args, true, "--json", "--yes", "-y", "--from", "--plan", "--config", "-c")
+	return o, ok && len(o.pos) <= 1
 }
 
-type changeFlags struct {
-	pos                []string
-	json, yes          bool
-	from, plan, config string
-}
-
-func parseChangeFlags(args []string) (changeFlags, bool) {
-	var f changeFlags
-	for i := 0; i < len(args); i++ {
-		next := func(dst *string) bool {
-			i++
-			if i >= len(args) {
-				fmt.Fprintf(os.Stderr, "bareproxy: %s needs a value\n", args[i-1])
-				return false
-			}
-			*dst = args[i]
-			return true
-		}
-		ok := true
-		switch a := args[i]; a {
-		case "--json":
-			f.json = true
-		case "--yes", "-y":
-			f.yes = true
-		case "--from":
-			ok = next(&f.from)
-		case "--plan":
-			ok = next(&f.plan)
-		case "--config", "-c":
-			ok = next(&f.config)
-		default:
-			if strings.HasPrefix(a, "-") {
-				fmt.Fprintf(os.Stderr, "bareproxy: unknown option %s\n", a)
-				return f, false
-			}
-			f.pos = append(f.pos, a)
-		}
-		if !ok {
-			return f, false
-		}
-	}
-	return f, len(f.pos) <= 1
-}
-
-func (f changeFlags) arg() string {
-	if len(f.pos) == 1 {
-		return f.pos[0]
-	}
-	return ""
-}
+func (o options) arg() string { return cmp.Or(o.pos...) }
 
 // adminSocket finds the admin socket a config file names.
 func adminSocket(file string) (string, error) {
@@ -94,31 +44,26 @@ func adminSocket(file string) (string, error) {
 	return sock, nil
 }
 
-// callAdmin sends one request to the admin socket.
+// callAdmin sends one request to the admin socket. When nothing answers it
+// says why in plain words.
 func callAdmin(sock, method, path string, q url.Values, body string) (int, string, error) {
-	client := &http.Client{
-		Timeout: 60 * time.Second,
-		Transport: &http.Transport{DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
-			var d net.Dialer
-			return d.DialContext(ctx, "unix", sock)
-		}},
+	code, out, err := adminCall(sock, method, path+"?"+q.Encode(), body, time.Minute)
+	switch {
+	case errors.Is(err, syscall.ENOENT), errors.Is(err, syscall.ECONNREFUSED):
+		err = fmt.Errorf("no BareProxy is running with the admin socket %s", sock)
+	case errors.Is(err, syscall.EACCES):
+		err = fmt.Errorf("no permission to use %s: run as root or as a member of its group", sock)
 	}
-	req, err := http.NewRequest(method, "http://bareproxy"+path+"?"+q.Encode(), strings.NewReader(body))
+	return code, out, err
+}
+
+// callServer sends a request to the server that a config file names.
+func callServer(file, method, path string, q url.Values, body string) (int, string, error) {
+	sock, err := adminSocket(file)
 	if err != nil {
 		return 0, "", err
 	}
-	resp, err := client.Do(req)
-	switch {
-	case errors.Is(err, syscall.ENOENT), errors.Is(err, syscall.ECONNREFUSED):
-		return 0, "", fmt.Errorf("no BareProxy is running with the admin socket %s", sock)
-	case errors.Is(err, syscall.EACCES):
-		return 0, "", fmt.Errorf("no permission to use %s: run as root or as a member of its group", sock)
-	case err != nil:
-		return 0, "", err
-	}
-	defer resp.Body.Close()
-	b, err := io.ReadAll(resp.Body)
-	return resp.StatusCode, string(b), err
+	return callAdmin(sock, method, path, q, body)
 }
 
 // show prints an admin reply: errors go to stderr, except in JSON.
@@ -134,10 +79,10 @@ func show(code int, out string, asJSON bool) int {
 	return 0
 }
 
-// jsonOr renders v as indented JSON, or returns text and a newline.
+// jsonOr renders v as indented JSON, or returns text as it is.
 func jsonOr(asJSON bool, v any, text string) string {
 	if !asJSON {
-		return text + "\n"
+		return text
 	}
 	b, _ := json.MarshalIndent(v, "", "  ")
 	return string(b) + "\n"
@@ -154,8 +99,7 @@ func jsonQuery(asJSON bool) url.Values {
 func planCmd(args []string) int {
 	f, ok := parseChangeFlags(args)
 	if !ok {
-		usage()
-		return 2
+		return badUsage()
 	}
 	file := configFile(f.arg())
 	if f.from != "" {
@@ -163,18 +107,11 @@ func planCmd(args []string) int {
 	}
 	text, err := os.ReadFile(file)
 	if err != nil {
-		fmt.Fprintln(os.Stderr, "bareproxy:", err)
-		return 1
+		return fail("%v", err)
 	}
-	sock, err := adminSocket(file)
-	var code int
-	var out string
-	if err == nil {
-		code, out, err = callAdmin(sock, "POST", "/plan", jsonQuery(f.json), string(text))
-	}
+	code, out, err := callServer(file, "POST", "/plan", jsonQuery(f.json), string(text))
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "bareproxy: %v\nTo compare two files without a server: bareproxy plan FILE --from FILE\n", err)
-		return 1
+		return fail("%v\nTo compare two files without a server: bareproxy plan FILE --from FILE", err)
 	}
 	return show(code, out, f.json)
 }
@@ -198,37 +135,30 @@ func offlinePlan(from, file string, asJSON bool) int {
 	defer old.Close()
 	defer cur.Close()
 	p := bp.MakePlan(old, cur)
-	if asJSON {
-		e := json.NewEncoder(os.Stdout)
-		e.SetIndent("", "  ")
-		e.Encode(map[string]any{"plan_id": p.ID, "from": from, "file": file, "text": p.Text(), "plan": p})
-		return 0
-	}
-	fmt.Printf("%s compared with %s:\n%s", file, from, p.Text())
+	text := p.Text()
+	fmt.Print(jsonOr(asJSON,
+		map[string]any{"plan_id": p.ID, "from": from, "file": file, "text": text, "plan": p},
+		fmt.Sprintf("%s compared with %s:\n%s", file, from, text)))
 	return 0
 }
 
 func applyCmd(args []string) int {
 	f, ok := parseChangeFlags(args)
 	if !ok {
-		usage()
-		return 2
+		return badUsage()
 	}
 	file := configFile(f.arg())
 	text, err := os.ReadFile(file)
 	if err != nil {
-		fmt.Fprintln(os.Stderr, "bareproxy:", err)
-		return 1
+		return fail("%v", err)
 	}
 	sock, err := adminSocket(file)
-	var code int
-	var out string
-	if err == nil {
-		code, out, err = callAdmin(sock, "POST", "/plan", jsonQuery(true), string(text))
-	}
 	if err != nil {
-		fmt.Fprintln(os.Stderr, "bareproxy:", err)
-		return 1
+		return fail("%v", err)
+	}
+	code, out, err := callAdmin(sock, "POST", "/plan", jsonQuery(true), string(text))
+	if err != nil {
+		return fail("%v", err)
 	}
 	var pr struct {
 		PlanID    string `json:"plan_id"`
@@ -245,9 +175,10 @@ func applyCmd(args []string) int {
 		return show(code, out, f.json)
 	}
 	if f.plan != "" && f.plan != pr.PlanID {
-		err := &bp.PlanChangedError{ID: f.plan}
-		return show(http.StatusConflict, jsonOr(f.json, map[string]string{"error": err.Error()}, err.Error()), f.json)
+		msg := (&bp.PlanChangedError{ID: f.plan}).Error()
+		return show(http.StatusConflict, jsonOr(f.json, map[string]string{"error": msg}, msg+"\n"), f.json)
 	}
+	// The plan goes to stdout, or to stderr when stdout is for JSON.
 	planOut := os.Stdout
 	if f.json {
 		planOut = os.Stderr
@@ -271,8 +202,7 @@ func applyCmd(args []string) int {
 	}
 	if !f.yes {
 		if !isTerminal(os.Stdin) {
-			fmt.Fprintln(os.Stderr, "bareproxy: nothing applied: without a terminal to ask in, apply needs --yes")
-			return 1
+			return fail("nothing applied: without a terminal to ask in, apply needs --yes")
 		}
 		fmt.Fprint(planOut, "Apply? [y/N] ")
 		line, _ := bufio.NewReader(os.Stdin).ReadString('\n')
@@ -281,15 +211,12 @@ func applyCmd(args []string) int {
 			return 1
 		}
 	}
+	// pr.PlanID is the plan that was shown, and the one --plan named if it did.
 	q := jsonQuery(f.json)
 	q.Set("plan", pr.PlanID)
-	if f.plan != "" {
-		q.Set("plan", f.plan)
-	}
 	code, out, err = callAdmin(sock, "POST", "/apply", q, string(text))
 	if err != nil {
-		fmt.Fprintln(os.Stderr, "bareproxy:", err)
-		return 1
+		return fail("%v", err)
 	}
 	return show(code, out, f.json)
 }
@@ -308,8 +235,7 @@ func isTerminal(f *os.File) bool {
 func rollbackCmd(args []string) int {
 	f, ok := parseChangeFlags(args)
 	if !ok {
-		usage()
-		return 2
+		return badUsage()
 	}
 	q := jsonQuery(f.json)
 	if v := f.arg(); v != "" {
@@ -321,22 +247,15 @@ func rollbackCmd(args []string) int {
 func historyCmd(args []string) int {
 	f, ok := parseChangeFlags(args)
 	if !ok || len(f.pos) > 0 {
-		usage()
-		return 2
+		return badUsage()
 	}
 	return simpleAdmin(f, "GET", "/history", jsonQuery(f.json))
 }
 
-func simpleAdmin(f changeFlags, method, path string, q url.Values) int {
-	sock, err := adminSocket(configFile(f.config))
-	var code int
-	var out string
-	if err == nil {
-		code, out, err = callAdmin(sock, method, path, q, "")
-	}
+func simpleAdmin(f options, method, path string, q url.Values) int {
+	code, out, err := callServer(configFile(f.config), method, path, q, "")
 	if err != nil {
-		fmt.Fprintln(os.Stderr, "bareproxy:", err)
-		return 1
+		return fail("%v", err)
 	}
 	return show(code, out, f.json)
 }
