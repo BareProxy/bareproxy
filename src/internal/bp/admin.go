@@ -138,7 +138,11 @@ func appliedText(a *Applied) string {
 	if a.Unchanged {
 		return asLines(a.Warnings) + fmt.Sprintf("No changes: version %d keeps running.\n", a.Version)
 	}
-	return asLines(a.Warnings) + fmt.Sprintf("Version %d is running (it was %d).\n", a.Version, a.Previous)
+	text := asLines(a.Warnings) + fmt.Sprintf("Version %d is running (it was %d).\n", a.Version, a.Previous)
+	if a.Wrote != "" {
+		text += fmt.Sprintf("%s now holds version %d.\n", a.Wrote, a.Version)
+	}
+	return text
 }
 
 func (s *Server) adminApply(w http.ResponseWriter, r *http.Request) {

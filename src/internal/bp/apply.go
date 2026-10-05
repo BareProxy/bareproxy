@@ -66,6 +66,7 @@ type Applied struct {
 	Previous  int         `json:"previous,omitempty"`
 	Unchanged bool        `json:"unchanged,omitempty"`
 	PlanID    string      `json:"plan_id,omitempty"`
+	Wrote     string      `json:"wrote,omitempty"` // the config file, when the apply rewrote it
 	Warnings  []string    `json:"warnings,omitempty"`
 	Plan      *PlanResult `json:"-"`
 }
@@ -274,9 +275,11 @@ func (s *Server) apply(ch Change) (*Applied, error) {
 	}
 	if !ch.keepFile {
 		s.cs.mismatch = ""
-		if err := writeIfChanged(file, ch.Text); err != nil {
+		if wrote, err := writeIfChanged(file, ch.Text); err != nil {
 			s.cs.mismatch = fmt.Sprintf("version %d is running, but %s couldn't be written: %v", res.Version, file, err)
 			res.Warnings = append(res.Warnings, s.cs.mismatch)
+		} else if wrote {
+			res.Wrote = file
 		}
 	}
 	how := ch.How
@@ -302,16 +305,19 @@ func (h *history) lastText() string {
 
 // writeIfChanged writes text to the config file, through a temporary file
 // and a rename, unless the file already holds exactly that text.
-func writeIfChanged(file, text string) error {
+func writeIfChanged(file, text string) (bool, error) {
+	if real, err := filepath.EvalSymlinks(file); err == nil {
+		file = real // keep a symlinked config a symlink: write where it points
+	}
 	cur, err := os.ReadFile(file)
 	if err == nil && string(cur) == text {
-		return nil
+		return false, nil
 	}
 	perm := os.FileMode(0o644)
 	if fi, err := os.Stat(file); err == nil {
 		perm = fi.Mode().Perm()
 	}
-	return writeFileAtomic(file, []byte(text), perm)
+	return true, writeFileAtomic(file, []byte(text), perm)
 }
 
 // openListeners opens the ports c needs that aren't open yet, before the

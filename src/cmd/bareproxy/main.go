@@ -498,6 +498,9 @@ func printEvents(evs []bp.Event) {
 
 func printStatus(st bp.Status) {
 	fmt.Printf("BareProxy %s, up %s (since %s)\nConfig %s, version %d\n", st.Version, time.Duration(st.UptimeSeconds)*time.Second, st.Started, st.ConfigFile, st.ConfigVersion)
+	if st.Mismatch != "" {
+		fmt.Println("Warning: " + st.Mismatch)
+	}
 	fmt.Printf("\nListeners (%d)\n", len(st.Listeners))
 	for _, l := range st.Listeners {
 		fmt.Printf("  :%d %s  %s\n", l.Port, map[bool]string{false: "http", true: "https"}[l.TLS], strings.Join(l.Sites, ", "))

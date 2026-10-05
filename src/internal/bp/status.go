@@ -23,6 +23,7 @@ type Status struct {
 	Pools         []PoolStatus     `json:"pools"`
 	Certificates  []CertStatus     `json:"certificates"`
 	Requests      RequestStatus    `json:"requests"`
+	Mismatch      string           `json:"mismatch,omitempty"` // why the config file doesn't hold the running config
 }
 
 type ListenerStatus struct {
@@ -130,7 +131,7 @@ func poolChecksText(h *HealthSpec) string {
 func (s *Server) Status() *Status {
 	rt := s.Current()
 	c := rt.Cfg
-	st := &Status{Version: Version, ConfigFile: c.File, ConfigVersion: rt.Version,
+	st := &Status{Version: Version, ConfigFile: c.File, ConfigVersion: rt.Version, Mismatch: s.ConfigMismatch(),
 		Listeners: []ListenerStatus{}, Sites: []SiteStatus{}, Pools: []PoolStatus{}, Certificates: []CertStatus{}}
 	started := rt.Mem.started
 	st.Started, st.UptimeSeconds = stamp(started), time.Since(started).Seconds()
