@@ -1,29 +1,6 @@
-?   	bareproxy/cmd/bareproxy	[no test files]
-=== RUN   TestNormalizePath
---- PASS: TestNormalizePath (0.00s)
-=== RUN   TestConfigErrorsNameTheirLines
---- PASS: TestConfigErrorsNameTheirLines (0.00s)
-=== RUN   TestFilesAndRoutes
---- PASS: TestFilesAndRoutes (0.00s)
-=== RUN   TestConditionalRangeHead
---- PASS: TestConditionalRangeHead (0.00s)
-=== RUN   TestPrecompressed
---- PASS: TestPrecompressed (0.00s)
-=== RUN   TestOSRootTrailingSlash
-    bp_test.go:314: go1.27.1 refuses Open("link/"): openat link/: path escapes from parent
---- PASS: TestOSRootTrailingSlash (0.00s)
-=== RUN   TestProxyStripRetryAndHeaders
---- PASS: TestProxyStripRetryAndHeaders (0.00s)
-=== RUN   TestNoBackendUp
---- PASS: TestNoBackendUp (0.00s)
-=== RUN   TestHealthChecksAndLiveExplain
---- PASS: TestHealthChecksAndLiveExplain (0.07s)
-=== RUN   TestExplainFilesOffline
---- PASS: TestExplainFilesOffline (0.00s)
-=== RUN   TestWhy
---- PASS: TestWhy (0.00s)
-=== RUN   TestReloadKeepsGoodConfig
---- PASS: TestReloadKeepsGoodConfig (0.00s)
-PASS
-ok  	bareproxy/internal/bp	0.097s
+go version go1.27.1 linux/amd64
+$ go test -count=1 ./...
+ok  	bareproxy/cmd/bareproxy	0.019s
+?   	bareproxy/cmd/bareproxy-wasm/planref	[no test files]
+ok  	bareproxy/internal/bp	36.032s
 ?   	bareproxy/tools/testapi	[no test files]
