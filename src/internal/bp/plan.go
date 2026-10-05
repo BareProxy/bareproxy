@@ -229,7 +229,7 @@ type portPlan struct {
 type hostGroup struct {
 	port       *portPlan
 	oldS, newS *Site
-	hosts      []string // representative hosts, in display order
+	hosts      []string // its host classes, described, in display order
 	where      string
 	sp         *space
 	class      map[[2]int]int // (path rep, method*combos+combo) -> line id
@@ -328,15 +328,11 @@ func newPlanner(old, new *Config) *planner {
 				byPair[k] = g
 				pp.groups = append(pp.groups, g)
 			}
-			g.hosts = append(g.hosts, h)
+			g.hosts = append(g.hosts, pp.describeHost(h))
 			pp.byRep[h] = g
 		}
 		for _, g := range pp.groups {
-			var ds []string
-			for _, h := range g.hosts {
-				ds = append(ds, pp.describeHost(h))
-			}
-			g.where = fmt.Sprintf("%s (port %d)", strings.Join(ds, ", "), n)
+			g.where = fmt.Sprintf("%s (port %d)", strings.Join(g.hosts, ", "), n)
 			g.sp = newSpace(g.oldS, g.newS)
 		}
 		pl.ports = append(pl.ports, pp)
@@ -416,15 +412,16 @@ type effPair struct{ old, new string }
 // analyze runs every class of a host group through both configs and turns
 // the classes whose effect changes into lines.
 func (pl *planner) analyze(g *hostGroup, gi int, lines []*lineAcc) []*lineAcc {
-	if o, n := g.port.oldP, g.port.newP; o != nil && n != nil && o.TLS == n.TLS && sameRules(g.oldS, g.newS) {
+	o, n := g.port.oldP, g.port.newP
+	samePort := o != nil && n != nil && o.TLS == n.TLS
+	if samePort && sameRules(g.oldS, g.newS) {
 		return lines // the matcher picks the same rule with the same effect for every request
 	}
 	sp := g.sp
 	// A path whose rules (those whose path pattern takes it) are the same
 	// on both sides is handled the same for every method and header.
 	same := make([]bool, len(sp.reps))
-	if o, n := g.port.oldP, g.port.newP; o != nil && n != nil && o.TLS == n.TLS && g.oldS != nil && g.newS != nil &&
-		routeEffect(g.oldS, nil) == routeEffect(g.newS, nil) {
+	if samePort && g.oldS != nil && g.newS != nil && routeEffect(g.oldS, nil) == routeEffect(g.newS, nil) {
 		for pi, path := range sp.reps {
 			same[pi] = sameList(rulesFor(g.oldS, path), rulesFor(g.newS, path))
 		}
@@ -433,7 +430,11 @@ func (pl *planner) analyze(g *hostGroup, gi int, lines []*lineAcc) []*lineAcc {
 	for pi, path := range sp.reps {
 		fo[pi], fn[pi] = pathSite(g.oldS, path), pathSite(g.newS, path)
 	}
-	changed := map[int]map[effPair][]int{} // path rep -> effects -> tuples
+	type pathEff struct {
+		pi int
+		e  effPair
+	}
+	changed := map[pathEff][]int{} // tuples whose effect changes, by path and effects
 	for c := 0; c < sp.ncombo; c++ {
 		h := sp.header(c)
 		for pi, path := range sp.reps {
@@ -441,24 +442,15 @@ func (pl *planner) analyze(g *hostGroup, gi int, lines []*lineAcc) []*lineAcc {
 				continue
 			}
 			for mi, m := range sp.methods {
-				eo := g.effect(true, fo[pi], m, path, h)
-				en := g.effect(false, fn[pi], m, path, h)
-				if eo == en {
-					continue
+				if eo, en := g.effect(true, fo[pi], m, path, h), g.effect(false, fn[pi], m, path, h); eo != en {
+					k := pathEff{pi, effPair{eo, en}}
+					changed[k] = append(changed[k], mi*sp.ncombo+c)
 				}
-				byEff := changed[pi]
-				if byEff == nil {
-					byEff = map[effPair][]int{}
-					changed[pi] = byEff
-				}
-				e := effPair{eo, en}
-				byEff[e] = append(byEff[e], mi*sp.ncombo+c)
 			}
 		}
 	}
-	if len(changed) == 0 {
-		return lines
-	}
+	// Each path's tuples split into products of method and header states;
+	// one line holds a product with its effects on every path that has it.
 	type key struct {
 		e    effPair
 		prod string
@@ -470,31 +462,28 @@ func (pl *planner) analyze(g *hostGroup, gi int, lines []*lineAcc) []*lineAcc {
 	}
 	groups := map[key]*merged{}
 	var order []key
-	sizes := sp.sizes()
-	for pi := range sp.reps {
-		for e, ts := range changed[pi] {
-			digits := make([][]int, len(ts))
-			for i, t := range ts {
-				digits[i] = sp.digits(t)
+	sizes := append([]int{len(sp.methods)}, sp.nstates...)
+	for pe, ts := range changed {
+		digits := make([][]int, len(ts))
+		for i, t := range ts {
+			digits[i] = sp.digits(t)
+		}
+		for _, prod := range factor(digits, sizes) {
+			k := key{pe.e, fmt.Sprint(prod)}
+			m := groups[k]
+			if m == nil {
+				m = &merged{e: pe.e, prod: prod, paths: map[int]bool{}}
+				groups[k] = m
+				order = append(order, k)
 			}
-			for _, prod := range factor(digits, sizes) {
-				k := key{e, fmt.Sprint(prod)}
-				m := groups[k]
-				if m == nil {
-					m = &merged{e: e, prod: prod, paths: map[int]bool{}}
-					groups[k] = m
-					order = append(order, k)
-				}
-				m.paths[pi] = true
-			}
+			m.paths[pe.pi] = true
 		}
 	}
 	g.class = map[[2]int]int{}
 	for _, k := range order {
 		m := groups[k]
 		id := len(lines)
-		var what []string
-		what = append(what, sp.methodPhrase(m.prod[0]))
+		what := []string{sp.methodPhrase(m.prod[0])}
 		for i := range sp.names {
 			if s := sp.headerPhrase(i, m.prod[i+1]); s != "" {
 				what = append(what, s)
@@ -503,9 +492,7 @@ func (pl *planner) analyze(g *hostGroup, gi int, lines []*lineAcc) []*lineAcc {
 		what = append(what, strings.Join(sp.pathPhrases(m.paths), "; "))
 		sortKey := "\xff"
 		for pi := range m.paths {
-			if s := sp.repSort[pi]; s < sortKey {
-				sortKey = s
-			}
+			sortKey = min(sortKey, sp.repSort[pi])
 		}
 		lines = append(lines, &lineAcc{id: id, port: g.port.num, group: gi, sortKey: sortKey,
 			line: PlanLine{Where: g.where, What: strings.Join(what, ", "), Old: m.e.old, New: m.e.new}})
@@ -618,8 +605,7 @@ type space struct {
 	patIdx  map[string]int // pattern path -> its representative
 	belowIx map[string]int // pattern path ("" for the root) -> its fresh child
 	root    *pnode
-	methods []string // named methods, HEAD when GET is named, then one other
-	mIdx    map[string]int
+	methods []string   // named methods, HEAD when GET is named, then one other
 	names   []string   // header names in conditions, canonical
 	vals    [][]string // named values per header name
 	other   []string   // a value per header name that no condition names
@@ -659,7 +645,7 @@ func newSpace(a, b *Site) *space {
 	}
 	list := keysOf(pats)
 	// seg is a path segment no pattern holds, for fresh paths.
-	sp := &space{seg: "~bp", patIdx: map[string]int{}, belowIx: map[string]int{}, mIdx: map[string]int{}}
+	sp := &space{seg: "~bp", patIdx: map[string]int{}, belowIx: map[string]int{}}
 	for n := 2; slices.ContainsFunc(list, func(p string) bool { return strings.Contains(p, sp.seg) }); n++ {
 		sp.seg = "~bp" + strconv.Itoa(n)
 	}
@@ -700,9 +686,6 @@ func newSpace(a, b *Site) *space {
 		other += "X"
 	}
 	sp.methods = append(keysOf(methods), other)
-	for i, m := range sp.methods {
-		sp.mIdx[m] = i
-	}
 	sp.names = keysOf(hv)
 	sp.ncombo = 1
 	for _, name := range sp.names {
@@ -740,10 +723,6 @@ func (sp *space) count() int {
 		return MaxPlanClasses + 1
 	}
 	return n * sp.ncombo
-}
-
-func (sp *space) sizes() []int {
-	return append([]int{len(sp.methods)}, sp.nstates...)
 }
 
 // digits splits a tuple (method*combos+combo) into method and header states.
@@ -826,7 +805,7 @@ func (sp *space) comboOf(h http.Header) int {
 }
 
 func (sp *space) methodRep(m string) int {
-	if i, ok := sp.mIdx[m]; ok {
+	if i := slices.Index(sp.methods, m); i >= 0 {
 		return i
 	}
 	return len(sp.methods) - 1
@@ -1101,18 +1080,17 @@ func planWarnings(c *Config) []string {
 					}
 				}
 			})
-			ls := keysOf(takers)
+			var ls []string
+			for _, l := range keysOf(takers) {
+				ls = append(ls, strconv.Itoa(l))
+			}
 			msg := fmt.Sprintf("line %d: %s never matches", r.Line, r.Text)
 			switch len(ls) {
 			case 0:
 			case 1:
-				msg += fmt.Sprintf(": line %d takes every request it would get", ls[0])
+				msg += ": line " + ls[0] + " takes every request it would get"
 			default:
-				var parts []string
-				for _, l := range ls {
-					parts = append(parts, strconv.Itoa(l))
-				}
-				msg += ": lines " + joinAnd(parts) + " take every request it would get"
+				msg += ": lines " + joinAnd(ls) + " take every request it would get"
 			}
 			ws = append(ws, warn{r.Line, msg})
 		}
@@ -1311,14 +1289,12 @@ func siteLabel(s *Site) string {
 	return s.Name
 }
 
+// sizeText writes a size in the largest unit that divides it.
 func sizeText(n int64) string {
-	switch {
-	case n > 0 && n%(1<<30) == 0:
-		return fmt.Sprintf("%dGB", n>>30)
-	case n > 0 && n%(1<<20) == 0:
-		return fmt.Sprintf("%dMB", n>>20)
-	case n > 0 && n%(1<<10) == 0:
-		return fmt.Sprintf("%dKB", n>>10)
+	for i, unit := range []string{"GB", "MB", "KB"} {
+		if shift := 30 - 10*i; n > 0 && n%(1<<shift) == 0 {
+			return fmt.Sprintf("%d%s", n>>shift, unit)
+		}
 	}
 	return fmt.Sprintf("%dB", n)
 }
