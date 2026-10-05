@@ -870,3 +870,55 @@ func TestPlanEffectsMatchServer(t *testing.T) {
 	}
 	t.Logf("%d config pairs, %d requests with the same effect served the same", pairs, same)
 }
+
+// TestPlanWarningsOnGeneratedConfigs checks the warnings against brute
+// force: a rule is warned about exactly when no request of any class
+// reaches it, and a pool exactly when no reachable rule uses it.
+func TestPlanWarningsOnGeneratedConfigs(t *testing.T) {
+	dir := planDir(t, "f1", "f2")
+	r := mrand.New(mrand.NewPCG(11, 3))
+	var reqs []genReq
+	for _, q := range candidates() {
+		if q.host == "a.test" {
+			reqs = append(reqs, q)
+		}
+	}
+	warned := 0
+	for i := 0; i < 200; i++ {
+		src := renderSites(genConfig(r))
+		c := mustParse(t, dir, src)
+		p := MakePlan(nil, c)
+		got := map[string]bool{}
+		for _, w := range p.Warnings {
+			got[w[:strings.Index(w, ":")]] = true
+		}
+		used := map[string]bool{}
+		want := map[string]bool{}
+		for _, s := range c.Sites {
+			won := map[*Route]bool{}
+			for _, q := range reqs {
+				if rt, _ := s.MatchRoute(q.method, q.path, q.h); rt != nil {
+					won[rt] = true
+				}
+			}
+			for _, rt := range s.Routes {
+				if won[rt] {
+					used[rt.Act.Pool] = true
+				} else {
+					want[fmt.Sprintf("line %d", rt.Line)] = true
+				}
+			}
+		}
+		for _, name := range c.PoolOrder {
+			if !used[name] {
+				want[fmt.Sprintf("line %d", c.Pools[name].Line)] = true
+			}
+		}
+		if fmt.Sprint(got) != fmt.Sprint(want) {
+			t.Fatalf("config %d: warnings %q, want lines %v\n%s", i, p.Warnings, want, src)
+		}
+		warned += len(p.Warnings)
+		c.Close()
+	}
+	t.Logf("200 generated configs, %d warnings all confirmed", warned)
+}
