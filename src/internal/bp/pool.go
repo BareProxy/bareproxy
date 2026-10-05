@@ -294,9 +294,10 @@ func newTransport(ps *PoolSpec) *http.Transport {
 			}
 			return c, nil
 		},
-		ResponseHeaderTimeout: ps.ResponseTimeout,
-		MaxIdleConnsPerHost:   64,
-		IdleConnTimeout:       90 * time.Second,
-		TLSClientConfig:       &tls.Config{MinVersion: tls.VersionTLS12},
+		ResponseHeaderTimeout:  ps.ResponseTimeout,
+		MaxResponseHeaderBytes: 64 << 10,
+		MaxIdleConnsPerHost:    64,
+		IdleConnTimeout:        90 * time.Second,
+		TLSClientConfig:        &tls.Config{MinVersion: tls.VersionTLS12},
 	}
 }

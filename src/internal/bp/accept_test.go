@@ -81,12 +81,10 @@ type accReport struct {
 	counts   map[string]int
 	examples []string
 	maxEx    int
-	known    map[string]int
-	knownEx  map[string]string
 }
 
 func newAccReport(t *testing.T) *accReport {
-	return &accReport{t: t, counts: map[string]int{}, maxEx: 12, known: map[string]int{}, knownEx: map[string]string{}}
+	return &accReport{t: t, counts: map[string]int{}, maxEx: 12}
 }
 
 func (r *accReport) describe(c *accCase, recJSON, msg string) string {
@@ -108,25 +106,8 @@ func (r *accReport) fail(kind string, c *accCase, recJSON string, f string, a ..
 	}
 }
 
-// knownBug counts a mismatch that belongs to a bug already reported. The
-// test goes on; the count and one example go to the log.
-func (r *accReport) knownBug(id string, c *accCase, recJSON string, f string, a ...any) {
-	r.known[id]++
-	if _, ok := r.knownEx[id]; !ok {
-		r.knownEx[id] = r.describe(c, recJSON, fmt.Sprintf(f, a...))
-	}
-}
-
 func (r *accReport) done() {
 	r.t.Helper()
-	ids := make([]string, 0, len(r.known))
-	for id := range r.known {
-		ids = append(ids, id)
-	}
-	sort.Strings(ids)
-	for _, id := range ids {
-		r.t.Logf("known bug %s: %d requests are affected; first one: %s", id, r.known[id], r.knownEx[id])
-	}
 	if len(r.counts) == 0 {
 		return
 	}
@@ -221,9 +202,7 @@ func (w *accWorld) check(rep *accReport, c *accCase, rr *httptest.ResponseRecord
 		if ex.site != "" || ex.action != "421 (no_site)" {
 			fail("no-site-explain", "explain should say 421 (no_site), said site %q action %q", ex.site, ex.action)
 		}
-		if rec.Path == "" {
-			rep.knownBug("no-site-record-has-no-path", c, recJSON, "the record of a 421 has an empty path")
-		} else if rec.Path != c.rawPath {
+		if rec.Path != c.rawPath {
 			fail("record-path", "record path %q, the client sent %q", rec.Path, c.rawPath)
 		}
 		return
@@ -244,11 +223,7 @@ func (w *accWorld) check(rep *accReport, c *accCase, rr *httptest.ResponseRecord
 			fail("bad-path", "design says 400 (bad_request); record has outcome %q, client got %d", rec.Outcome, c.code)
 		}
 		if !ex.refused || ex.action != "400 (bad_request)" {
-			if !ex.refused && want.site.keep && strings.Contains(c.rawPath, `\`) {
-				rep.knownBug("explain-raw-backslash-on-keep-site", c, recJSON, "the server refuses the raw backslash; explain turns it into %%5C, which this site keeps, and routes the request")
-			} else {
-				fail("bad-path-explain", "explain should refuse the path with 400; refused=%v action %q", ex.refused, ex.action)
-			}
+			fail("bad-path-explain", "explain should refuse the path with 400; refused=%v action %q", ex.refused, ex.action)
 		}
 		return
 	}
@@ -289,11 +264,7 @@ func (w *accWorld) check(rep *accReport, c *accCase, rr *httptest.ResponseRecord
 			fail("explain-status", "explain says %d, the server sent %d", st, c.code)
 		}
 		if loc != "" && loc != c.loc {
-			if ex.folder && c.hasQuery && c.query != "" && c.loc == loc+"?"+c.query {
-				rep.knownBug("explain-folder-redirect-drops-query", c, recJSON, "explain says Location %q, the server sent %q", loc, c.loc)
-			} else {
-				fail("explain-location", "explain says Location %q, the server sent %q", loc, c.loc)
-			}
+			fail("explain-location", "explain says Location %q, the server sent %q", loc, c.loc)
 		}
 	}
 

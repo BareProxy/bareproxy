@@ -690,19 +690,28 @@ func TestAcceptSmugglingQuery(t *testing.T) {
 
 // TestAcceptSmugglingUpgrade covers a backend that agrees to an upgrade (a
 // 101), which turns the connection into a tunnel the rules can't see into.
-// A WebSocket upgrade is meant to do that. An upgrade to h2c is not: HTTP/2
-// carries requests of its own, so the path rules would never see them.
+// Only WebSocket may do that. Any other protocol, h2c above all, carries
+// requests of its own that the path rules would never see, so BareProxy takes
+// the Upgrade headers off and the backend gets a plain request.
 func TestAcceptSmugglingUpgrade(t *testing.T) {
-	for _, proto := range []string{"websocket", "h2c"} {
+	const h2s = "HTTP2-Settings: AAMAAABkAAQAAP__"
+	ws := []string{"Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==", "Sec-WebSocket-Version: 13"}
+	for _, c := range []struct {
+		name   string
+		hdr    []string
+		tunnel bool
+	}{
+		{"websocket", append([]string{"Connection: Upgrade", "Upgrade: websocket"}, ws...), true},
+		{"WebSocket in capitals, Connection with another token", append([]string{"Connection: keep-alive, Upgrade", "Upgrade: WebSocket"}, ws...), true},
+		{"h2c, HTTP2-Settings not named in Connection", []string{"Connection: Upgrade", "Upgrade: h2c", h2s}, false},
+		{"h2c, HTTP2-Settings named in Connection", []string{"Connection: Upgrade, HTTP2-Settings", "Upgrade: h2c", h2s}, false},
+		{"an unknown protocol", []string{"Connection: Upgrade", "Upgrade: foo/1"}, false},
+		{"websocket and h2c in one Upgrade header", []string{"Connection: Upgrade", "Upgrade: websocket, h2c", h2s}, false},
+		{"websocket and h2c in two Upgrade headers", []string{"Connection: Upgrade", "Upgrade: websocket", "Upgrade: h2c", h2s}, false},
+		{"Upgrade: h2c without Connection: Upgrade", []string{"Upgrade: h2c", h2s}, false},
+	} {
 		e := newAccSmugEnv(t, true)
-		hdr := []string{"Host: " + e.host, "Connection: Upgrade", "Upgrade: " + proto}
-		if proto == "websocket" {
-			hdr = append(hdr, "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==", "Sec-WebSocket-Version: 13")
-		} else {
-			// HTTP2-Settings is not named in Connection, so it is an
-			// end-to-end header and goes on to the backend.
-			hdr = append(hdr, "HTTP2-Settings: AAMAAABkAAQAAP__")
-		}
+		hdr := append([]string{"Host: " + e.host}, c.hdr...)
 		conn, err := net.Dial("tcp", e.addr)
 		if err != nil {
 			t.Fatal(err)
@@ -711,14 +720,22 @@ func TestAcceptSmugglingUpgrade(t *testing.T) {
 		conn.SetReadDeadline(time.Now().Add(2 * time.Second))
 		br := bufio.NewReader(conn)
 		resp, err := http.ReadResponse(br, nil)
-		status := 0
+		status, second := 0, 0
 		if err == nil {
 			status = resp.StatusCode
 		}
+		evil := "GET /admin HTTP/1.1\r\nHost: " + e.host + "\r\n\r\n"
 		if status == 101 {
 			// Whatever the client sends now goes through the tunnel.
-			conn.Write([]byte("GET /admin HTTP/1.1\r\nHost: " + e.host + "\r\n\r\n"))
+			conn.Write([]byte(evil))
 			time.Sleep(200 * time.Millisecond)
+		} else if status == 200 {
+			// No tunnel: the next request on the connection is an ordinary one.
+			io.Copy(io.Discard, resp.Body)
+			conn.Write([]byte(evil))
+			if r2, err := http.ReadResponse(br, nil); err == nil {
+				second = r2.StatusCode
+			}
 		}
 		conn.Close()
 		e.settle()
@@ -729,12 +746,21 @@ func TestAcceptSmugglingUpgrade(t *testing.T) {
 				admin++
 			}
 		}
-		t.Logf("Upgrade: %s, backend that answers 101: client got %d, backend parsed %d request(s), %d for /admin", proto, status, len(seen), admin)
-		switch {
-		case proto == "websocket" && status != 101:
-			t.Errorf("a WebSocket upgrade should open a tunnel when the backend answers 101, got %d", status)
-		case proto == "h2c" && admin > 0:
-			t.Skipf("known bug: BareProxy forwards any Upgrade the client asks for, so with a backend that accepts h2c the 101 opens a tunnel and a request for /admin sent through it reaches the backend although its rule says 403 (input: GET /api/x with Connection: Upgrade, Upgrade: h2c, HTTP2-Settings; expected: no tunnel for anything but websocket)")
+		t.Logf("Upgrade, %s: client got %d (then %d), backend parsed %d request(s), %d for /admin", c.name, status, second, len(seen), admin)
+		if c.tunnel {
+			if status != 101 {
+				t.Errorf("%s: a WebSocket upgrade should open a tunnel when the backend answers 101, got %d", c.name, status)
+			}
+			continue
+		}
+		if status != 200 || second != 403 || admin != 0 || len(seen) != 1 {
+			t.Errorf("%s: want a plain 200, then 403 for /admin from BareProxy, one request at the backend and none for /admin; got %d then %d, %d requests, %d for /admin", c.name, status, second, len(seen), admin)
+		}
+		if len(seen) > 0 {
+			h := seen[0].hdr
+			if h.Get("Upgrade") != "" || len(h["Http2-Settings"]) > 0 || hasToken(h.Values("Connection"), "upgrade") || hasToken(h.Values("Connection"), "http2-settings") {
+				t.Errorf("%s: the backend should get a plain request, got Connection %q, Upgrade %q, HTTP2-Settings %q", c.name, h.Values("Connection"), h.Values("Upgrade"), h.Values("Http2-Settings"))
+			}
 		}
 	}
 }

@@ -265,6 +265,24 @@ func (w *respWriter) Write(b []byte) (int, error) {
 	return n, err
 }
 
+// ReadFrom hands a file to the underlying writer's ReaderFrom, which on plain
+// HTTP/1.1 sends it with sendfile. The status and the byte count are kept as
+// Write keeps them.
+func (w *respWriter) ReadFrom(r io.Reader) (int64, error) {
+	if w.status == 0 {
+		w.status = http.StatusOK
+	}
+	var n int64
+	var err error
+	if rf, ok := w.ResponseWriter.(io.ReaderFrom); ok {
+		n, err = rf.ReadFrom(r)
+	} else {
+		n, err = io.Copy(struct{ io.Writer }{w.ResponseWriter}, r)
+	}
+	w.bytes += n
+	return n, err
+}
+
 func (w *respWriter) Unwrap() http.ResponseWriter { return w.ResponseWriter }
 
 func (w *respWriter) Flush() { http.NewResponseController(w.ResponseWriter).Flush() }

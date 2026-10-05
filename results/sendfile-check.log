@@ -1,0 +1,32 @@
+Sendfile check, 2026-10-05. Go 1.27.1, Linux, plain HTTP/1.1 on 127.0.0.1:18080.
+
+Config (sf.conf): site http://sf.test:18080, route /* -> files pub
+pub/big.bin is 6,000,000 random bytes; pub/index.html is 12 bytes.
+Command: strace -f -e trace=sendfile -o run/strace-LABEL.out ./bareproxy run sf.conf
+  LABEL new: this branch (respWriter.ReadFrom in server.go)
+  LABEL old: the same tree with server.go as it was before the change
+Requests: curl --noproxy '*' -H 'Host: sf.test:18080' for GET /big.bin, GET /big.bin
+with Range: bytes=1000-1999, and GET /index.html.
+
+new
+  GET /big.bin -> 200, 6000000 bytes (identical to pub/big.bin by cmp)
+  Range 1000-1999 -> 206, 1000 bytes
+  GET /index.html -> 200, 12 bytes
+  sendfile calls: 3, bytes passed to sendfile (sum of the return values): 5999976
+    sendfile(8, 9, NULL, 5999488)     = 4158976
+    sendfile(8, 9, NULL, 1840512)     = 1840512
+    sendfile(8, 9, NULL, 488)         = 488
+  records in the trace log: /big.bin 200 bytes_out 6000000; /big.bin 206 bytes_out 1000; /index.html 200 bytes_out 12
+  The first 512 bytes of each response go through Write (net/http copies them to sniff
+  the content type), the rest through sendfile: 6000000 - 512 = 5999488 and 1000 - 512 = 488.
+  The 12-byte file is under 512 bytes, so it never reaches sendfile.
+
+old
+  GET /big.bin -> 200, 6000000 bytes (identical to pub/big.bin by cmp)
+  Range 1000-1999 -> 206, 1000 bytes
+  GET /index.html -> 200, 12 bytes
+  sendfile calls: 0
+  records in the trace log: /big.bin 200 bytes_out 6000000; /big.bin 206 bytes_out 1000; /index.html 200 bytes_out 12
+
+Without ReadFrom, respWriter hides the connection's ReaderFrom from io.Copy, so every
+byte goes through Write. With it, the bytes_out in the records are the same.

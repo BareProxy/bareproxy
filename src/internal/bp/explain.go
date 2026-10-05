@@ -71,6 +71,9 @@ func Explain(rt *Runtime, method, rawURL string, h http.Header, live bool) (stri
 		fmt.Fprintf(&b, "Site %s (line %d): %s\n", site.Name, site.Line, how)
 	}
 	raw := u.EscapedPath()
+	if strings.Contains(u.RawPath, `\`) {
+		raw = u.RawPath // EscapedPath would turn a raw backslash into %5C; the server sees it as sent and refuses it
+	}
 	if raw == "" {
 		raw = "/"
 	}
@@ -121,14 +124,14 @@ func Explain(rt *Runtime, method, rawURL string, h http.Header, live bool) (stri
 		}
 		fmt.Fprintf(&b, "Action: redirect 301 to %s\n", loc)
 	case "files":
-		explainFiles(&b, site, route, norm, method, h)
+		explainFiles(&b, site, route, norm, u.RawQuery, method, h)
 	case "pool":
 		explainPool(&b, rt, route, norm, method, u.Host, live)
 	}
 	return b.String(), nil
 }
 
-func explainFiles(b *strings.Builder, site *Site, route *Route, norm, method string, h http.Header) {
+func explainFiles(b *strings.Builder, site *Site, route *Route, norm, query, method string, h http.Header) {
 	a := route.Act
 	if method != http.MethodGet && method != http.MethodHead {
 		fmt.Fprintf(b, "Action: 405, files answer only GET and HEAD\n")
@@ -136,12 +139,12 @@ func explainFiles(b *strings.Builder, site *Site, route *Route, norm, method str
 	}
 	fr := LookupFile(a.Root, norm)
 	if a.Root == nil && fr.Status == 0 {
-		explainFilesNoDisk(b, site, a, fr, norm)
+		explainFilesNoDisk(b, site, a, fr, norm, query)
 		return
 	}
 	switch fr.Status {
 	case 301:
-		fmt.Fprintf(b, "Checked: %s\nIt's a folder\nAction: redirect 301 to %s\n", inFolder(a.Dir, fr.Checked[0]), fr.Location)
+		fmt.Fprintf(b, "Checked: %s\nIt's a folder\nAction: redirect 301 to %s\n", inFolder(a.Dir, fr.Checked[0]), withQuery(fr.Location, query))
 	case 404:
 		if len(fr.Checked) > 0 {
 			fmt.Fprintf(b, "Checked: %s\n", inFolder(a.Dir, fr.Checked[0]))
@@ -168,7 +171,7 @@ func explainFiles(b *strings.Builder, site *Site, route *Route, norm, method str
 // explainFilesNoDisk is the files branch where no folder is open, as in the
 // browser demo. The file is worked out the same way as on a server, but
 // nothing is looked up, so it says what each outcome would be.
-func explainFilesNoDisk(b *strings.Builder, site *Site, a Action, fr FileResult, norm string) {
+func explainFilesNoDisk(b *strings.Builder, site *Site, a Action, fr FileResult, norm, query string) {
 	name := fr.Checked[0]
 	fmt.Fprintf(b, "Would check: %s\n", inFolder(a.Dir, name))
 	b.WriteString("Not looked up: the browser demo doesn't read the disk, so it can't tell if that exists\n")
@@ -177,7 +180,15 @@ func explainFilesNoDisk(b *strings.Builder, site *Site, a Action, fr FileResult,
 		fmt.Fprintf(b, "Action: serve 200 (%s) if the file exists, otherwise 404\n", ContentType(name))
 		return
 	}
-	fmt.Fprintf(b, "Action: serve 200 (%s) if it's a file, redirect 301 to %s/ if it's a folder, otherwise 404\n", ContentType(name), norm)
+	fmt.Fprintf(b, "Action: serve 200 (%s) if it's a file, redirect 301 to %s if it's a folder, otherwise 404\n", ContentType(name), withQuery(norm+"/", query))
+}
+
+// withQuery puts the request's query back on a redirect target, as the server does.
+func withQuery(loc, query string) string {
+	if query == "" {
+		return loc
+	}
+	return loc + "?" + query
 }
 
 func explainErrorPage(b *strings.Builder, site *Site) {

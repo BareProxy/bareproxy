@@ -1,29 +1,32 @@
 === RUN   TestAcceptBrokenConfigs
     accept_config_test.go:225: 67 broken configs: 65 name a line, 2 are about the whole file; every one is an error from Parse, is refused by Reload on a running server, and stops Run from starting
---- PASS: TestAcceptBrokenConfigs (0.01s)
-=== RUN   TestAcceptKnownExplainFolderRedirectQuery
-    accept_known_test.go:30: known bug: explain GET /about?x=1 says "redirect 301 to /about/", the server sends Location "/about/?x=1" (expected: explain shows the query too, as it does for a redirect rule)
---- SKIP: TestAcceptKnownExplainFolderRedirectQuery (0.00s)
-=== RUN   TestAcceptKnownNoSiteRecordPath
---- PASS: TestAcceptKnownNoSiteRecordPath (0.00s)
-=== RUN   TestAcceptKnownExplainRawBackslash
-    accept_known_test.go:64: known bug: on a site with encoded-slashes keep, explain GET http://keep.test:8080/a\b treats the backslash as %5C and routes the request, but the server refuses the raw backslash with 400 (expected: explain says the path is refused)
---- SKIP: TestAcceptKnownExplainRawBackslash (0.01s)
+--- PASS: TestAcceptBrokenConfigs (0.02s)
+=== RUN   TestAcceptExplainFolderRedirectKeepsQuery
+--- PASS: TestAcceptExplainFolderRedirectKeepsQuery (0.00s)
+=== RUN   TestAcceptNoSiteRecordPath
+--- PASS: TestAcceptNoSiteRecordPath (0.00s)
+=== RUN   TestAcceptExplainRawBackslash
+--- PASS: TestAcceptExplainRawBackslash (0.01s)
 === RUN   TestAcceptKnownOptionsStar
-    accept_known_test.go:78: known bug: OPTIONS * is answered 200 by net/http's own handler before BareProxy's handler runs, so it leaves no record and carries no BareProxy-Id (expected: one record per request read, as in the design; setting DisableGeneralOptionsHandler on the server would hand it to the handler)
+    accept_known_test.go:118: known limit: OPTIONS * is answered 200 by net/http's own handler before BareProxy's handler runs, so it leaves no record and carries no BareProxy-Id (the design says one record per request read; left as it is because the alternative, a 400, would break probes that use OPTIONS *)
 --- SKIP: TestAcceptKnownOptionsStar (0.08s)
-=== RUN   TestAcceptKnownBadChunkIs502
-    accept_known_test.go:94: known bug: a request body with a bad chunk size ("ZZ") is answered 502 with outcome "bad_response", reason "invalid byte in chunk length", as if the backend's response were broken; the backend gets the request cut short (expected: 400, outcome bad_request)
---- SKIP: TestAcceptKnownBadChunkIs502 (0.08s)
+=== RUN   TestAcceptBadChunkIs400
+--- PASS: TestAcceptBadChunkIs400 (0.26s)
+=== RUN   TestAcceptResponseHeaderLimit
+--- PASS: TestAcceptResponseHeaderLimit (0.01s)
 === RUN   TestAcceptPathCases
     accept_paths_test.go:369: 127 path cases on 2 sites, each with GET and HEAD, plus 30 method cases; nothing outside the folder was read
 --- PASS: TestAcceptPathCases (0.02s)
 === RUN   TestAcceptPathsGenerated
     accept_paths_test.go:569: 30000 generated paths (4641 the test's request parser refused, as Go's server would): statuses 200:1184 301:195 400:10458 404:13522; 1184 served files all inside the folder, 10458 refused with 400, 4763 hidden-name requests all 404
---- PASS: TestAcceptPathsGenerated (1.09s)
+--- PASS: TestAcceptPathsGenerated (0.95s)
 === RUN   TestAcceptConditionalAndRange
     accept_paths_test.go:754: 49 conditional and range cases on 2 sites (RFC 9110 sections 13 and 14), plus 12 on precompressed copies and 6 on missing, hidden and outside files
 --- PASS: TestAcceptConditionalAndRange (0.01s)
+=== RUN   TestAcceptFilesBytesOut
+--- PASS: TestAcceptFilesBytesOut (0.02s)
+=== RUN   TestAcceptFilesReachReaderFrom
+--- PASS: TestAcceptFilesReachReaderFrom (0.01s)
 === RUN   TestAcceptSmuggling
     accept_smuggle_test.go:662: 91 payloads: 34 refused before the backend, 11 answered by a rule, 46 forwarded as one request; 0 problems
           control: one GET                                                       forwarded          client [200], backend: GET /api/x, 1 records
@@ -61,21 +64,21 @@
           CL: empty value                                                        refused            client [400], backend: nothing, 0 records
           CL: name with an underscore as a decoy                                 forwarded          client [200 403], backend: POST /api/x (5 body bytes), 2 records
           CL: on a GET, the next request in its body                             forwarded          client [200 400], backend: GET /api/x (30 body bytes), 1 records
-          chunk size not hexadecimal                                             forwarded          client [502], backend: POST /api/x (body cut short), 1 records
-          chunk size negative                                                    forwarded          client [502], backend: POST /api/x (body cut short), 1 records
-          chunk size with a plus                                                 forwarded          client [502], backend: POST /api/x (body cut short), 1 records
-          chunk size 0x5                                                         forwarded          client [502], backend: POST /api/x (body cut short), 1 records
-          chunk size with a leading space                                        forwarded          client [502], backend: POST /api/x (body cut short), 1 records
+          chunk size not hexadecimal                                             forwarded          client [400], backend: POST /api/x (body cut short), 1 records
+          chunk size negative                                                    forwarded          client [400], backend: POST /api/x (body cut short), 1 records
+          chunk size with a plus                                                 forwarded          client [400], backend: POST /api/x (body cut short), 1 records
+          chunk size 0x5                                                         forwarded          client [400], backend: POST /api/x (body cut short), 1 records
+          chunk size with a leading space                                        forwarded          client [400], backend: POST /api/x (body cut short), 1 records
           chunk size with a trailing space                                       forwarded          client [200 403], backend: POST /api/x (5 body bytes), 2 records
           chunk extension                                                        forwarded          client [200 403], backend: POST /api/x (5 body bytes), 2 records
-          chunk size of 17 hex digits                                            forwarded          client [502], backend: POST /api/x (body cut short), 1 records
-          empty chunk size line                                                  forwarded          client [502], backend: POST /api/x (body cut short), 1 records
-          bare LF in the chunked body                                            forwarded          client [502], backend: POST /api/x (body cut short), 1 records
-          no CRLF after the chunk data                                           forwarded          client [502], backend: POST /api/x (body cut short), 1 records
-          chunk data longer than its size                                        forwarded          client [502], backend: POST /api/x (body cut short), 1 records
-          chunk data shorter than its size                                       forwarded          client [502], backend: POST /api/x (body cut short), 1 records
+          chunk size of 17 hex digits                                            forwarded          client [400], backend: POST /api/x (body cut short), 1 records
+          empty chunk size line                                                  forwarded          client [400], backend: POST /api/x (body cut short), 1 records
+          bare LF in the chunked body                                            forwarded          client [400], backend: POST /api/x (body cut short), 1 records
+          no CRLF after the chunk data                                           forwarded          client [400], backend: POST /api/x (body cut short), 1 records
+          chunk data longer than its size                                        forwarded          client [400], backend: POST /api/x (body cut short), 1 records
+          chunk data shorter than its size                                       forwarded          client [400], backend: POST /api/x (body cut short), 1 records
           a request in a chunk trailer                                           forwarded          client [200 403], backend: POST /api/x (5 body bytes), 2 records
-          a request line as a trailer line                                       forwarded          client [502], backend: POST /api/x (body cut short), 1 records
+          a request line as a trailer line                                       forwarded          client [400], backend: POST /api/x (body cut short), 1 records
           a request right after the last chunk                                   forwarded          client [200 403], backend: POST /api/x (5 body bytes), 2 records
           obs-fold: a folded line that looks like Transfer-Encoding              forwarded          client [200], backend: GET /api/x, 1 records
           obs-fold: a folded line after Host                                     refused            client [400], backend: nothing, 0 records
@@ -91,7 +94,7 @@
           absolute-form: another scheme                                          answered by a rule client [403], backend: nothing, 1 records
           absolute-form: another host, our Host header                           refused            client [421], backend: nothing, 1 records
           absolute-form: our host, another Host header                           forwarded          client [200], backend: GET /api/x, 1 records
-          target //host/admin (network-path reference)                           forwarded          client [200], backend: GET /smug.test:34433/admin, 1 records
+          target //host/admin (network-path reference)                           forwarded          client [200], backend: GET /smug.test:38999/admin, 1 records
           target * with GET                                                      refused            client [400], backend: nothing, 1 records
           OPTIONS * (Go answers it itself)                                       refused            client [200], backend: nothing, 0 records
           CONNECT                                                                forwarded          client [200], backend: CONNECT /, 1 records
@@ -118,100 +121,39 @@
           Upgrade: websocket to a backend that answers 200, then /admin          forwarded          client [200 403], backend: GET /api/x, 2 records
           Upgrade: h2c to a backend that answers 200, then /admin                forwarded          client [200 403], backend: GET /api/x, 2 records
     accept_smuggle_test.go:665: the backend parsed 47 requests in all and could not parse 0 times
---- PASS: TestAcceptSmuggling (7.35s)
+--- PASS: TestAcceptSmuggling (7.21s)
 === RUN   TestAcceptSmugglingQuery
---- PASS: TestAcceptSmugglingQuery (1.85s)
+--- PASS: TestAcceptSmugglingQuery (1.84s)
 === RUN   TestAcceptSmugglingUpgrade
-    accept_smuggle_test.go:732: Upgrade: websocket, backend that answers 101: client got 101, backend parsed 2 request(s), 1 for /admin
-    accept_smuggle_test.go:732: Upgrade: h2c, backend that answers 101: client got 101, backend parsed 2 request(s), 1 for /admin
-    accept_smuggle_test.go:737: known bug: BareProxy forwards any Upgrade the client asks for, so with a backend that accepts h2c the 101 opens a tunnel and a request for /admin sent through it reaches the backend although its rule says 403 (input: GET /api/x with Connection: Upgrade, Upgrade: h2c, HTTP2-Settings; expected: no tunnel for anything but websocket)
---- SKIP: TestAcceptSmugglingUpgrade (0.59s)
+    accept_smuggle_test.go:749: Upgrade, websocket: client got 101 (then 0), backend parsed 2 request(s), 1 for /admin
+    accept_smuggle_test.go:749: Upgrade, WebSocket in capitals, Connection with another token: client got 101 (then 0), backend parsed 2 request(s), 1 for /admin
+    accept_smuggle_test.go:749: Upgrade, h2c, HTTP2-Settings not named in Connection: client got 200 (then 403), backend parsed 1 request(s), 0 for /admin
+    accept_smuggle_test.go:749: Upgrade, h2c, HTTP2-Settings named in Connection: client got 200 (then 403), backend parsed 1 request(s), 0 for /admin
+    accept_smuggle_test.go:749: Upgrade, an unknown protocol: client got 200 (then 403), backend parsed 1 request(s), 0 for /admin
+    accept_smuggle_test.go:749: Upgrade, websocket and h2c in one Upgrade header: client got 200 (then 403), backend parsed 1 request(s), 0 for /admin
+    accept_smuggle_test.go:749: Upgrade, websocket and h2c in two Upgrade headers: client got 200 (then 403), backend parsed 1 request(s), 0 for /admin
+    accept_smuggle_test.go:749: Upgrade, Upgrade: h2c without Connection: Upgrade: client got 200 (then 403), backend parsed 1 request(s), 0 for /admin
+--- PASS: TestAcceptSmugglingUpgrade (1.07s)
 === RUN   TestAcceptSmugglingEarlyResponse
-    accept_smuggle_test.go:761: early reply, Content-Length body that is a request: client [200], backend: POST /api/x, 1 records
-    accept_smuggle_test.go:761: early reply, chunked body that is a request: client [200], backend: POST /api/x, 1 records
-    accept_smuggle_test.go:761: early reply, big body with a request at its end: client [200], backend: POST /api/x, 1 records
---- PASS: TestAcceptSmugglingEarlyResponse (1.13s)
+    accept_smuggle_test.go:787: early reply, Content-Length body that is a request: client [200], backend: POST /api/x, 1 records
+    accept_smuggle_test.go:787: early reply, chunked body that is a request: client [200], backend: POST /api/x, 1 records
+    accept_smuggle_test.go:787: early reply, big body with a request at its end: client [502], backend: POST /api/x, 1 records
+--- PASS: TestAcceptSmugglingEarlyResponse (1.14s)
 === RUN   TestAcceptSmugglingPipeline
-    accept_smuggle_test.go:802: 60 pipelined requests in one write: 60 responses in order, 60 records, 30 requests at the backend, none for /admin
+    accept_smuggle_test.go:828: 60 pipelined requests in one write: 60 responses in order, 60 records, 30 requests at the backend, none for /admin
 --- PASS: TestAcceptSmugglingPipeline (0.08s)
 === RUN   TestAcceptExplainMatchesServer
-    accept_test.go:455: config: 6 sites, 4 pools, 114 rules; listening on :8080 (http), :8081 (http); 144 lines, 6 sites
-    accept_test.go:460: 114 routes over 6 sites on 2 ports
-    accept_test.go:508: 100000 requests in 18.521s (5399 per second), each asked of explain first
-    accept_test.go:509: what the generated requests came to: map[bad path (400):4699 files:34044 no rule (404):6130 no site (421):13447 pool:38230 redirect:1937 respond:1513]
-    accept_test.go:515: statuses: 200:43981 201:56 202:26 204:73 301:2079 302:585 307:45 308:36 400:4710 403:295 404:16470 405:16968 418:397 421:13447 429:1 500:470 502:3 503:358
-    accept_test.go:516: known bug explain-folder-redirect-drops-query: 229 requests are affected; first one: explain says Location "/docs/", the server sent "/docs/?r=//x"
-          request: HEAD http://alpha.test:8080/docs?r=//x with Host "alpha.test" and headers map[Accept-Language:[en-US] X-Empty:[x]]
-          client got: 301, Location "/docs/?r=//x"
-          record: {"id":"6a6923b87721bfd0","time":"2026-10-05T07:08:00.099Z","config":1,"client":"192.0.2.1","proto":"HTTP/1.1","method":"HEAD","scheme":"http","host":"alpha.test","path":"/docs","site":"alpha.test","site_line":5,"line":23,"rule":"route /* -\u003e files public1","location":"/docs/?r=//x","folder":"/tmp/TestAcceptExplainMatchesServer2097287319/001/public1","checked":["docs"],"status":301,"bytes_in":0,"bytes_out":0,"ms":0.008,"outcome":"file"}
-          explain said:
-            Running config /tmp/TestAcceptExplainMatchesServer2097287319/001/bareproxy.conf, version 1
-            Site alpha.test (line 5): exact host match
-              line 7    route /about -> live                                                        no: path is not /about
-              line 8    route /users/* -> files public2                                             no: path is not /users or below
-              line 9    route /old/users header X-Beta header X-Env=prod -> two strip               no: path is not /old/users
-              line 10   route PURGE /shop/health/* header x-beta=0 header X-Empty= -> respond 429   no: path is not /shop/health or below
-              line 11   route HEAD /admin/contact/* -> respond 429                                  no: path is not /admin/contact or below
-              line 12   route /docs/contact/v1/* header X-Empty= -> mixed strip                     no: path is not /docs/contact/v1 or below
-              line 13   route /blog/about -> redirect 301 https://moved.example                     no: path is not /blog/about
-              line 14   route /shop/* -> redirect 301 https://example.org/landing                   no: path is not /shop or below
-              line 15   route PUT,DELETE /contact/docs -> redirect 302 https://example.org          no: path is not /contact/docs
-              line 16   route /contact -> respond 500 "maintenance"                                 no: path is not /contact
-              line 17   route /new -> respond 204                                                   no: path is not /new
-              line 18   route OPTIONS / -> files public2                                            no: path is not /
-              line 19   route /app/* -> live                                                        no: path is not /app or below
-              line 20   route /api/* header X-Beta -> respond 200                                   no: path is not /api or below
-              line 21   route PURGE /assets/new -> redirect 307 https://example.org                 no: path is not /assets/new
-              line 22   route GET /about/* -> live strip                                            no: path is not /about or below
-              line 23   route /* -> files public1                                                   match
-            Path: /docs
-            Checked: /tmp/TestAcceptExplainMatchesServer2097287319/001/public1/docs
-            It's a folder
-            Action: redirect 301 to /docs/
-    accept_test.go:516: known bug explain-raw-backslash-on-keep-site: 32 requests are affected; first one: the server refuses the raw backslash; explain turns it into %5C, which this site keeps, and routes the request
-          request: GET http://keep.test:8080/zz2/docs/\/v2 with Host "keep.test" and headers map[X-Env:[staging staging]]
-          client got: 400, Location ""
-          record: {"id":"eceef6f13a7fcaf1","time":"2026-10-05T07:08:00.743Z","config":1,"client":"192.0.2.1","proto":"HTTP/1.1","method":"GET","scheme":"http","host":"keep.test","path":"/zz2/docs/\\/v2","site":"keep.test","site_line":59,"status":400,"bytes_in":0,"bytes_out":64,"ms":0.003,"outcome":"bad_request","reason":"backslash in the path"}
-          explain said:
-            Running config /tmp/TestAcceptExplainMatchesServer2097287319/001/bareproxy.conf, version 1
-            Site keep.test (line 59): exact host match
-              line 61   route /about -> respond 418                                                                        no: path is not /about
-              line 62   route /app/admin -> redirect 301 https://example.org/landing                                       no: path is not /app/admin
-              line 63   route /app/users/assets -> redirect 308 https://example.org/landing                                no: path is not /app/users/assets
-              line 64   route /new/api/new header x-beta=0 header X-Tenant -> files public1                                no: path is not /new/api/new
-              line 65   route PURGE /new/* -> redirect 307 https://moved.example                                           no: path is not /new or below
-              line 66   route HEAD /new header X-Empty= header x-beta=0 -> respond 403 "no"                                no: path is not /new
-              line 67   route /assets/* -> files public1                                                                   no: path is not /assets or below
-              line 68   route /v1/img -> files public2                                                                     no: path is not /v1/img
-              line 69   route /cart/beta -> mixed                                                                          no: path is not /cart/beta
-              line 70   route /new/* -> redirect 302 https://example.org                                                   no: path is not /new or below
-              line 71   route /app/assets/* -> redirect 307 https://example.org/landing                                    no: path is not /app/assets or below
-              line 72   route /static header X-ENV=staging header Accept-Language=en -> redirect 301 https://example.org   no: path is not /static
-              line 73   route /api -> files public2                                                                        no: path is not /api
-              line 74   route /beta -> respond 202 "ok"                                                                    no: path is not /beta
-              line 75   route /docs/v2 header Accept-Language=en header X-Tenant -> redirect 307 https://moved.example     no: path is not /docs/v2
-              line 76   route / header x-beta=0 -> files public1                                                           no: path is not /
-              line 77   route DELETE /assets/admin/* header X-Env=prod -> respond 404 "no"                                 no: path is not /assets/admin or below
-              line 78   route PUT,DELETE /login -> redirect 308 https://example.org/a/b?x=1                                no: path is not /login
-              line 79   route /users/* -> dead                                                                             no: path is not /users or below
-              line 80   route /v1/cart -> redirect 301 http://other.example:8080                                           no: path is not /v1/cart
-              line 81   route /contact -> redirect 307 https://example.org/                                                no: path is not /contact
-              line 82   route /v1 -> two                                                                                   no: path is not /v1
-              line 83   route /cart/app/* -> respond 400                                                                   no: path is not /cart/app or below
-              line 84   route /login/* header X-Env=prod -> respond 403 "maintenance"                                      no: path is not /login or below
-              line 85   route GET /assets/* -> respond 202                                                                 no: path is not /assets or below
-              line 86   route /* -> two                                                                                    match
-            Path: /zz2/docs/%5C/v2
-            Sent upstream as GET /zz2/docs/%5C/v2 with Host: keep.test:8080
-            Pool two (line 136): 2 of 2 up, fewest in flight wins
-              127.0.0.1:41541  up, 0 in flight                                          next pick
-              127.0.0.1:41139  up, 0 in flight                                          
-    accept_test.go:531: trace log: 100000 records, 100000 distinct IDs
---- PASS: TestAcceptExplainMatchesServer (19.88s)
+    accept_test.go:426: config: 6 sites, 4 pools, 114 rules; listening on :8080 (http), :8081 (http); 144 lines, 6 sites
+    accept_test.go:431: 114 routes over 6 sites on 2 ports
+    accept_test.go:479: 100000 requests in 12.16s (8224 per second), each asked of explain first
+    accept_test.go:480: what the generated requests came to: map[bad path (400):4699 files:34044 no rule (404):6130 no site (421):13447 pool:38230 redirect:1937 respond:1513]
+    accept_test.go:486: statuses: 200:43981 201:56 202:26 204:73 301:2079 302:585 307:45 308:36 400:4710 403:295 404:16470 405:16968 418:397 421:13447 429:1 500:470 502:3 503:358
+    accept_test.go:502: trace log: 100000 records, 100000 distinct IDs
+--- PASS: TestAcceptExplainMatchesServer (12.85s)
 === RUN   TestAcceptOneRecordPerRequest
-    accept_test.go:644: 3000 requests from 8 goroutines, 3000 records, 3000 distinct IDs; outcomes map[bad_request:129 client_gone:4 connect_failed:7 file:1678 local:159 no_backend:228 no_route:225 no_site:427 ok:143]
-    accept_test.go:670: FindRecord found 3000 of 3000 IDs by the full ID in 5.184s
-    accept_test.go:696: FindRecord found 200 IDs by an 8-character prefix
---- PASS: TestAcceptOneRecordPerRequest (5.59s)
+    accept_test.go:615: 3000 requests from 8 goroutines, 3000 records, 3000 distinct IDs; outcomes map[bad_request:129 client_gone:4 connect_failed:9 file:1678 local:159 no_backend:226 no_route:225 no_site:427 ok:143]
+    accept_test.go:641: FindRecord found 3000 of 3000 IDs by the full ID in 4.111s
+    accept_test.go:667: FindRecord found 200 IDs by an 8-character prefix
+--- PASS: TestAcceptOneRecordPerRequest (4.44s)
 PASS
-ok  	bareproxy/internal/bp	37.793s
+ok  	bareproxy/internal/bp	30.019s

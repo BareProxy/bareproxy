@@ -99,6 +99,67 @@ func (t *poolTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 	}
 }
 
+// bodyReader remembers why reading the client's request body failed, so a
+// broken body is answered as the client's mistake and not as a bad backend.
+type bodyReader struct {
+	io.ReadCloser
+	err error
+}
+
+func (b *bodyReader) Read(p []byte) (int, error) {
+	n, err := b.ReadCloser.Read(p)
+	if err != nil && err != io.EOF && b.err == nil {
+		b.err = err
+	}
+	return n, err
+}
+
+// isWebSocketUpgrade says whether a request asks to switch to WebSocket and
+// to nothing else.
+func isWebSocketUpgrade(h http.Header) bool {
+	if !hasToken(h.Values("Connection"), "upgrade") {
+		return false
+	}
+	up := h.Values("Upgrade")
+	return len(up) == 1 && strings.EqualFold(strings.TrimSpace(up[0]), "websocket")
+}
+
+func hasToken(values []string, token string) bool {
+	for _, v := range values {
+		for _, t := range strings.Split(v, ",") {
+			if strings.EqualFold(strings.TrimSpace(t), token) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// websocketOnly lets WebSocket upgrades through and strips every other
+// protocol switch (h2c for one) from the request, so the backend gets a plain
+// request. A tunnel to any other protocol would carry requests that no rule
+// of ours ever sees.
+func websocketOnly(h http.Header) {
+	if isWebSocketUpgrade(h) {
+		return
+	}
+	h.Del("Upgrade")
+	h.Del("HTTP2-Settings")
+	var keep []string
+	for _, v := range h.Values("Connection") {
+		for _, t := range strings.Split(v, ",") {
+			if t = strings.TrimSpace(t); t != "" && !strings.EqualFold(t, "upgrade") && !strings.EqualFold(t, "http2-settings") {
+				keep = append(keep, t)
+			}
+		}
+	}
+	if len(keep) == 0 {
+		h.Del("Connection")
+	} else {
+		h.Set("Connection", strings.Join(keep, ", "))
+	}
+}
+
 func (s *Server) proxy(w *respWriter, r *http.Request, rt *Runtime, site *Site, route *Route, norm string, rec *Record) {
 	pool := rt.Pools[route.Act.Pool]
 	upstream := norm
@@ -120,9 +181,12 @@ func (s *Server) proxy(w *respWriter, r *http.Request, rt *Runtime, site *Site, 
 		s.plain(w, r, rec, http.StatusRequestEntityTooLarge, "The request body is larger than this site allows")
 		return
 	}
+	body := &bodyReader{}
 	if r.Body != nil && r.Body != http.NoBody {
-		r.Body = http.MaxBytesReader(w, r.Body, site.BodyLimit)
+		body.ReadCloser = http.MaxBytesReader(w, r.Body, site.BodyLimit)
+		r.Body = body
 	}
+	websocketOnly(r.Header)
 	decoded, err := url.PathUnescape(upstream)
 	if err != nil {
 		decoded = upstream
@@ -151,6 +215,13 @@ func (s *Server) proxy(w *respWriter, r *http.Request, rt *Runtime, site *Site, 
 		ErrorLog:     log.New(io.Discard, "", 0),
 	}
 	rp.ErrorHandler = func(_ http.ResponseWriter, _ *http.Request, err error) {
+		var mb *http.MaxBytesError
+		if body.err != nil && !errors.As(body.err, &mb) && r.Context().Err() == nil {
+			// The client's body couldn't be read (a bad chunk size, say): its fault, not the backend's.
+			rec.Outcome, rec.Reason = "bad_request", shortErr(body.err)
+			s.plain(w, r, rec, http.StatusBadRequest, "Bad request: the request body is broken")
+			return
+		}
 		s.proxyError(w, r, rec, err)
 	}
 	rp.ServeHTTP(w, r)
