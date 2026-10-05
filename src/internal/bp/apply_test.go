@@ -314,7 +314,7 @@ func TestAdminEndpoints(t *testing.T) {
 	}
 	other := filepath.Join(l.dir, "other.conf")
 	writeFile(t, other, v2)
-	if code, out := adminCall(t, sock, "GET", "/plan?file="+url.QueryEscape(other), ""); code != 200 || !strings.Contains(out, "against running version 1") {
+	if code, out := adminCall(t, sock, "GET", "/plan?file="+url.QueryEscape(other), ""); code != 200 || !strings.Contains(out, "Compared with running version 1:") {
 		t.Errorf("GET /plan?file=: %d %q", code, out)
 	}
 	if code, out := adminCall(t, sock, "POST", "/apply?plan=x"+pr.PlanID, v2); code != http.StatusConflict {

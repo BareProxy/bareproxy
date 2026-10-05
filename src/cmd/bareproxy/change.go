@@ -204,7 +204,7 @@ func offlinePlan(from, file string, asJSON bool) int {
 		e.Encode(map[string]any{"plan_id": p.ID, "from": from, "file": file, "text": p.Text(), "plan": p})
 		return 0
 	}
-	fmt.Printf("Plan %s, %s compared with %s:\n%s", p.ID, file, from, p.Text())
+	fmt.Printf("%s compared with %s:\n%s", file, from, p.Text())
 	return 0
 }
 
@@ -253,7 +253,7 @@ func applyCmd(args []string) int {
 		planOut = os.Stderr
 	}
 	if !f.json || !f.yes {
-		fmt.Fprintf(planOut, "Plan %s, against running version %d:\n", pr.PlanID, pr.Running)
+		fmt.Fprintf(planOut, "Compared with running version %d:\n", pr.Running)
 		if !pr.Unchanged {
 			fmt.Fprint(planOut, pr.Text)
 		}

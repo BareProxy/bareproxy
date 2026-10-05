@@ -118,7 +118,7 @@ func (s *Server) adminPlan(w http.ResponseWriter, r *http.Request) {
 		out.Warnings = append(out.Warnings, pr.String())
 	}
 	var b strings.Builder
-	fmt.Fprintf(&b, "Plan %s, against running version %d:\n", p.ID, rt.Version)
+	fmt.Fprintf(&b, "Compared with running version %d:\n", rt.Version)
 	if unchanged {
 		b.WriteString("No changes: the text is the running config.\n")
 	} else {
