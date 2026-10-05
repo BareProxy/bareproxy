@@ -170,6 +170,35 @@ change() {
     *)  WHAT="no change"; return 1 ;;
   esac
 }
+# probe asks both sites for /hello, /api/x and /moved/x right after an apply.
+# New requests must already follow the new config: the new /hello text, and an
+# answer from a backend that is in the pool the route points at now.
+PROBES=0
+probe() {
+  local site pool set want_hello=$1 line n bad=0
+  for site in "http://plain.test:$P_HTTP" "https://secure.test:$P_HTTPS"; do
+    local out
+    # One line per answer: the body, then | and the status.
+    out=$("${CURL[@]}" -w '##%{http_code}' "$site/hello" "$site/api/x" "$site/moved/x" "$site/api/x" "$site/moved/x" "$site/api/x" "$site/moved/x" 2>&1 |
+      tr -d '\n' | sed 's/##\([0-9][0-9][0-9]\)/|\1\n/g')
+    PROBES=$((PROBES + 7))
+    n=0
+    while IFS= read -r line; do
+      case $n in
+        0) [ "$line" = "$want_hello|200" ] || { echo "  probe: $site/hello answered '$line', wanted '$want_hello|200'"; bad=1; } ;;
+        1|3|5) set=$API ;;
+        *) if [ "$MOVED" = api2 ]; then set=$API2; else set=$API; fi ;;
+      esac
+      if [ $n -gt 0 ]; then
+        local b=${line#*\"backend\":\"api-}; b=${b%%\"*}
+        case " $set " in *" $b "*) ;; *) echo "  probe: $site request $n was answered by api-$b, which isn't in the pool it should use ($set): $line"; bad=1 ;; esac
+        case $line in *'|200') ;; *) echo "  probe: $site request $n: $line"; bad=1 ;; esac
+      fi
+      n=$((n + 1))
+    done <<< "$out"
+  done
+  return $bad
+}
 conf > $RUN/load.conf
 step "The starting config (line numbers added for reading)"
 cat -n $RUN/load.conf
@@ -220,7 +249,11 @@ for i in $(seq 1 "$APPLIES"); do
   b=$(now)
   printf '\napply %d at %.1f s, took %.0f ms: %s\n' "$i" "$(awk -v a="$a" -v t0="$T0" 'BEGIN { print a - t0 }')" "$(awk -v a="$a" -v b="$b" 'BEGIN { print (b - a) * 1000 }')" "$WHAT"
   echo "$out" | sed 's/^/  /'
-  if [ $rc = 0 ] && echo "$out" | grep -q 'is running'; then APPLIES_OK=$((APPLIES_OK + 1)); else echo "  this apply failed (exit status $rc)"; fi
+  if [ $rc = 0 ] && echo "$out" | grep -q 'is running'; then
+    if probe "hello $HELLO"; then APPLIES_OK=$((APPLIES_OK + 1)); else echo "  apply $i was accepted but the next requests didn't follow the new config"; fi
+  else
+    echo "  this apply failed (exit status $rc)"
+  fi
 done
 wait $LT
 LT_RC=$?
@@ -243,14 +276,15 @@ if [ "$(echo "$HISTORY" | wc -l)" -gt 6 ]; then echo "$HISTORY" | head -1; echo 
 step "Trace records"
 sleep 2
 RECORDS=$(( $(wc -l < $RUN/requests.log) - RECORDS_BEFORE ))
-python3 - "$RUN/loadtest.out" "$RECORDS" <<'PY'
+python3 - "$RUN/loadtest.out" "$RECORDS" "$PROBES" <<'PY'
 import json, sys
 s = json.loads([l for l in open(sys.argv[1]) if l.startswith("{")][-1])
 k = s["kinds"]
-want = k["http1"]["sent"] + k["http2"]["sent"] + k["ws"]["conns_opened"]
+probes = int(sys.argv[3])
+want = k["http1"]["sent"] + k["http2"]["sent"] + k["ws"]["conns_opened"] + probes
 got = int(sys.argv[2])
-print("requests BareProxy was sent: %d (%d HTTP/1.1, %d HTTP/2, %d WebSocket handshakes); records written: %d (%s)" % (
-    want, k["http1"]["sent"], k["http2"]["sent"], k["ws"]["conns_opened"], got, "equal" if want == got else "NOT equal, %+d" % (got - want)))
+print("requests BareProxy was sent: %d (%d HTTP/1.1, %d HTTP/2, %d WebSocket handshakes, %d probes after the applies); records written: %d (%s)" % (
+    want, k["http1"]["sent"], k["http2"]["sent"], k["ws"]["conns_opened"], probes, got, "equal" if want == got else "NOT equal, %+d" % (got - want)))
 PY
 
 step "Result"
@@ -267,7 +301,7 @@ if s["failed"]: bad.append("%d failed requests" % s["failed"])
 if s["resets"]: bad.append("%d connections reset" % s["resets"])
 if s["ws_messages_lost"]: bad.append("%d WebSocket messages lost" % s["ws_messages_lost"])
 if not s["rate_ok"]: bad.append("the load tool didn't hold the rate")
-if ok != want: bad.append("%d of %d applies done" % (ok, want))
+if ok != want: bad.append("%d of %d applies done and followed by the new config" % (ok, want))
 print("%s: %d requests and WebSocket messages sent, %d answered, %d failed, %d connections reset, %d WebSocket messages lost, %d of %d applies done%s" % (
     "FAIL" if bad else "PASS", s["sent"], s["answered"], s["failed"], s["resets"], s["ws_messages_lost"], ok, want,
     ("; " + "; ".join(bad)) if bad else ""))
