@@ -466,8 +466,8 @@ type genSite struct {
 var (
 	genHosts   = []string{"a.test", "b.test", "www.a.test", "*.a.test", "*"}
 	genPaths   = []string{"/*", "/", "/a", "/a/*", "/a/b", "/a/b/*", "/api", "/api/*", "/api/v2", "/api/v2/*"}
-	genMethods = []string{"", "", "", "GET", "POST", "GET,POST"}
-	genHeaders = []string{"", "", "", "header X-T", "header X-T=1", "header X-T=2"}
+	genMethods = []string{"", "", "", "GET", "POST", "GET,POST", "DELETE"}
+	genHeaders = []string{"", "", "", "header X-T", "header X-T=1", "header X-T=2", "header X-U=1", "header X-T=1 header X-U"}
 	genActions = []string{`respond 200 "x"`, "respond 201", "redirect 301 http://r.test", "redirect 302 http://r.test/fixed",
 		"p1", "p1 strip", "p2", "files f1", "files f2"}
 )
@@ -619,6 +619,12 @@ func genHeader(r *mrand.Rand) http.Header {
 		h.Add("X-T", "2")
 		h.Add("X-T", "9")
 	}
+	switch r.IntN(3) {
+	case 1:
+		h.Add("X-U", "1")
+	case 2:
+		h.Add("X-U", "7")
+	}
 	return h
 }
 
@@ -633,9 +639,21 @@ var (
 // configs can tell apart.
 func candidates() []genReq {
 	var out []genReq
-	hdrs := []http.Header{{}, {"X-T": {"1"}}, {"X-T": {"2"}}, {"X-T": {"3"}}, {"X-T": {"1", "2"}}}
+	var hdrs []http.Header
+	for _, t := range [][]string{nil, {"1"}, {"2"}, {"3"}, {"1", "2"}} {
+		for _, u := range [][]string{nil, {"1"}, {"7"}} {
+			h := http.Header{}
+			if t != nil {
+				h["X-T"] = t
+			}
+			if u != nil {
+				h["X-U"] = u
+			}
+			hdrs = append(hdrs, h)
+		}
+	}
 	for _, host := range []string{"a.test", "b.test", "www.a.test", "x.a.test", "c.test"} {
-		for _, m := range []string{"GET", "HEAD", "POST", "PUT"} {
+		for _, m := range []string{"GET", "HEAD", "POST", "DELETE", "PUT"} {
 			for _, p := range []string{"/", "/a", "/a/b", "/api", "/api/v2", "/zz", "/a/zz", "/a/b/zz", "/api/zz", "/api/v2/zz"} {
 				for _, h := range hdrs {
 					out = append(out, genReq{host, m, p, h})
@@ -696,10 +714,14 @@ func TestPlanExactOnGeneratedPairs(t *testing.T) {
 				changed++
 			}
 		}
-		held := make([]bool, len(p.Changes))
+		held, nheld := make([]bool, len(p.Changes)), 0
 		for _, q := range cands {
-			if k := p.Classify(80, q.host, q.method, q.path, q.h); k >= 0 && !held[k] {
-				held[k] = check(q)
+			if nheld == len(held) {
+				break
+			}
+			if k := p.Classify(80, q.host, q.method, q.path, q.h); k >= 0 && !held[k] && check(q) {
+				held[k] = true
+				nheld++
 			}
 		}
 		for k, ok := range held {
