@@ -126,9 +126,21 @@ func (t *TraceLog) Write(rec *Record) {
 	if t == nil {
 		return
 	}
-	if b, err := json.Marshal(rec); err == nil {
+	if b, err := RecordJSON(rec); err == nil {
 		t.WriteLine(b)
 	}
+}
+
+// RecordJSON is a record as one line of JSON, with < > and & left as they
+// are, so a rule reads route /api/* -> api in the log, not \u003e.
+func RecordJSON(v any) ([]byte, error) {
+	var b bytes.Buffer
+	enc := json.NewEncoder(&b)
+	enc.SetEscapeHTML(false)
+	if err := enc.Encode(v); err != nil {
+		return nil, err
+	}
+	return bytes.TrimSuffix(b.Bytes(), []byte("\n")), nil
 }
 
 // WriteLine writes one record's JSON as a line. If the line would take the

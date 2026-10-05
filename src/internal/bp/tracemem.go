@@ -4,7 +4,6 @@
 package bp
 
 import (
-	"encoding/json"
 	"errors"
 	"strings"
 	"sync"
@@ -58,7 +57,7 @@ type tailItem struct {
 
 // record writes a finished record to the trace log and to memory.
 func (rt *Runtime) record(rec *Record) {
-	if js, err := json.Marshal(rec); err == nil {
+	if js, err := RecordJSON(rec); err == nil {
 		rt.Trace.WriteLine(js)
 		rt.Mem.Add(rec, js, rt.Cfg.TraceMem)
 	}

@@ -64,8 +64,8 @@ func traceWhy(sock, prefix string) (rec *bp.Record, asked bool, err error) {
 	return rec, true, nil
 }
 
-// traceJSON prints a value as one JSON line.
+// traceJSON prints a value as one JSON line, the way the trace log has it.
 func traceJSON(v any) {
-	b, _ := json.Marshal(v)
+	b, _ := bp.RecordJSON(v)
 	fmt.Println(string(b))
 }

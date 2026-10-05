@@ -162,6 +162,13 @@ func TestTraceRecordsGoToMemoryAndTheLogFile(t *testing.T) {
 			t.Errorf("request %d: memory and log differ:\n%s\n%s", i, js, lines[i])
 		}
 	}
+	// A rule is written as it reads in the config: -> and quotes, not \u003e.
+	if want := `"rule":"route /healthz -> respond 200 \"ok\""`; !strings.Contains(lines[3], want) {
+		t.Errorf("the record lacks %s:\n%s", want, lines[3])
+	}
+	if strings.Contains(string(data), `\u003e`) {
+		t.Errorf("the log escapes > as \\u003e")
+	}
 }
 
 func TestTraceMemoryLimitFromTheConfigHoldsOnlyTheNewest(t *testing.T) {
