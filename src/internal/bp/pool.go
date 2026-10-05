@@ -76,13 +76,6 @@ func describeState(st State) string {
 	return "waiting for its first health check"
 }
 
-func (b *Backend) scheme() string {
-	if b.Spec.HTTPS {
-		return "https"
-	}
-	return "http"
-}
-
 func (b *Backend) event(s string) {
 	if b.events != nil {
 		b.events(s)
@@ -94,13 +87,7 @@ func (b *Backend) event(s string) {
 func (b *Backend) usable(now time.Time) bool {
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	switch b.state {
-	case "up":
-		return true
-	case "down":
-		return b.health == nil && !now.Before(b.trialAt)
-	}
-	return false
+	return b.state == "up" || (b.state == "down" && b.health == nil && !now.Before(b.trialAt))
 }
 
 func (b *Backend) claimTrial(now time.Time) {
@@ -192,7 +179,7 @@ func (b *Backend) runChecks(ctx context.Context) {
 }
 
 func (b *Backend) checkOnce(ctx context.Context, client *http.Client) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, b.scheme()+"://"+b.Spec.Addr+b.health.Path, nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, schemeName(b.Spec.HTTPS)+"://"+b.Spec.Addr+b.health.Path, nil)
 	if err != nil {
 		b.checkResult(false, err.Error())
 		return

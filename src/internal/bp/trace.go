@@ -169,11 +169,7 @@ func (t *TraceLog) WriteLine(js []byte) {
 func (t *TraceLog) rotate() {
 	t.f.Close()
 	for i := t.keep; i >= 1; i-- {
-		from := t.Spec
-		if i > 1 {
-			from = fmt.Sprintf("%s.%d", t.Spec, i-1)
-		}
-		os.Rename(from, fmt.Sprintf("%s.%d", t.Spec, i))
+		os.Rename(rotated(t.Spec, i-1), rotated(t.Spec, i))
 	}
 	f, err := os.OpenFile(t.Spec, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o640)
 	if err != nil {
@@ -197,6 +193,15 @@ func (t *TraceLog) Close() {
 	}
 }
 
+// rotated names a trace log file: i is 0 for the log itself and 1 for the
+// newest rotated file (file.1).
+func rotated(file string, i int) string {
+	if i == 0 {
+		return file
+	}
+	return fmt.Sprintf("%s.%d", file, i)
+}
+
 // FindRecord finds the record whose ID starts with prefix in a trace log
 // file and the rotated files beside it (file.1, file.2 and so on).
 func FindRecord(file, prefix string) (*Record, error) {
@@ -210,11 +215,7 @@ func FindRecord(file, prefix string) (*Record, error) {
 	var firstErr error
 	opened := false
 	for i := 0; ; i++ {
-		name := file
-		if i > 0 {
-			name = fmt.Sprintf("%s.%d", file, i)
-		}
-		f, err := os.Open(name)
+		f, err := os.Open(rotated(file, i))
 		if err != nil {
 			if i == 0 {
 				firstErr = err
@@ -271,10 +272,7 @@ func RenderWhy(rec *Record) string {
 	if rec.TLS != "" {
 		conn = "TLS " + rec.TLS + ", " + rec.Proto
 	}
-	target := rec.Scheme + "://" + rec.Host + rec.Path
-	if rec.Query != "" {
-		target += "?" + rec.Query
-	}
+	target := withQuery(rec.Scheme+"://"+rec.Host+rec.Path, rec.Query)
 	fmt.Fprintf(&b, "%s %s from %s, %s\n", rec.Method, target, rec.Client, conn)
 	note("W3C trace ID %s\n", rec.TraceID)
 	b.WriteString("\n")

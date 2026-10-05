@@ -72,7 +72,7 @@ func (rt *Runtime) record(rec *Record) {
 	}
 }
 
-func newTraceMem() *TraceMem { return &TraceMem{started: time.Now()} }
+func newTraceMem() *TraceMem { return &TraceMem{started: time.Now(), subs: map[*Tail]bool{}} }
 
 // isProxyError reports outcomes where BareProxy, not the application,
 // failed to deliver.
@@ -108,9 +108,7 @@ func (m *TraceMem) Add(rec *Record, js []byte, limit int64) {
 		m.evicted++
 	}
 	if m.start >= 4096 && m.start*2 >= len(m.recs) {
-		n := copy(m.recs, m.recs[m.start:])
-		clear(m.recs[n:])
-		m.recs, m.start = m.recs[:n], 0
+		m.recs, m.start = slices.Delete(m.recs, 0, m.start), 0
 	}
 }
 
@@ -195,9 +193,6 @@ func (m *TraceMem) Recent(d time.Duration) (w Window, complete bool) {
 func (m *TraceMem) Subscribe() *Tail {
 	t := &Tail{C: make(chan tailItem, 256)}
 	m.mu.Lock()
-	if m.subs == nil {
-		m.subs = map[*Tail]bool{}
-	}
 	m.subs[t] = true
 	m.tailers.Add(1)
 	m.mu.Unlock()

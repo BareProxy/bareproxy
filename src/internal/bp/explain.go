@@ -18,10 +18,7 @@ import (
 // file lookup code as the server. With live pools it also says which
 // backend would get the request right now.
 func Explain(rt *Runtime, method, rawURL string, h http.Header, live bool) (string, error) {
-	if method == "" {
-		method = http.MethodGet
-	}
-	method = strings.ToUpper(method)
+	method = strings.ToUpper(cmp.Or(method, http.MethodGet))
 	u, err := url.Parse(rawURL)
 	if err != nil {
 		return "", fmt.Errorf("bad URL: %v", err)

@@ -70,7 +70,7 @@ func (t *poolTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 		}
 		tried[b] = true
 		out := req.Clone(req.Context())
-		out.URL.Scheme, out.URL.Host = b.scheme(), b.Spec.Addr
+		out.URL.Scheme, out.URL.Host = schemeName(b.Spec.HTTPS), b.Spec.Addr
 		b.inflight.Add(1)
 		start := time.Now()
 		resp, err := t.pool.transport.RoundTrip(out)

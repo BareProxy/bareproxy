@@ -302,12 +302,8 @@ func (s *Server) Handler(port int, isTLS bool) http.Handler {
 		start := time.Now()
 		rt := s.rt.Load()
 		w := &respWriter{ResponseWriter: w0}
-		scheme := "http"
-		if isTLS {
-			scheme = "https"
-		}
 		rec := &Record{ID: newID(), Time: start.UTC().Format("2006-01-02T15:04:05.000Z"), Config: rt.Version,
-			Client: clientIP(r.RemoteAddr), Proto: r.Proto, Method: r.Method, Scheme: scheme, Host: r.Host}
+			Client: clientIP(r.RemoteAddr), Proto: r.Proto, Method: r.Method, Scheme: schemeName(isTLS), Host: r.Host}
 		rec.TraceID, _ = requestTrace(r.Header)
 		if r.TLS != nil {
 			rec.TLS = strings.TrimPrefix(tls.VersionName(r.TLS.Version), "TLS ")
@@ -440,9 +436,8 @@ func (s *Server) files(w *respWriter, r *http.Request, rec *Record, site *Site, 
 	if rep.Encoding != "" {
 		rec.Sent, rec.Encoding = rep.Name, rep.Encoding
 	}
-	ct := ContentType(fr.Rel)
-	rec.ContentType = ct
-	if err := serveFile(w, r, a.Root, rep, ct, len(variants) > 0); err != nil {
+	rec.ContentType = ContentType(fr.Rel)
+	if err := serveFile(w, r, a.Root, rep, rec.ContentType, len(variants) > 0); err != nil {
 		rec.Reason = statReason(nil, err)
 		s.notFound(w, r, rec, site)
 	}

@@ -196,18 +196,14 @@ type token struct {
 
 func splitLine(s string) ([]token, error) {
 	var out []token
-	i := 0
-	for i < len(s) {
-		c := s[i]
+	for {
+		s = strings.TrimLeft(s, " \t\r")
 		switch {
-		case c == ' ' || c == '\t' || c == '\r':
-			i++
-			continue
-		case c == '#':
+		case s == "" || s[0] == '#':
 			return out, nil
-		case c == '"':
+		case s[0] == '"':
 			var b strings.Builder
-			j := i + 1
+			j := 1
 			for j < len(s) && s[j] != '"' {
 				if s[j] == '\\' && j+1 < len(s) {
 					j++
@@ -216,20 +212,19 @@ func splitLine(s string) ([]token, error) {
 				j++
 			}
 			if j >= len(s) {
-				return nil, fmt.Errorf("a quoted text has no closing quote")
+				return nil, errors.New("a quoted text has no closing quote")
 			}
 			out = append(out, token{b.String(), true})
-			i = j + 1
-			continue
+			s = s[j+1:]
+		default:
+			j := strings.IndexAny(s, " \t\r")
+			if j < 0 {
+				j = len(s)
+			}
+			out = append(out, token{s[:j], false})
+			s = s[j:]
 		}
-		j := i
-		for j < len(s) && s[j] != ' ' && s[j] != '\t' && s[j] != '\r' {
-			j++
-		}
-		out = append(out, token{s[i:j], false})
-		i = j
 	}
-	return out, nil
 }
 
 func joinTokens(toks []token) string {
@@ -502,11 +497,9 @@ func (p *parser) route(ln int, toks []token) (*Route, error) {
 	}
 	i := 0
 	if !strings.HasPrefix(left[0].s, "/") {
-		for _, m := range strings.Split(left[0].s, ",") {
-			if !validMethod(m) {
-				return nil, fmt.Errorf("%q isn't a method; write methods in capitals, such as GET,HEAD", m)
-			}
-			r.Methods = append(r.Methods, m)
+		r.Methods = strings.Split(left[0].s, ",")
+		if j := slices.IndexFunc(r.Methods, func(m string) bool { return !validMethod(m) }); j >= 0 {
+			return nil, fmt.Errorf("%q isn't a method; write methods in capitals, such as GET,HEAD", r.Methods[j])
 		}
 		i = 1
 	}
@@ -903,6 +896,14 @@ func parseRange(s string) (int, int, bool) {
 	return lo, hi, true
 }
 
+// schemeName is the URL scheme of a TLS or a plain connection.
+func schemeName(isTLS bool) string {
+	if isTLS {
+		return "https"
+	}
+	return "http"
+}
+
 // Summary describes a config in one line.
 func Summary(c *Config) string {
 	rules := 0
@@ -911,11 +912,7 @@ func Summary(c *Config) string {
 	}
 	var ls []string
 	for _, p := range sortedPorts(c) {
-		kind := "http"
-		if p.TLS {
-			kind = "https"
-		}
-		ls = append(ls, fmt.Sprintf(":%d (%s)", p.Num, kind))
+		ls = append(ls, fmt.Sprintf(":%d (%s)", p.Num, schemeName(p.TLS)))
 	}
 	return fmt.Sprintf("%s, %s, %s; listening on %s",
 		plural(len(c.Sites), "site"), plural(len(c.Pools), "pool"), plural(rules, "rule"), strings.Join(ls, ", "))
