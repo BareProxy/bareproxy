@@ -5,11 +5,10 @@ package main
 
 import (
 	"bufio"
-	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
-	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -19,153 +18,75 @@ import (
 	"bareproxy/internal/bp"
 )
 
-func init() {
-	extraCommands["tail"] = tailCmd
-	extraCommands["status"] = statusCmd
-	extraCommands["events"] = eventsCmd
-}
-
-// traceClient makes an HTTP client that talks to the admin socket. A zero
-// timeout means none, for streams.
-func traceClient(sock string, timeout time.Duration) *http.Client {
-	return &http.Client{
-		Timeout: timeout,
-		Transport: &http.Transport{DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
-			var d net.Dialer
-			return d.DialContext(ctx, "unix", sock)
-		}},
-	}
-}
-
-// traceGet asks the admin socket for a path and returns the answer.
-func traceGet(sock, path string) ([]byte, int, error) {
-	if sock == "" || sock == "off" {
-		return nil, 0, fmt.Errorf("the config has no admin socket")
-	}
-	resp, err := traceClient(sock, 5*time.Second).Get("http://bareproxy" + path)
-	if err != nil {
-		return nil, 0, err
-	}
-	defer resp.Body.Close()
-	b, err := io.ReadAll(resp.Body)
-	return b, resp.StatusCode, err
-}
+// traceOptions are the options that why, tail, status and events take.
+var traceOptions = []string{"--config", "-c", "--json"}
 
 // traceWhy asks a running BareProxy for a request it still has in memory.
 // It returns no record and no error when the server isn't there or doesn't
 // have the request, so the caller can try the trace log file; asked says
 // whether a server answered at all.
 func traceWhy(sock, prefix string) (rec *bp.Record, asked bool, err error) {
-	b, code, err := traceGet(sock, "/why?id="+url.QueryEscape(prefix))
+	code, body, err := get(sock, "/why?id="+url.QueryEscape(prefix))
 	switch {
 	case err != nil:
 		return nil, false, nil
 	case code == http.StatusNotFound:
 		return nil, true, nil
 	case code != http.StatusOK:
-		return nil, true, fmt.Errorf("%s", strings.TrimSpace(string(b)))
+		return nil, true, errors.New(strings.TrimSpace(body))
 	}
 	rec = &bp.Record{}
-	if err := json.Unmarshal(b, rec); err != nil {
+	if err := json.Unmarshal([]byte(body), rec); err != nil {
 		return nil, true, err
 	}
 	return rec, true, nil
 }
 
-// traceJSON prints a value as one JSON line, the way the trace log has it.
-func traceJSON(v any) {
-	b, _ := bp.RecordJSON(v)
-	fmt.Println(string(b))
-}
-
-// traceOpen reads the flags every command here takes (--config FILE and
-// --json) and finds the admin socket. rest holds the other arguments.
-func traceOpen(args []string) (sock string, asJSON bool, rest []string, ok bool) {
-	var file string
-	for i := 0; i < len(args); i++ {
-		switch args[i] {
-		case "--config", "-c":
-			if i++; i < len(args) {
-				file = args[i]
-			}
-		case "--json":
-			asJSON = true
-		default:
-			rest = append(rest, args[i])
-		}
-	}
-	c, probs := bp.Load(configFile(file))
-	if c == nil {
-		for _, p := range probs {
-			fmt.Fprintln(os.Stderr, p)
-		}
-		return "", false, nil, false
-	}
-	c.Close()
-	return c.Admin, asJSON, rest, true
-}
-
-// traceFetch asks the running server for a path and returns the body.
-func traceFetch(sock, path string) ([]byte, bool) {
-	b, code, err := traceGet(sock, path)
-	switch {
-	case err != nil:
-		fmt.Fprintf(os.Stderr, "bareproxy: no running server answered (%v)\n", err)
-	case code != http.StatusOK:
-		fmt.Fprintf(os.Stderr, "bareproxy: %s\n", strings.TrimSpace(string(b)))
-	default:
-		return b, true
-	}
-	return nil, false
-}
-
 func tailCmd(args []string) int {
-	sock, asJSON, filters, ok := traceOpen(args)
-	if !ok {
+	o, _ := parse(args, false, traceOptions...)
+	c := loadConfig(o.config)
+	if c == nil {
 		return 1
 	}
-	for _, f := range filters {
+	for _, f := range o.pos {
 		if _, err := bp.ParseTailFilter(f); err != nil {
 			fmt.Fprintln(os.Stderr, "bareproxy:", err)
 			return 2
 		}
 	}
-	if sock == "" || sock == "off" {
-		fmt.Fprintln(os.Stderr, "bareproxy: the config has no admin socket")
-		return 1
+	if c.Admin == "" || c.Admin == "off" {
+		return fail("the config has no admin socket")
 	}
-	resp, err := traceClient(sock, 0).Get("http://bareproxy/tail?" + url.Values{"f": filters}.Encode())
+	resp, err := adminClient(c.Admin, 0).Get("http://bareproxy/tail?" + url.Values{"f": o.pos}.Encode())
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "bareproxy: no running server answered (%v)\n", err)
-		return 1
+		return fail("no running server answered (%v)", err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		b, _ := io.ReadAll(resp.Body)
-		fmt.Fprintf(os.Stderr, "bareproxy: %s\n", strings.TrimSpace(string(b)))
-		return 1
+		return fail("%s", strings.TrimSpace(string(b)))
 	}
 	sc := bufio.NewScanner(resp.Body)
 	sc.Buffer(make([]byte, 64<<10), 4<<20)
 	for sc.Scan() {
-		if asJSON {
+		if o.json {
 			fmt.Printf("%s\n", sc.Bytes())
 			continue
 		}
-		var rec bp.Record
-		if json.Unmarshal(sc.Bytes(), &rec) != nil {
+		var line struct {
+			bp.Record
+			Dropped int // a line that says {"dropped":N} instead of holding a record
+		}
+		if json.Unmarshal(sc.Bytes(), &line) != nil {
 			continue
 		}
-		if rec.ID == "" { // {"dropped":N}
-			var d struct{ Dropped int }
-			json.Unmarshal(sc.Bytes(), &d)
-			fmt.Printf("-- %d records skipped, the reader was too slow --\n", d.Dropped)
+		if line.ID == "" {
+			fmt.Printf("-- %d records skipped, the reader was too slow --\n", line.Dropped)
 			continue
 		}
-		fmt.Println(tailLine(&rec))
+		fmt.Println(tailLine(&line.Record))
 	}
-	fmt.Fprintln(os.Stderr, "bareproxy: the server closed the connection")
-	return 1
+	return fail("the server closed the connection")
 }
 
 // tailLine is one record on one line: time (UTC), ID, method, host and
@@ -195,69 +116,66 @@ func tailLine(r *bp.Record) string {
 	return fmt.Sprintf("%s  %s  %-4s %s%s  %s  %s  %s  %s", t, r.ID, r.Method, r.Host, r.Path, status, r.Outcome, ms, rule)
 }
 
-func eventsCmd(args []string) int {
-	sock, asJSON, rest, ok := traceOpen(args)
-	if !ok || len(rest) > 0 {
-		usage()
-		return 2
+// fetch runs the commands that show one JSON document from a running
+// server. With --json it prints the document as it came; otherwise it reads
+// the document into v and calls text to print it.
+func fetch(args []string, path string, v any, text func()) int {
+	o, _ := parse(args, false, traceOptions...)
+	c := loadConfig(o.config)
+	if c == nil || len(o.pos) > 0 {
+		return badUsage()
 	}
-	b, ok := traceFetch(sock, "/events")
-	if !ok {
-		return 1
-	}
-	if asJSON {
-		os.Stdout.Write(b)
+	code, body, err := get(c.Admin, path)
+	switch {
+	case err != nil:
+		return fail("no running server answered (%v)", err)
+	case code != http.StatusOK:
+		return fail("%s", strings.TrimSpace(body))
+	case o.json:
+		fmt.Print(body)
 		return 0
 	}
-	var evs []bp.Event
-	if err := json.Unmarshal(b, &evs); err != nil {
-		fmt.Fprintln(os.Stderr, "bareproxy:", err)
-		return 1
+	if err := json.Unmarshal([]byte(body), v); err != nil {
+		return fail("%v", err)
 	}
-	if len(evs) == 0 {
-		fmt.Println("No events yet.")
-	}
-	for _, e := range evs {
-		fmt.Printf("%s  %-11s  %s\n", strings.Replace(strings.TrimSuffix(e.Time, "Z"), "T", " ", 1), e.Kind, e.Text)
-	}
+	text()
 	return 0
+}
+
+func eventsCmd(args []string) int {
+	var evs []bp.Event
+	return fetch(args, "/events", &evs, func() {
+		if len(evs) == 0 {
+			fmt.Println("No events yet.")
+		}
+		for _, e := range evs {
+			fmt.Printf("%s  %-11s  %s\n", stamp(e.Time), e.Kind, e.Text)
+		}
+	})
 }
 
 func statusCmd(args []string) int {
-	sock, asJSON, rest, ok := traceOpen(args)
-	if !ok || len(rest) > 0 {
-		usage()
-		return 2
-	}
-	b, ok := traceFetch(sock, "/status")
-	if !ok {
-		return 1
-	}
-	if asJSON {
-		os.Stdout.Write(b)
-		return 0
-	}
 	var st bp.Status
-	if err := json.Unmarshal(b, &st); err != nil {
-		fmt.Fprintln(os.Stderr, "bareproxy:", err)
-		return 1
-	}
-	printStatus(&st)
-	return 0
+	return fetch(args, "/status", &st, func() { printStatus(&st) })
 }
 
 func count(n int, word string) string {
-	if n == 1 {
-		return "1 " + word
+	if n != 1 {
+		word += "s"
 	}
-	return fmt.Sprintf("%d %ss", n, word)
+	return fmt.Sprintf("%d %s", n, word)
 }
 
-func clock(stamp string) string {
-	if len(stamp) >= 19 {
-		return stamp[11:19] + " UTC"
+// stamp turns 2026-10-01T06:00:00Z into 2026-10-01 06:00:00.
+func stamp(t string) string {
+	return strings.Replace(strings.TrimSuffix(t, "Z"), "T", " ", 1)
+}
+
+func clock(t string) string {
+	if len(t) >= 19 {
+		return t[11:19] + " UTC"
 	}
-	return stamp
+	return t
 }
 
 func age(secs float64) string {
@@ -274,7 +192,7 @@ func age(secs float64) string {
 }
 
 func printStatus(st *bp.Status) {
-	fmt.Printf("BareProxy %s, up %s (since %s)\n", st.Version, age(st.UptimeSeconds), strings.Replace(strings.TrimSuffix(st.Started, "Z"), "T", " ", 1)+" UTC")
+	fmt.Printf("BareProxy %s, up %s (since %s UTC)\n", st.Version, age(st.UptimeSeconds), stamp(st.Started))
 	fmt.Printf("Config %s, version %d\n\nListeners\n", st.ConfigFile, st.ConfigVersion)
 	for _, l := range st.Listeners {
 		kind := "http"
@@ -323,14 +241,14 @@ func printStatus(st *bp.Status) {
 		fmt.Printf(", back to %s", clock(r.Ring.Oldest))
 	}
 	fmt.Println(")")
-	for _, w := range []struct {
-		name string
-		r    bp.Rate
-	}{{"last minute", r.Last1m}, {"last 5 minutes", r.Last5m}} {
-		more := ""
-		if !w.r.Complete {
-			more = " or more (the ring has wrapped)"
-		}
-		fmt.Printf("  %-15s %s%s, %d with status 5xx, %s\n", w.name, count(w.r.Requests, "request"), more, w.r.Status5xx, count(w.r.ProxyErrors, "proxy error"))
+	rateLine("last minute", r.Last1m)
+	rateLine("last 5 minutes", r.Last5m)
+}
+
+func rateLine(name string, r bp.Rate) {
+	more := ""
+	if !r.Complete {
+		more = " or more (the ring has wrapped)"
 	}
+	fmt.Printf("  %-15s %s%s, %d with status 5xx, %s\n", name, count(r.Requests, "request"), more, r.Status5xx, count(r.ProxyErrors, "proxy error"))
 }

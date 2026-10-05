@@ -6,7 +6,9 @@
 package main
 
 import (
+	"cmp"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -14,7 +16,9 @@ import (
 	"net/url"
 	"os"
 	"runtime"
+	"slices"
 	"strings"
+	"syscall"
 	"time"
 
 	"bareproxy/internal/bp"
@@ -22,36 +26,38 @@ import (
 
 const defaultConfig = "/etc/bareproxy/bareproxy.conf"
 
-// extraCommands are commands defined in other files of this package. Each
-// file registers its own in an init function, so files don't collide.
-var extraCommands = map[string]func(args []string) int{}
+// commands maps each command name to the function that runs it. Each
+// returns the exit code.
+var commands = map[string]func(args []string) int{
+	"run":      run,
+	"check":    check,
+	"explain":  explain,
+	"why":      why,
+	"plan":     planCmd,
+	"apply":    applyCmd,
+	"rollback": rollbackCmd,
+	"history":  historyCmd,
+	"tail":     tailCmd,
+	"status":   statusCmd,
+	"events":   eventsCmd,
+}
 
 func main() {
 	if len(os.Args) < 2 {
-		usage()
-		os.Exit(2)
+		os.Exit(badUsage())
 	}
 	cmd, args := os.Args[1], os.Args[2:]
+	if f, ok := commands[cmd]; ok {
+		os.Exit(f(args))
+	}
 	switch cmd {
-	case "run":
-		os.Exit(run(args))
-	case "check":
-		os.Exit(check(args))
-	case "explain":
-		os.Exit(explain(args))
-	case "why":
-		os.Exit(why(args))
 	case "version", "--version":
 		fmt.Printf("bareproxy %s, built with %s\n", bp.Version, runtime.Version())
 	case "help", "-h", "--help":
 		usage()
 	default:
-		if f, ok := extraCommands[cmd]; ok {
-			os.Exit(f(args))
-		}
 		fmt.Fprintf(os.Stderr, "bareproxy: unknown command %q\n", cmd)
-		usage()
-		os.Exit(2)
+		os.Exit(badUsage())
 	}
 }
 
@@ -81,46 +87,105 @@ plan, apply, rollback and history take --json; rollback and history take --confi
 `)
 }
 
+// badUsage shows the usage and returns the exit code for a command line
+// that doesn't fit.
+func badUsage() int {
+	usage()
+	return 2
+}
+
+// fail says what went wrong and returns the exit code 1.
+func fail(format string, a ...any) int {
+	fmt.Fprintf(os.Stderr, "bareproxy: "+format+"\n", a...)
+	return 1
+}
+
+func printProblems(w io.Writer, probs []bp.Problem) {
+	for _, p := range probs {
+		fmt.Fprintln(w, p)
+	}
+}
+
 func configFile(given string) string {
-	if given != "" {
-		return given
+	return cmp.Or(given, os.Getenv("BAREPROXY_CONFIG"), defaultConfig)
+}
+
+// options is what a command line holds. A command takes some of them.
+type options struct {
+	json, yes, offline bool
+	config, from, plan string
+	headers            []string // every -H
+	pos                []string // the arguments that aren't options
+}
+
+// arg is the one argument that a command with at most one takes, or "".
+func (o options) arg() string { return cmp.Or(o.pos...) }
+
+// parse reads the options in names (with the spelling the user types, such
+// as "--config" and "-c") from args, in any position. Other arguments go to
+// pos. Lenient commands keep an unknown option as a plain argument and
+// ignore an option that lacks its value. A strict command refuses both, says
+// why and returns false.
+func parse(args []string, strict bool, names ...string) (o options, ok bool) {
+	flags := map[string]*bool{"--json": &o.json, "--yes": &o.yes, "-y": &o.yes, "--offline": &o.offline}
+	values := map[string]*string{"--config": &o.config, "-c": &o.config, "--from": &o.from, "--plan": &o.plan}
+	for i := 0; i < len(args); i++ {
+		a := args[i]
+		switch {
+		case !slices.Contains(names, a):
+			if strict && strings.HasPrefix(a, "-") {
+				fmt.Fprintf(os.Stderr, "bareproxy: unknown option %s\n", a)
+				return o, false
+			}
+			o.pos = append(o.pos, a)
+		case flags[a] != nil:
+			*flags[a] = true
+		case i == len(args)-1: // an option that takes a value, and none is left
+			if strict {
+				fmt.Fprintf(os.Stderr, "bareproxy: %s needs a value\n", a)
+				return o, false
+			}
+		case a == "-H":
+			i++
+			o.headers = append(o.headers, args[i])
+		default: // --config, -c, --from and --plan
+			i++
+			*values[a] = args[i]
+		}
 	}
-	if env := os.Getenv("BAREPROXY_CONFIG"); env != "" {
-		return env
+	return o, true
+}
+
+// loadConfig loads a config just to learn where its admin socket and trace
+// log are. A config with errors still has them, so only a file that can't be
+// read at all is reported.
+func loadConfig(file string) *bp.Config {
+	c, probs := bp.Load(configFile(file))
+	if c == nil {
+		printProblems(os.Stderr, probs)
+		return nil
 	}
-	return defaultConfig
+	c.Close()
+	return c
 }
 
 func run(args []string) int {
 	if len(args) > 1 {
-		usage()
-		return 2
+		return badUsage()
 	}
-	file := ""
-	if len(args) == 1 {
-		file = args[0]
-	}
-	if err := bp.Run(configFile(file)); err != nil {
-		fmt.Fprintln(os.Stderr, "bareproxy:", err)
-		return 1
+	if err := bp.Run(configFile(cmp.Or(args...))); err != nil {
+		return fail("%v", err)
 	}
 	return 0
 }
 
 func check(args []string) int {
 	if len(args) > 1 {
-		usage()
-		return 2
+		return badUsage()
 	}
-	file := ""
-	if len(args) == 1 {
-		file = args[0]
-	}
-	file = configFile(file)
+	file := configFile(cmp.Or(args...))
 	c, probs := bp.Load(file)
-	for _, p := range probs {
-		fmt.Println(p)
-	}
+	printProblems(os.Stdout, probs)
 	if c == nil || bp.HasErrors(probs) {
 		fmt.Printf("%s: has errors, so it can't be used\n", file)
 		return 1
@@ -131,141 +196,117 @@ func check(args []string) int {
 }
 
 func explain(args []string) int {
-	var file string
-	var hs, pos []string
-	offline := false
-	for i := 0; i < len(args); i++ {
-		switch args[i] {
-		case "--config", "-c":
-			if i++; i < len(args) {
-				file = args[i]
-			}
-		case "--offline":
-			offline = true
-		case "-H":
-			if i++; i < len(args) {
-				hs = append(hs, args[i])
-			}
-		default:
-			pos = append(pos, args[i])
-		}
+	o, _ := parse(args, false, "--config", "-c", "--offline", "-H")
+	if len(o.pos) != 2 {
+		return badUsage()
 	}
-	if len(pos) != 2 {
-		usage()
-		return 2
-	}
-	method, rawURL := strings.ToUpper(pos[0]), pos[1]
-	file = configFile(file)
-	c, probs := bp.Load(file)
+	method, rawURL := strings.ToUpper(o.pos[0]), o.pos[1]
+	c, probs := bp.Load(configFile(o.config))
 	if c == nil || bp.HasErrors(probs) {
-		for _, p := range probs {
-			fmt.Fprintln(os.Stderr, p)
-		}
+		printProblems(os.Stderr, probs)
 		return 1
 	}
 	defer c.Close()
-	if !offline {
-		if out, err := askServer(c.Admin, method, rawURL, hs); err == nil {
+	if !o.offline {
+		// Ask the running server first: it knows the live backend states.
+		q := url.Values{"method": {method}, "url": {rawURL}, "h": o.headers}
+		if code, out, err := get(c.Admin, "/explain?"+q.Encode()); err == nil && code == http.StatusOK {
 			fmt.Print(out)
 			return 0
 		}
 	}
 	h := http.Header{}
-	for _, kv := range hs {
+	for _, kv := range o.headers {
 		k, v, _ := strings.Cut(kv, ":")
 		h.Add(strings.TrimSpace(k), strings.TrimSpace(v))
 	}
+	out := ""
 	rt, err := bp.NewRuntime(c, nil, 0, nil, false)
-	if err != nil {
-		fmt.Fprintln(os.Stderr, "bareproxy:", err)
-		return 1
+	if err == nil {
+		out, err = bp.Explain(rt, method, rawURL, h, false)
 	}
-	out, err := bp.Explain(rt, method, rawURL, h, false)
 	if err != nil {
-		fmt.Fprintln(os.Stderr, "bareproxy:", err)
-		return 1
+		return fail("%v", err)
 	}
 	fmt.Print(out)
 	return 0
 }
 
-// askServer asks a running BareProxy, over its admin socket, to explain a
-// request with its live config and backend states.
-func askServer(sock, method, rawURL string, hs []string) (string, error) {
-	if sock == "" || sock == "off" {
-		return "", fmt.Errorf("no admin socket")
-	}
-	client := &http.Client{
-		Timeout: 5 * time.Second,
-		Transport: &http.Transport{DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
-			var d net.Dialer
-			return d.DialContext(ctx, "unix", sock)
-		}},
-	}
-	q := url.Values{"method": {method}, "url": {rawURL}, "h": hs}
-	resp, err := client.Get("http://bareproxy/explain?" + q.Encode())
-	if err != nil {
-		return "", err
-	}
-	defer resp.Body.Close()
-	b, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return "", err
-	}
-	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("%s", strings.TrimSpace(string(b)))
-	}
-	return string(b), nil
-}
-
 func why(args []string) int {
-	var file string
-	var pos []string
-	asJSON := false
-	for i := 0; i < len(args); i++ {
-		switch args[i] {
-		case "--config", "-c":
-			if i++; i < len(args) {
-				file = args[i]
-			}
-		case "--json":
-			asJSON = true
-		default:
-			pos = append(pos, args[i])
-		}
+	o, _ := parse(args, false, traceOptions...)
+	if len(o.pos) != 1 {
+		return badUsage()
 	}
-	if len(pos) != 1 {
-		usage()
-		return 2
-	}
-	c, probs := bp.Load(configFile(file))
+	c := loadConfig(o.config)
 	if c == nil {
-		for _, p := range probs {
-			fmt.Fprintln(os.Stderr, p)
-		}
 		return 1
 	}
-	c.Close()
-	rec, asked, err := traceWhy(c.Admin, pos[0])
+	id := o.pos[0]
+	rec, asked, err := traceWhy(c.Admin, id)
 	if rec == nil && err == nil {
 		if c.TraceLog == "stdout" || c.TraceLog == "off" {
 			if asked {
-				fmt.Fprintf(os.Stderr, "bareproxy: no request with an ID starting %s in memory, and this config sends the trace log to %s, so there is no file to look in\n", pos[0], c.TraceLog)
-			} else {
-				fmt.Fprintf(os.Stderr, "bareproxy: no running server answered, and this config sends the trace log to %s; point trace-log at a file\n", c.TraceLog)
+				return fail("no request with an ID starting %s in memory, and this config sends the trace log to %s, so there is no file to look in", id, c.TraceLog)
 			}
-			return 1
+			return fail("no running server answered, and this config sends the trace log to %s; point trace-log at a file", c.TraceLog)
 		}
-		rec, err = bp.FindRecord(c.TraceLog, pos[0])
+		rec, err = bp.FindRecord(c.TraceLog, id)
 	}
 	if err != nil {
-		fmt.Fprintln(os.Stderr, "bareproxy:", err)
-		return 1
+		return fail("%v", err)
 	}
-	if asJSON {
-		traceJSON(rec)
+	if o.json {
+		b, _ := bp.RecordJSON(rec)
+		fmt.Println(string(b))
 	} else {
 		fmt.Print(bp.RenderWhy(rec))
 	}
 	return 0
+}
+
+// adminClient makes an HTTP client that talks to the admin socket. A zero
+// timeout means none, for streams.
+func adminClient(sock string, timeout time.Duration) *http.Client {
+	dial := func(ctx context.Context, _, _ string) (net.Conn, error) {
+		return (&net.Dialer{}).DialContext(ctx, "unix", sock)
+	}
+	return &http.Client{Timeout: timeout, Transport: &http.Transport{DialContext: dial}}
+}
+
+// adminCall sends one request to the admin socket. target is the path with
+// its query. It returns the status code and the body.
+func adminCall(sock, method, target, body string, timeout time.Duration) (int, string, error) {
+	req, err := http.NewRequest(method, "http://bareproxy"+target, strings.NewReader(body))
+	if err != nil {
+		return 0, "", err
+	}
+	resp, err := adminClient(sock, timeout).Do(req)
+	if err != nil {
+		return 0, "", err
+	}
+	defer resp.Body.Close()
+	b, err := io.ReadAll(resp.Body)
+	return resp.StatusCode, string(b), err
+}
+
+// get asks the admin socket for a path, for the commands that show what a
+// running server knows.
+func get(sock, target string) (int, string, error) {
+	if sock == "" || sock == "off" {
+		return 0, "", errors.New("the config has no admin socket")
+	}
+	return adminCall(sock, "GET", target, "", 5*time.Second)
+}
+
+// callAdmin sends one request to the admin socket. When nothing answers it
+// says why in plain words.
+func callAdmin(sock, method, path string, q url.Values, body string) (int, string, error) {
+	code, out, err := adminCall(sock, method, path+"?"+q.Encode(), body, time.Minute)
+	switch {
+	case errors.Is(err, syscall.ENOENT), errors.Is(err, syscall.ECONNREFUSED):
+		err = fmt.Errorf("no BareProxy is running with the admin socket %s", sock)
+	case errors.Is(err, syscall.EACCES):
+		err = fmt.Errorf("no permission to use %s: run as root or as a member of its group", sock)
+	}
+	return code, out, err
 }
