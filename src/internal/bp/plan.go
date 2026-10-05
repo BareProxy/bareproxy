@@ -440,13 +440,10 @@ func (g *hostGroup) analyze() []*lineAcc {
 			}
 		}
 		what = append(what, strings.Join(describe(sp.root, m.paths), "; "))
-		sortKey := "\xff"
-		for pi := range m.paths {
-			sortKey = min(sortKey, sp.repSort[pi])
-		}
-		l := &lineAcc{sortKey: sortKey, line: PlanLine{Where: g.where(), What: strings.Join(what, ", "), Old: m.e.old, New: m.e.new}}
+		l := &lineAcc{sortKey: "\xff", line: PlanLine{Where: g.where(), What: strings.Join(what, ", "), Old: m.e.old, New: m.e.new}}
 		lines = append(lines, l)
 		for pi := range m.paths {
+			l.sortKey = min(l.sortKey, sp.repSort[pi]) // the line sorts by its first path
 			for _, t := range sp.tuples(m.prod) {
 				g.class[[2]int{pi, t}] = l
 			}
@@ -572,11 +569,10 @@ type pnode struct {
 }
 
 func newSpace(a, b *Site) *space {
-	routes := slices.Concat(routesOf(a), routesOf(b))
 	pats := map[string]bool{}
 	methods := map[string]bool{}
 	hv := map[string]map[string]bool{}
-	for _, r := range routes {
+	for _, r := range slices.Concat(routesOf(a), routesOf(b)) {
 		if r.Path != "" {
 			pats[r.Path] = true
 		}
