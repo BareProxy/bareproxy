@@ -326,7 +326,7 @@ func (g *hostGroup) effect(old bool, rules *Site, method, path string, h http.He
 	}
 	prefix := ""
 	if other != nil && other.TLS != p.TLS {
-		prefix = schemeName[p.TLS] + ": "
+		prefix = schemeName(p.TLS) + ": "
 	}
 	if s == nil {
 		return prefix + "421, no site"
@@ -1034,20 +1034,17 @@ func pathSite(s *Site, path string) *Site {
 	return &Site{Line: s.Line, Name: s.Name, Routes: rulesFor(s, path)}
 }
 
-// schemeName names a port's scheme by whether it serves TLS.
-var schemeName = map[bool]string{false: "http", true: "https"}
-
 // settings lists the changes outside routing, one line each.
 func (pl *planner) settings() []string {
 	var out []string
 	for _, pp := range pl.ports {
 		switch {
 		case pp.oldP == nil:
-			out = append(out, fmt.Sprintf("port %d (%s) added (line %d)", pp.num, schemeName[pp.newP.TLS], pp.newP.Line))
+			out = append(out, fmt.Sprintf("port %d (%s) added (line %d)", pp.num, schemeName(pp.newP.TLS), pp.newP.Line))
 		case pp.newP == nil:
-			out = append(out, fmt.Sprintf("port %d (%s) removed (was line %d)", pp.num, schemeName[pp.oldP.TLS], pp.oldP.Line))
+			out = append(out, fmt.Sprintf("port %d (%s) removed (was line %d)", pp.num, schemeName(pp.oldP.TLS), pp.oldP.Line))
 		case pp.oldP.TLS != pp.newP.TLS:
-			out = append(out, fmt.Sprintf("port %d switched from %s to %s (line %d)", pp.num, schemeName[pp.oldP.TLS], schemeName[pp.newP.TLS], pp.newP.Line))
+			out = append(out, fmt.Sprintf("port %d switched from %s to %s (line %d)", pp.num, schemeName(pp.oldP.TLS), schemeName(pp.newP.TLS), pp.newP.Line))
 		}
 	}
 	out = append(out, globalChanges(pl.old, pl.new)...)
