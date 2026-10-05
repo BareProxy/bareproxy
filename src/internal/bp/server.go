@@ -405,6 +405,7 @@ func (s *Server) Handler(port int, isTLS bool) http.Handler {
 func (s *Server) serve(w *respWriter, r *http.Request, rt *Runtime, port int, rec *Record) {
 	c := rt.Cfg
 	p := c.Ports[port]
+	rec.Path = requestPath(r)
 	var site *Site
 	if p != nil {
 		site, _ = p.Find(hostOnly(r.Host))

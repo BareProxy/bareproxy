@@ -31,7 +31,8 @@ func TestAcceptKnownExplainFolderRedirectQuery(t *testing.T) {
 	}
 }
 
-// a 421 leaves a record with an empty path.
+// a 421 used to leave a record with an empty path. Fixed with one line in
+// serve (the path is now set before the site lookup); this stays as a regression test.
 func TestAcceptKnownNoSiteRecordPath(t *testing.T) {
 	f := newFixture(t, "", false)
 	req := httptest.NewRequest("GET", "/some/path?x=1", nil)
