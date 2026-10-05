@@ -282,7 +282,7 @@ func (l *loader) dial(s *stats, addr string) (*countedConn, error) {
 		return nil, err
 	}
 	s.opened.Add(1)
-	s.lastOpened.Store(int64(time.Since(l.start)))
+	s.lastOpened.Store(int64(max(0, time.Since(l.start)))) // the WebSocket clients dial a little before the start
 	return &countedConn{Conn: c, s: s}, nil
 }
 
@@ -364,6 +364,12 @@ func (l *loader) runHTTP(s *stats, base string, h2 bool, conns, perConn int) {
 	wg.Wait()
 }
 
+// oneLine shortens a response body to something that fits on a line of a log.
+func oneLine(b []byte) string {
+	s := strings.Join(strings.Fields(string(b[:min(len(b), 100)])), " ")
+	return s
+}
+
 func (l *loader) get(c *http.Client, s *stats, base string, j job, h2 bool) {
 	t := l.targets[j.i%len(l.targets)]
 	ctx, cancel := context.WithTimeout(context.Background(), l.timeout)
@@ -384,11 +390,11 @@ func (l *loader) get(c *http.Client, s *stats, base string, j job, h2 bool) {
 	case err != nil:
 		s.failErr("reading the answer", err)
 	case resp.StatusCode != http.StatusOK:
-		s.failN(fmt.Sprintf("status %d", resp.StatusCode), t.path+": "+string(bytes.TrimSpace(body[:min(len(body), 100)])), 1, false)
+		s.failN(fmt.Sprintf("status %d", resp.StatusCode), t.path+": "+oneLine(body), 1, false)
 	case h2 != (resp.ProtoMajor == 2):
 		s.failN("wrong protocol "+resp.Proto, t.path, 1, false)
 	case !bytes.Contains(body, []byte(t.want)):
-		s.failN("wrong body", t.path+": "+string(body[:min(len(body), 100)]), 1, false)
+		s.failN("wrong body", t.path+": "+oneLine(body), 1, false)
 	default:
 		s.ok(time.Since(j.sched))
 	}
