@@ -17,7 +17,6 @@ import (
 	"bufio"
 	"fmt"
 	"io"
-	"log"
 	"net"
 	"net/http"
 	"os"
@@ -183,13 +182,7 @@ func newAccSmugEnv(t *testing.T, beUpgrade bool) *accSmugEnv {
 	srv := NewServer(conf, rt)
 	srv.logger.SetOutput(nopWriter{})
 	// The settings Run gives every listener.
-	hs := &http.Server{
-		Handler:           srv.Handler(port, false),
-		ReadHeaderTimeout: 10 * time.Second,
-		IdleTimeout:       120 * time.Second,
-		MaxHeaderBytes:    32 << 10,
-		ErrorLog:          log.New(io.Discard, "", 0),
-	}
+	hs := clientServer(srv.Handler(port, false)) // the server's own settings
 	go hs.Serve(ln)
 	t.Cleanup(func() { hs.Close(); rt.Stop(); rt.Trace.Close(); c.Close() })
 	e.tail = newAccTail(t, e.logPath)

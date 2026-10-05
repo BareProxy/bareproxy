@@ -365,14 +365,15 @@ func (s *Server) switchListeners(c *Config, opened map[int]net.Listener) {
 	}
 }
 
+// clientServer is the http.Server of a client-facing port. OPTIONS * comes
+// to BareProxy's handler too, so it leaves a record like any other request.
+func clientServer(h http.Handler) *http.Server {
+	return &http.Server{Handler: h, ReadHeaderTimeout: 10 * time.Second, IdleTimeout: 120 * time.Second,
+		MaxHeaderBytes: 32 << 10, ErrorLog: log.New(io.Discard, "", 0), DisableGeneralOptionsHandler: true}
+}
+
 func (s *Server) serveOn(port int, isTLS bool, ln net.Listener) {
-	srv := &http.Server{
-		Handler:           s.Handler(port, isTLS),
-		ReadHeaderTimeout: 10 * time.Second,
-		IdleTimeout:       120 * time.Second,
-		MaxHeaderBytes:    32 << 10,
-		ErrorLog:          log.New(io.Discard, "", 0),
-	}
+	srv := clientServer(s.Handler(port, isTLS))
 	if isTLS {
 		srv.TLSConfig = &tls.Config{MinVersion: tls.VersionTLS12, GetCertificate: s.certFor(port)}
 		go srv.ServeTLS(ln, "", "")

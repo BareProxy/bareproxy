@@ -3,9 +3,7 @@
 
 package bp
 
-// Bugs the acceptance tests found, each as a small test. All were fixed
-// except OPTIONS *, which stays as a documented limit: its test skips with the
-// reason while the limit is there.
+// Bugs the acceptance tests found, each as a small test. All were fixed.
 
 import (
 	"net/http"
@@ -101,21 +99,36 @@ func TestAcceptExplainRawBackslash(t *testing.T) {
 	}
 }
 
-// Go's server answers OPTIONS * itself, so BareProxy sees nothing and no
-// record is made. A documented limit: handing the request to BareProxy's
-// handler (DisableGeneralOptionsHandler) would turn it into a 400, since a *
-// target is refused for every other method, and some load balancers probe
-// with OPTIONS *.
-func TestAcceptKnownOptionsStar(t *testing.T) {
+// Go's server used to answer OPTIONS * itself, so BareProxy saw nothing and
+// no record was made. BareProxy answers it now: 200 with no body, an ID and
+// one record, with the site when the Host names one. Other methods with a *
+// target still get 400.
+func TestAcceptOptionsStar(t *testing.T) {
 	e := newAccSmugEnv(t, false)
-	resps := e.send(accReq("OPTIONS * HTTP/1.1", []string{"Host: " + e.host, "Connection: close"}, ""), 300*time.Millisecond)
-	e.settle()
-	recs := e.drainRecords()
-	if len(resps) != 1 {
-		t.Fatalf("%d responses", len(resps))
-	}
-	if resps[0].status < 400 && len(recs) == 0 {
-		t.Skipf("known limit: OPTIONS * is answered %d by net/http's own handler before BareProxy's handler runs, so it leaves no record and carries no BareProxy-Id (the design says one record per request read; left as it is because the alternative, a 400, would break probes that use OPTIONS *)", resps[0].status)
+	for _, c := range []struct{ line, host, site string }{
+		{"OPTIONS * HTTP/1.1", e.host, "smug.test"},
+		{"OPTIONS * HTTP/1.1", "other.test", ""},
+		{"GET * HTTP/1.1", e.host, "smug.test"},
+	} {
+		resps := e.send(accReq(c.line, []string{"Host: " + c.host, "Connection: close"}, ""), 300*time.Millisecond)
+		e.settle()
+		recs := e.drainRecords()
+		if len(resps) != 1 || len(recs) != 1 {
+			t.Fatalf("%s: %d responses and %d records, want 1 and 1", c.line, len(resps), len(recs))
+		}
+		r, rec := resps[0], recs[0]
+		if r.hdr.Get("BareProxy-Id") != rec.ID || rec.Path != "*" || !strings.Contains(rec.Site, c.site) || (c.site == "") != (rec.Site == "") {
+			t.Errorf("%s (Host %s): id %q, record %+v", c.line, c.host, r.hdr.Get("BareProxy-Id"), rec)
+		}
+		if c.line[0] == 'G' {
+			if r.status != 400 || rec.Outcome != "bad_request" {
+				t.Errorf("GET *: status %d, outcome %q; want 400 and bad_request", r.status, rec.Outcome)
+			}
+			continue
+		}
+		if r.status != 200 || len(r.body) != 0 || r.hdr.Get("Content-Length") != "0" || rec.Outcome != "local" || rec.Rule != "OPTIONS *" || rec.Status != 200 {
+			t.Errorf("OPTIONS * (Host %s): status %d, body %q, record %+v", c.host, r.status, r.body, rec)
+		}
 	}
 }
 

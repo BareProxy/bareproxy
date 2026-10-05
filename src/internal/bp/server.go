@@ -355,6 +355,15 @@ func (s *Server) serve(w *respWriter, r *http.Request, rt *Runtime, port int, re
 	if p != nil {
 		site, _ = p.Find(hostOnly(r.Host))
 	}
+	if r.Method == http.MethodOptions && rec.Path == "*" { // asks about the server itself
+		if site != nil {
+			rec.Site, rec.SiteLine = site.Name, site.Line
+		}
+		rec.Outcome, rec.Rule = "local", "OPTIONS *"
+		w.Header().Set("Content-Length", "0")
+		w.WriteHeader(http.StatusOK)
+		return
+	}
 	if site == nil {
 		rec.Outcome = "no_site"
 		s.plain(w, r, rec, http.StatusMisdirectedRequest, "No site here for "+hostOnly(r.Host))
