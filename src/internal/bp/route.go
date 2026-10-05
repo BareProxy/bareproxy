@@ -111,24 +111,23 @@ type RuleCheck struct {
 // MatchRoute tries a site's rules from the top and returns the first match,
 // with a note for each rule tried, as explain shows them.
 func (s *Site) MatchRoute(method, path string, h http.Header) (*Route, []RuleCheck) {
-	var checks []RuleCheck
-	r := s.match(method, path, h, &checks)
-	return r, checks
+	return s.match(method, path, h, true)
 }
 
-// match is MatchRoute's loop. The server passes nil notes: the same code,
-// without building any text.
-func (s *Site) match(method, path string, h http.Header, notes *[]RuleCheck) *Route {
+// match is MatchRoute's loop. The server runs it with notes off: the same
+// code, without building any text.
+func (s *Site) match(method, path string, h http.Header, notes bool) (*Route, []RuleCheck) {
+	var checks []RuleCheck
 	for _, r := range s.Routes {
-		ok, why := r.test(method, path, h, notes != nil)
-		if notes != nil {
-			*notes = append(*notes, RuleCheck{r, ok, why})
+		ok, why := r.test(method, path, h, notes)
+		if notes {
+			checks = append(checks, RuleCheck{r, ok, why})
 		}
 		if ok {
-			return r
+			return r, checks
 		}
 	}
-	return nil
+	return nil, checks
 }
 
 func (r *Route) matches(method, path string, h http.Header) (bool, string) {

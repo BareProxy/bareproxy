@@ -11,6 +11,17 @@ import (
 	"testing"
 )
 
+// Write writes a record as one JSON line, as the server does; only tests use
+// it outside Runtime.record.
+func (t *TraceLog) Write(rec *Record) {
+	if t == nil {
+		return
+	}
+	if b, err := recordLine(rec); err == nil {
+		t.WriteLine(b)
+	}
+}
+
 // checkLine fails unless recordLine gives exactly what RecordJSON gives.
 func checkLine(t *testing.T, rec *Record) {
 	t.Helper()
