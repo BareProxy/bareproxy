@@ -24,6 +24,11 @@ func main() {
 		os.Exit(2)
 	}
 	name, addr := os.Args[1], os.Args[2]
+	fmt.Fprintln(os.Stderr, http.ListenAndServe(addr, newMux(name)))
+	os.Exit(1)
+}
+
+func newMux(name string) *http.ServeMux {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) { fmt.Fprintln(w, "ok") })
 	mux.HandleFunc("/ws", wsEcho)
@@ -32,8 +37,7 @@ func main() {
 		fmt.Fprintf(w, `{"backend":%q,"path":%q,"host":%q,"x_forwarded_for":%q,"x_forwarded_proto":%q,"bareproxy_id":%q}`+"\n",
 			name, r.URL.RequestURI(), r.Host, r.Header.Get("X-Forwarded-For"), r.Header.Get("X-Forwarded-Proto"), r.Header.Get("BareProxy-Id"))
 	})
-	fmt.Fprintln(os.Stderr, http.ListenAndServe(addr, mux))
-	os.Exit(1)
+	return mux
 }
 
 // wsEcho answers a WebSocket handshake and sends every text or binary message
