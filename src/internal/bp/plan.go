@@ -4,12 +4,14 @@
 package bp
 
 import (
+	"cmp"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"maps"
 	"net/http"
-	"sort"
+	"slices"
 	"strconv"
 	"strings"
 )
@@ -42,29 +44,17 @@ type PlanLine struct {
 // MakePlan compares two compiled configs. Neither is changed. A nil config
 // counts as one with no listeners, sites or pools.
 func MakePlan(old, new *Config) *PlanResult {
-	res := &PlanResult{ID: PlanID(old, new), Changes: []PlanLine{}, Settings: []string{}, Warnings: []string{}}
-	if old == nil {
-		old = &Config{Pools: map[string]*PoolSpec{}, Ports: map[int]*Port{}}
-	}
-	if new == nil {
-		new = &Config{Pools: map[string]*PoolSpec{}, Ports: map[int]*Port{}}
-	}
-	pl := newPlanner(old, new)
-	res.pl = pl
+	pl := newPlanner(cmp.Or(old, &Config{}), cmp.Or(new, &Config{}))
+	res := &PlanResult{ID: PlanID(old, new), Changes: []PlanLine{}, Settings: []string{}, Warnings: []string{}, pl: pl}
 	pl.routing(res)
 	res.Settings = append(res.Settings, pl.settings()...)
-	res.Warnings = append(res.Warnings, planWarnings(new)...)
+	res.Warnings = append(res.Warnings, planWarnings(pl.new)...)
 	return res
 }
 
 // PlanID is a short hash of both configs' text.
 func PlanID(old, new *Config) string {
-	text := func(c *Config) string {
-		if c == nil {
-			return ""
-		}
-		return strings.Join(c.Lines, "\n")
-	}
+	text := func(c *Config) string { return strings.Join(cmp.Or(c, &Config{}).Lines, "\n") }
 	sum := sha256.Sum256([]byte(text(old) + "\x00" + text(new)))
 	return hex.EncodeToString(sum[:])[:12]
 }
@@ -83,28 +73,26 @@ func (p *PlanResult) Text() string {
 			kind = "changed rule"
 		}
 		fmt.Fprintf(&b, "Plan %s: %s, %s\n", p.ID, plural(len(p.Changes), kind), plural(len(p.Settings), "other change"))
-		if len(p.Changes) > 0 {
-			b.WriteString("Routing\n")
-			if p.TooMany {
-				fmt.Fprintf(&b, "  (more than %s request classes in a site, so this lists changed rules instead)\n", groupDigits(MaxPlanClasses))
-			}
-			for _, l := range p.Changes {
-				fmt.Fprintf(&b, "  %s, %s\n      %s  ->  %s\n", l.Where, l.What, orNone(l.Old), orNone(l.New))
-			}
+	}
+	if len(p.Changes) > 0 {
+		b.WriteString("Routing\n")
+		if p.TooMany {
+			fmt.Fprintf(&b, "  (more than %s request classes in a site, so this lists changed rules instead)\n", groupDigits(MaxPlanClasses))
 		}
-		if len(p.Settings) > 0 {
-			b.WriteString("Other changes\n")
-			for _, s := range p.Settings {
+		for _, l := range p.Changes {
+			fmt.Fprintf(&b, "  %s, %s\n      %s  ->  %s\n", l.Where, l.What, orNone(l.Old), orNone(l.New))
+		}
+	}
+	list := func(title string, items []string) {
+		if len(items) > 0 {
+			b.WriteString(title + "\n")
+			for _, s := range items {
 				fmt.Fprintf(&b, "  %s\n", s)
 			}
 		}
 	}
-	if len(p.Warnings) > 0 {
-		b.WriteString("Warnings\n")
-		for _, w := range p.Warnings {
-			fmt.Fprintf(&b, "  %s\n", w)
-		}
-	}
+	list("Other changes", p.Settings)
+	list("Warnings", p.Warnings)
 	return b.String()
 }
 
@@ -120,12 +108,7 @@ func groupDigits(n int) string {
 	return s
 }
 
-func orNone(s string) string {
-	if s == "" {
-		return "(none)"
-	}
-	return s
-}
+func orNone(s string) string { return cmp.Or(s, "(none)") }
 
 // Classify returns the index in Changes of the line whose class holds a
 // request, or -1 when the plan lists no change for it. The host has no
@@ -140,16 +123,15 @@ func (p *PlanResult) Classify(port int, host, method, path string, h http.Header
 		return -1
 	}
 	g := pp.byRep[pp.repFor(host)]
-	if g == nil || g.class == nil {
+	if g == nil {
 		return -1
 	}
 	sp := g.sp
 	t := sp.methodRep(method)*sp.ncombo + sp.comboOf(h)
-	id, ok := g.class[[2]int{sp.pathRep(path), t}]
-	if !ok {
-		return -1
+	if l := g.class[[2]int{sp.pathRep(path), t}]; l != nil {
+		return l.index
 	}
-	return p.pl.lineIdx[id]
+	return -1
 }
 
 // Covers reports whether a request falls in a class the plan lists.
@@ -213,7 +195,6 @@ type planner struct {
 	old, new *Config
 	ports    []*portPlan
 	byNum    map[int]*portPlan
-	lineIdx  []int // line id -> index in Changes
 }
 
 // portPlan splits the hosts on one port into classes: every exact host in
@@ -234,10 +215,13 @@ type portPlan struct {
 type hostGroup struct {
 	port       *portPlan
 	oldS, newS *Site
-	hosts      []string // representative hosts, in display order
-	where      string
+	hosts      []string // its host classes, described, in display order
 	sp         *space
-	class      map[[2]int]int // (path rep, method*combos+combo) -> line id
+	class      map[[2]int]*lineAcc // (path rep, method*combos+combo) -> its line
+}
+
+func (g *hostGroup) where() string {
+	return fmt.Sprintf("%s (port %d)", strings.Join(g.hosts, ", "), g.port.num)
 }
 
 func hostDomain(h string) string {
@@ -245,6 +229,17 @@ func hostDomain(h string) string {
 		return h[i+1:]
 	}
 	return ""
+}
+
+// keysOf lists the keys of some maps, sorted, each once.
+func keysOf[K cmp.Ordered, V any](ms ...map[K]V) []K {
+	all := map[K]bool{}
+	for _, m := range ms {
+		for k := range m {
+			all[k] = true
+		}
+	}
+	return slices.Sorted(maps.Keys(all))
 }
 
 func (pp *portPlan) repFor(host string) string {
@@ -268,94 +263,48 @@ func (pp *portPlan) describeHost(h string) string {
 	return "*." + hostDomain(h)
 }
 
-func findSite(p *Port, host string) *Site {
-	if p == nil {
-		return nil
-	}
-	s, _ := p.Find(host)
-	return s
-}
-
 func newPlanner(old, new *Config) *planner {
 	pl := &planner{old: old, new: new, byNum: map[int]*portPlan{}}
-	var nums []int
-	for n := range old.Ports {
-		nums = append(nums, n)
-	}
-	for n := range new.Ports {
-		if old.Ports[n] == nil {
-			nums = append(nums, n)
-		}
-	}
-	sort.Ints(nums)
-	for _, n := range nums {
+	for _, n := range keysOf(old.Ports, new.Ports) {
 		pp := &portPlan{num: n, oldP: old.Ports[n], newP: new.Ports[n],
 			exact: map[string]bool{}, wild: map[string]string{}, byRep: map[string]*hostGroup{}}
-		for _, p := range []*Port{pp.oldP, pp.newP} {
-			if p == nil {
-				continue
-			}
-			for h := range p.Exact {
-				pp.exact[h] = true
-			}
-			for d := range p.Wild {
-				pp.wild[d] = ""
-			}
+		op, np := cmp.Or(pp.oldP, &Port{}), cmp.Or(pp.newP, &Port{}) // a missing port has no sites
+		reps := keysOf(op.Exact, np.Exact)
+		for _, h := range reps {
+			pp.exact[h] = true
 		}
-		var domains []string
-		for d := range pp.wild {
-			domains = append(domains, d)
-			for i := 1; ; i++ {
-				h := "bp-any." + d
-				if i > 1 {
-					h = "bp-any" + strconv.Itoa(i) + "." + d
-				}
-				if !pp.exact[h] {
-					pp.wild[d] = h
-					break
-				}
+		// Representatives are fresh names: bp-any.DOMAIN, or bp-any2.DOMAIN
+		// and so on when a config names that host.
+		for _, d := range keysOf(op.Wild, np.Wild) {
+			h := "bp-any." + d
+			for i := 2; pp.exact[h]; i++ {
+				h = "bp-any" + strconv.Itoa(i) + "." + d
 			}
-		}
-		for i := 1; ; i++ {
-			h := "bp-any.invalid"
-			if i > 1 {
-				h = "bp-any.bp-" + strconv.Itoa(i) + ".invalid"
-			}
-			if _, w := pp.wild[hostDomain(h)]; !w && !pp.exact[h] {
-				pp.anyRep = h
-				break
-			}
-		}
-		var reps []string
-		for h := range pp.exact {
+			pp.wild[d] = h
 			reps = append(reps, h)
 		}
-		sort.Strings(reps)
-		sort.Strings(domains)
-		for _, d := range domains {
-			reps = append(reps, pp.wild[d])
+		taken := func(h string) bool {
+			_, w := pp.wild[hostDomain(h)]
+			return w || pp.exact[h]
+		}
+		pp.anyRep = "bp-any.invalid"
+		for i := 2; taken(pp.anyRep); i++ {
+			pp.anyRep = "bp-any.bp-" + strconv.Itoa(i) + ".invalid"
 		}
 		reps = append(reps, pp.anyRep)
 		byPair := map[[2]*Site]*hostGroup{}
 		for _, h := range reps {
-			os, ns := findSite(pp.oldP, h), findSite(pp.newP, h)
+			os, _ := op.Find(h)
+			ns, _ := np.Find(h)
 			k := [2]*Site{os, ns}
 			g := byPair[k]
 			if g == nil {
-				g = &hostGroup{port: pp, oldS: os, newS: ns}
+				g = &hostGroup{port: pp, oldS: os, newS: ns, sp: newSpace(os, ns)}
 				byPair[k] = g
 				pp.groups = append(pp.groups, g)
 			}
-			g.hosts = append(g.hosts, h)
+			g.hosts = append(g.hosts, pp.describeHost(h))
 			pp.byRep[h] = g
-		}
-		for _, g := range pp.groups {
-			var ds []string
-			for _, h := range g.hosts {
-				ds = append(ds, pp.describeHost(h))
-			}
-			g.where = fmt.Sprintf("%s (port %d)", strings.Join(ds, ", "), n)
-			g.sp = newSpace(g.oldS, g.newS)
 		}
 		pl.ports = append(pl.ports, pp)
 		pl.byNum[n] = pp
@@ -377,10 +326,7 @@ func (g *hostGroup) effect(old bool, rules *Site, method, path string, h http.He
 	}
 	prefix := ""
 	if other != nil && other.TLS != p.TLS {
-		prefix = "http: "
-		if p.TLS {
-			prefix = "https: "
-		}
+		prefix = schemeName[p.TLS] + ": "
 	}
 	if s == nil {
 		return prefix + "421, no site"
@@ -391,82 +337,59 @@ func (g *hostGroup) effect(old bool, rules *Site, method, path string, h http.He
 
 // lineAcc is one routing line before sorting.
 type lineAcc struct {
-	id      int
-	port    int
-	group   int
+	index   int // in Changes, once sorted
 	sortKey string
 	line    PlanLine
 }
 
+// routing lists the routing changes, port by port and host group by host
+// group, each group's lines in order.
 func (pl *planner) routing(res *PlanResult) {
 	for _, pp := range pl.ports {
 		for _, g := range pp.groups {
-			if g.sp.count() > MaxPlanClasses {
-				res.TooMany = true
-			}
+			res.TooMany = res.TooMany || g.sp.count() > MaxPlanClasses
 		}
 	}
-	var lines []*lineAcc
 	for _, pp := range pl.ports {
-		for gi, g := range pp.groups {
+		for _, g := range pp.groups {
 			if res.TooMany {
-				for _, l := range ruleDiff(g) {
-					lines = append(lines, &lineAcc{id: len(lines), port: pp.num, group: gi, sortKey: fmt.Sprintf("%08d", len(lines)), line: l})
-				}
+				res.Changes = append(res.Changes, ruleDiff(g)...)
 				continue
 			}
-			lines = pl.analyze(g, gi, lines)
+			for _, l := range g.analyze() {
+				l.index = len(res.Changes)
+				res.Changes = append(res.Changes, l.line)
+			}
 		}
-	}
-	sort.SliceStable(lines, func(i, j int) bool {
-		a, b := lines[i], lines[j]
-		if a.port != b.port {
-			return a.port < b.port
-		}
-		if a.group != b.group {
-			return a.group < b.group
-		}
-		if a.sortKey != b.sortKey {
-			return a.sortKey < b.sortKey
-		}
-		if a.line.What != b.line.What {
-			return a.line.What < b.line.What
-		}
-		if a.line.Old != b.line.Old {
-			return a.line.Old < b.line.Old
-		}
-		return a.line.New < b.line.New
-	})
-	pl.lineIdx = make([]int, len(lines))
-	for i, l := range lines {
-		pl.lineIdx[l.id] = i
-		res.Changes = append(res.Changes, l.line)
 	}
 }
 
 type effPair struct{ old, new string }
 
 // analyze runs every class of a host group through both configs and turns
-// the classes whose effect changes into lines.
-func (pl *planner) analyze(g *hostGroup, gi int, lines []*lineAcc) []*lineAcc {
-	if o, n := g.port.oldP, g.port.newP; o != nil && n != nil && o.TLS == n.TLS && sameRules(g.oldS, g.newS) {
-		return lines // the matcher picks the same rule with the same effect for every request
+// the classes whose effect changes into lines, sorted.
+func (g *hostGroup) analyze() []*lineAcc {
+	o, n := g.port.oldP, g.port.newP
+	samePort := o != nil && n != nil && o.TLS == n.TLS
+	// sameElse: same scheme, a site on both sides, and the same effect when
+	// no rule matches. Then only the rules can make a difference.
+	sameElse := samePort && g.oldS != nil && g.newS != nil && routeEffect(g.oldS, nil) == routeEffect(g.newS, nil)
+	if sameElse && sameList(g.oldS.Routes, g.newS.Routes) {
+		return nil // the matcher picks the same rule with the same effect for every request
 	}
 	sp := g.sp
 	// A path whose rules (those whose path pattern takes it) are the same
 	// on both sides is handled the same for every method and header.
-	same := make([]bool, len(sp.reps))
-	if o, n := g.port.oldP, g.port.newP; o != nil && n != nil && o.TLS == n.TLS && g.oldS != nil && g.newS != nil &&
-		routeEffect(g.oldS, nil) == routeEffect(g.newS, nil) {
-		for pi, path := range sp.reps {
-			same[pi] = sameList(rulesFor(g.oldS, path), rulesFor(g.newS, path))
-		}
-	}
-	fo, fn := make([]*Site, len(sp.reps)), make([]*Site, len(sp.reps))
+	fo, fn, same := make([]*Site, len(sp.reps)), make([]*Site, len(sp.reps)), make([]bool, len(sp.reps))
 	for pi, path := range sp.reps {
 		fo[pi], fn[pi] = pathSite(g.oldS, path), pathSite(g.newS, path)
+		same[pi] = sameElse && sameList(fo[pi].Routes, fn[pi].Routes)
 	}
-	changed := map[int]map[effPair][]int{} // path rep -> effects -> tuples
+	type pathEff struct {
+		pi int
+		e  effPair
+	}
+	changed := map[pathEff][]int{} // tuples whose effect changes, by path and effects
 	for c := 0; c < sp.ncombo; c++ {
 		h := sp.header(c)
 		for pi, path := range sp.reps {
@@ -474,24 +397,15 @@ func (pl *planner) analyze(g *hostGroup, gi int, lines []*lineAcc) []*lineAcc {
 				continue
 			}
 			for mi, m := range sp.methods {
-				eo := g.effect(true, fo[pi], m, path, h)
-				en := g.effect(false, fn[pi], m, path, h)
-				if eo == en {
-					continue
+				if eo, en := g.effect(true, fo[pi], m, path, h), g.effect(false, fn[pi], m, path, h); eo != en {
+					k := pathEff{pi, effPair{eo, en}}
+					changed[k] = append(changed[k], mi*sp.ncombo+c)
 				}
-				byEff := changed[pi]
-				if byEff == nil {
-					byEff = map[effPair][]int{}
-					changed[pi] = byEff
-				}
-				e := effPair{eo, en}
-				byEff[e] = append(byEff[e], mi*sp.ncombo+c)
 			}
 		}
 	}
-	if len(changed) == 0 {
-		return lines
-	}
+	// Each path's tuples split into products of method and header states;
+	// one line holds a product with its effects on every path that has it.
 	type key struct {
 		e    effPair
 		prod string
@@ -502,65 +416,46 @@ func (pl *planner) analyze(g *hostGroup, gi int, lines []*lineAcc) []*lineAcc {
 		paths map[int]bool
 	}
 	groups := map[key]*merged{}
-	var order []key
-	sizes := sp.sizes()
-	for pi := range sp.reps {
-		for e, ts := range changed[pi] {
-			digits := make([][]int, len(ts))
-			for i, t := range ts {
-				digits[i] = sp.digits(t)
+	for pe, ts := range changed {
+		digits := make([][]int, len(ts))
+		for i, t := range ts {
+			digits[i] = sp.digits(t)
+		}
+		for _, prod := range factor(digits) {
+			k := key{pe.e, fmt.Sprint(prod)}
+			m := groups[k]
+			if m == nil {
+				m = &merged{e: pe.e, prod: prod, paths: map[int]bool{}}
+				groups[k] = m
 			}
-			for _, prod := range factor(digits, sizes) {
-				k := key{e, fmt.Sprint(prod)}
-				m := groups[k]
-				if m == nil {
-					m = &merged{e: e, prod: prod, paths: map[int]bool{}}
-					groups[k] = m
-					order = append(order, k)
-				}
-				m.paths[pi] = true
-			}
+			m.paths[pe.pi] = true
 		}
 	}
-	if g.class == nil {
-		g.class = map[[2]int]int{}
-	}
-	for _, k := range order {
-		m := groups[k]
-		id := len(lines)
-		var what []string
-		what = append(what, sp.methodPhrase(m.prod[0]))
+	// Lines come out of the map in no set order; they are sorted below.
+	g.class = map[[2]int]*lineAcc{}
+	var lines []*lineAcc
+	for _, m := range groups {
+		what := []string{sp.methodPhrase(m.prod[0])}
 		for i := range sp.names {
 			if s := sp.headerPhrase(i, m.prod[i+1]); s != "" {
 				what = append(what, s)
 			}
 		}
-		what = append(what, strings.Join(sp.pathPhrases(m.paths), "; "))
-		sortKey := "\xff"
+		what = append(what, strings.Join(describe(sp.root, m.paths), "; "))
+		l := &lineAcc{sortKey: "\xff", line: PlanLine{Where: g.where(), What: strings.Join(what, ", "), Old: m.e.old, New: m.e.new}}
+		lines = append(lines, l)
 		for pi := range m.paths {
-			if s := sp.repSort[pi]; s < sortKey {
-				sortKey = s
-			}
-		}
-		lines = append(lines, &lineAcc{id: id, port: g.port.num, group: gi, sortKey: sortKey,
-			line: PlanLine{Where: g.where, What: strings.Join(what, ", "), Old: m.e.old, New: m.e.new}})
-		for pi := range m.paths {
+			l.sortKey = min(l.sortKey, sp.repSort[pi]) // the line sorts by its first path
 			for _, t := range sp.tuples(m.prod) {
-				g.class[[2]int{pi, t}] = id
+				g.class[[2]int{pi, t}] = l
 			}
 		}
 	}
+	slices.SortStableFunc(lines, func(a, b *lineAcc) int {
+		return cmp.Or(strings.Compare(a.sortKey, b.sortKey), strings.Compare(a.line.What, b.line.What),
+			strings.Compare(a.line.Old, b.line.Old), strings.Compare(a.line.New, b.line.New))
+	})
 	return lines
-}
-
-// sameRules reports whether two sites have the same rules in the same
-// order, each with the same matchers and effect, and the same no-rule
-// effect. Then every request is handled the same by both.
-func sameRules(a, b *Site) bool {
-	if a == nil || b == nil {
-		return a == b
-	}
-	return routeEffect(a, nil) == routeEffect(b, nil) && sameList(a.Routes, b.Routes)
 }
 
 // sameList reports whether two lists of rules have the same matchers and
@@ -593,19 +488,15 @@ func rulesFor(s *Site, path string) []*Route {
 
 // factor splits a set of distinct tuples into a few cartesian products.
 // Each result holds one sorted set of values per dimension.
-func factor(ts [][]int, sizes []int) [][][]int {
-	nd := len(sizes)
-	proj := make([][]int, nd)
+func factor(ts [][]int) [][][]int {
+	proj := make([][]int, len(ts[0]))
 	total := 1
-	for d := 0; d < nd; d++ {
-		seen := map[int]bool{}
+	for d := range proj {
 		for _, t := range ts {
-			if !seen[t[d]] {
-				seen[t[d]] = true
-				proj[d] = append(proj[d], t[d])
-			}
+			proj[d] = append(proj[d], t[d])
 		}
-		sort.Ints(proj[d])
+		slices.Sort(proj[d])
+		proj[d] = slices.Compact(proj[d])
 		if total <= len(ts) {
 			total *= len(proj[d])
 		}
@@ -625,7 +516,7 @@ func factor(ts [][]int, sizes []int) [][][]int {
 	byKey := map[string]*part{}
 	for _, v := range proj[0] {
 		r := rest[v]
-		sort.Slice(r, func(i, j int) bool { return lessInts(r[i], r[j]) })
+		slices.SortFunc(r, slices.Compare[[]int])
 		k := fmt.Sprint(r)
 		p := byKey[k]
 		if p == nil {
@@ -637,33 +528,21 @@ func factor(ts [][]int, sizes []int) [][][]int {
 	}
 	var out [][][]int
 	for _, p := range parts {
-		for _, sub := range factor(p.rest, sizes[1:]) {
+		for _, sub := range factor(p.rest) {
 			out = append(out, append([][]int{p.vals}, sub...))
 		}
 	}
 	return out
 }
 
-func lessInts(a, b []int) bool {
-	for i := range a {
-		if a[i] != b[i] {
-			return a[i] < b[i]
-		}
-	}
-	return false
-}
-
 // space is the classes of requests a site pair can tell apart: path
 // representatives, method representatives and header combinations.
 type space struct {
-	seg     string
-	reps    []string       // representative paths
-	repSort []string       // sort key per representative
-	patIdx  map[string]int // pattern path -> its representative
-	belowIx map[string]int // pattern path ("" for the root) -> its fresh child
+	reps    []string          // representative paths
+	repSort []string          // sort key per representative
+	nodes   map[string]*pnode // pattern path ("" for the root) -> its node
 	root    *pnode
-	methods []string // named methods, HEAD when GET is named, then one other
-	mIdx    map[string]int
+	methods []string   // named methods, HEAD when GET is named, then one other
 	names   []string   // header names in conditions, canonical
 	vals    [][]string // named values per header name
 	other   []string   // a value per header name that no condition names
@@ -681,16 +560,10 @@ type pnode struct {
 }
 
 func newSpace(a, b *Site) *space {
-	var routes []*Route
-	for _, s := range []*Site{a, b} {
-		if s != nil {
-			routes = append(routes, s.Routes...)
-		}
-	}
 	pats := map[string]bool{}
 	methods := map[string]bool{}
 	hv := map[string]map[string]bool{}
-	for _, r := range routes {
+	for _, r := range slices.Concat(cmp.Or(a, &Site{}).Routes, cmp.Or(b, &Site{}).Routes) {
 		if r.Path != "" {
 			pats[r.Path] = true
 		}
@@ -706,81 +579,50 @@ func newSpace(a, b *Site) *space {
 			}
 		}
 	}
-	sp := &space{patIdx: map[string]int{}, belowIx: map[string]int{}, mIdx: map[string]int{}}
-	sp.seg = "~bp"
-	for n := 2; ; n++ {
-		clash := false
-		for p := range pats {
-			if strings.Contains(p, sp.seg) {
-				clash = true
-				break
-			}
-		}
-		if !clash {
-			break
-		}
-		sp.seg = "~bp" + strconv.Itoa(n)
+	list := keysOf(pats)
+	// seg is a path segment no pattern holds, for fresh paths.
+	seg := "~bp"
+	for n := 2; slices.ContainsFunc(list, func(p string) bool { return strings.Contains(p, seg) }); n++ {
+		seg = "~bp" + strconv.Itoa(n)
 	}
+	sp := &space{root: &pnode{self: -1}}
 	add := func(path, sortKey string) int {
 		sp.reps = append(sp.reps, path)
 		sp.repSort = append(sp.repSort, sortKey)
 		return len(sp.reps) - 1
 	}
-	sp.root = &pnode{self: -1}
-	sp.root.below = add("/"+sp.seg, "\xfe")
-	sp.belowIx[""] = sp.root.below
-	nodes := map[string]*pnode{"": sp.root}
-	var list []string
-	for p := range pats {
-		list = append(list, p)
-	}
-	sort.Strings(list)
+	sp.root.below = add("/"+seg, "\xfe")
+	sp.nodes = map[string]*pnode{"": sp.root}
 	for _, p := range list {
 		n := &pnode{path: p, self: add(p, p), below: -1}
-		sp.patIdx[p] = n.self
 		if !strings.HasSuffix(p, "/") {
-			n.below = add(p+"/"+sp.seg, p+"/\xfe")
-			sp.belowIx[p] = n.below
+			n.below = add(p+"/"+seg, p+"/\xfe")
 		}
-		nodes[p] = n
+		sp.nodes[p] = n
 	}
+	// A pattern's parent is the longest pattern that ends where one of its
+	// slashes starts (the root, "", at worst).
 	for _, p := range list {
-		for i := len(p) - 1; i >= 0; i-- {
-			if p[i] != '/' {
-				continue
-			}
-			if parent := nodes[p[:i]]; parent != nil {
-				parent.kids = append(parent.kids, nodes[p])
+		for q := p; ; {
+			q = q[:strings.LastIndexByte(q, '/')]
+			if parent := sp.nodes[q]; parent != nil {
+				parent.kids = append(parent.kids, sp.nodes[p])
 				break
 			}
 		}
 	}
-	for m := range methods {
-		sp.methods = append(sp.methods, m)
+	if methods["GET"] {
+		methods["HEAD"] = true
 	}
-	if methods["GET"] && !methods["HEAD"] {
-		sp.methods = append(sp.methods, "HEAD")
-	}
-	sort.Strings(sp.methods)
 	other := "BPOTHER"
 	for methods[other] {
 		other += "X"
 	}
-	sp.methods = append(sp.methods, other)
-	for i, m := range sp.methods {
-		sp.mIdx[m] = i
-	}
-	for name := range hv {
-		sp.names = append(sp.names, name)
-	}
-	sort.Strings(sp.names)
+	sp.methods = append(keysOf(methods), other)
+	sp.names = keysOf(hv)
 	sp.ncombo = 1
 	for _, name := range sp.names {
-		var vs []string
-		for v := range hv[name] {
-			vs = append(vs, v)
-		}
-		sort.Strings(vs)
+		vs := keysOf(hv[name])
 		o := "~bp-other"
 		for n := 2; hv[name][o]; n++ {
 			o = "~bp-other" + strconv.Itoa(n)
@@ -806,47 +648,37 @@ func newSpace(a, b *Site) *space {
 // count is the number of classes, or more than MaxPlanClasses when there
 // are too many to count.
 func (sp *space) count() int {
-	if sp.big || sp.ncombo > MaxPlanClasses {
-		return MaxPlanClasses + 1
-	}
 	n := len(sp.reps) * len(sp.methods)
-	if n > MaxPlanClasses || n*sp.ncombo > MaxPlanClasses {
+	if sp.big || sp.ncombo > MaxPlanClasses || n > MaxPlanClasses || n*sp.ncombo > MaxPlanClasses {
 		return MaxPlanClasses + 1
 	}
 	return n * sp.ncombo
 }
 
-func (sp *space) sizes() []int {
-	return append([]int{len(sp.methods)}, sp.nstates...)
-}
-
 // digits splits a tuple (method*combos+combo) into method and header states.
 func (sp *space) digits(t int) []int {
 	d := make([]int, 1+len(sp.names))
-	d[0] = t / sp.ncombo
-	c := t % sp.ncombo
 	for i := len(sp.names) - 1; i >= 0; i-- {
-		d[i+1] = c % sp.nstates[i]
-		c /= sp.nstates[i]
+		d[i+1] = t % sp.nstates[i]
+		t /= sp.nstates[i]
 	}
+	d[0] = t // what is left is the method
 	return d
 }
 
-// tuples lists every tuple in a product.
+// tuples lists every tuple in a product, digit by digit (the reverse of
+// digits).
 func (sp *space) tuples(prod [][]int) []int {
 	out := []int{0}
 	for i, set := range prod {
-		radix := sp.ncombo
+		radix := 1 // the method digit comes first, onto 0
 		if i > 0 {
-			radix = 1
-			for _, n := range sp.nstates[i:] {
-				radix *= n
-			}
+			radix = sp.nstates[i-1]
 		}
 		var next []int
 		for _, t := range out {
 			for _, v := range set {
-				next = append(next, t+v*radix)
+				next = append(next, t*radix+v)
 			}
 		}
 		out = next
@@ -857,26 +689,26 @@ func (sp *space) tuples(prod [][]int) []int {
 // header builds the request headers of one combination.
 func (sp *space) header(c int) http.Header {
 	h := http.Header{}
-	for i := len(sp.names) - 1; i >= 0; i-- {
-		st := c % sp.nstates[i]
-		c /= sp.nstates[i]
-		if st == 0 {
-			continue
-		}
-		mask := st - 1
-		if mask == 0 {
+	for i, st := range sp.digits(c)[1:] {
+		switch {
+		case st == 1:
 			h[sp.names[i]] = []string{sp.other[i]}
-			continue
+		case st > 1:
+			h[sp.names[i]] = sp.valsIn(i, st-1)
 		}
-		var vs []string
-		for j, v := range sp.vals[i] {
-			if mask&(1<<j) != 0 {
-				vs = append(vs, v)
-			}
-		}
-		h[sp.names[i]] = vs
 	}
 	return h
+}
+
+// valsIn lists the named values of header i whose bits are set in mask.
+func (sp *space) valsIn(i, mask int) []string {
+	var vs []string
+	for j, v := range sp.vals[i] {
+		if mask&(1<<j) != 0 {
+			vs = append(vs, v)
+		}
+	}
+	return vs
 }
 
 func (sp *space) comboOf(h http.Header) int {
@@ -886,10 +718,8 @@ func (sp *space) comboOf(h http.Header) int {
 		if vals := h.Values(name); len(vals) > 0 {
 			mask := 0
 			for j, v := range sp.vals[i] {
-				for _, x := range vals {
-					if x == v {
-						mask |= 1 << j
-					}
+				if slices.Contains(vals, v) {
+					mask |= 1 << j
 				}
 			}
 			st = 1 + mask
@@ -900,22 +730,21 @@ func (sp *space) comboOf(h http.Header) int {
 }
 
 func (sp *space) methodRep(m string) int {
-	if i, ok := sp.mIdx[m]; ok {
+	if i := slices.Index(sp.methods, m); i >= 0 {
 		return i
 	}
 	return len(sp.methods) - 1
 }
 
-// pathRep returns the representative of a path in normal form.
+// pathRep returns the representative of a path in normal form: the
+// pattern itself, or the fresh child of the nearest pattern above it.
 func (sp *space) pathRep(p string) int {
-	if i, ok := sp.patIdx[p]; ok {
-		return i
+	if n := sp.nodes[p]; n != nil && n.self >= 0 {
+		return n.self
 	}
-	for i := len(p) - 1; i >= 0; i-- {
-		if p[i] == '/' {
-			if b, ok := sp.belowIx[p[:i]]; ok {
-				return b
-			}
+	for i := strings.LastIndexByte(p, '/'); i >= 0; i = strings.LastIndexByte(p[:i], '/') {
+		if n := sp.nodes[p[:i]]; n != nil && n.below >= 0 {
+			return n.below
 		}
 	}
 	return sp.root.below
@@ -925,15 +754,11 @@ func (sp *space) methodPhrase(set []int) string {
 	if len(set) == len(sp.methods) {
 		return "any method"
 	}
-	in := map[int]bool{}
-	for _, i := range set {
-		in[i] = true
-	}
 	otherIx := len(sp.methods) - 1
 	var names []string
-	if in[otherIx] {
+	if slices.Contains(set, otherIx) {
 		for i, m := range sp.methods[:otherIx] {
-			if !in[i] {
+			if !slices.Contains(set, i) {
 				names = append(names, m)
 			}
 		}
@@ -965,20 +790,16 @@ func (sp *space) headerPhrase(i int, set []int) string {
 	// with NAME: v, or without NAME: v, when the set is exactly the states
 	// that hold v, or exactly those that don't.
 	for j, v := range vals {
-		with, without := true, true
+		agree := 0 // states where holding v and being in the set agree
 		for st := 0; st < ns; st++ {
-			has := st > 0 && (st-1)&(1<<j) != 0
-			if has != in[st] {
-				with = false
-			}
-			if has == in[st] {
-				without = false
+			if has := st > 0 && (st-1)&(1<<j) != 0; has == in[st] {
+				agree++
 			}
 		}
-		if with {
+		switch agree {
+		case ns:
 			return "with " + name + ": " + v
-		}
-		if without {
+		case 0:
 			return "without " + name + ": " + v
 		}
 	}
@@ -990,55 +811,21 @@ func (sp *space) headerPhrase(i int, set []int) string {
 		case st == 1:
 			parts = append(parts, "with "+name+" other than "+strings.Join(vals, ", "))
 		default:
-			var vs []string
-			for j, v := range vals {
-				if (st-1)&(1<<j) != 0 {
-					vs = append(vs, v)
-				}
-			}
-			parts = append(parts, "with "+name+": "+strings.Join(vs, " and "))
+			parts = append(parts, "with "+name+": "+strings.Join(sp.valsIn(i, st-1), " and "))
 		}
 	}
 	return strings.Join(parts, " or ")
 }
 
-func (sp *space) pathPhrases(in map[int]bool) []string {
-	var out []string
-	sp.describe(sp.root, in, &out)
-	return out
-}
-
-func (sp *space) full(n *pnode, in map[int]bool) bool {
-	if n.self >= 0 && !in[n.self] || n.below >= 0 && !in[n.below] {
+// all reports whether every representative at and below a node is in the
+// set (want true) or out of it (want false). With self false it skips the
+// node's own path.
+func all(n *pnode, in map[int]bool, want, self bool) bool {
+	if self && n.self >= 0 && in[n.self] != want || n.below >= 0 && in[n.below] != want {
 		return false
 	}
 	for _, k := range n.kids {
-		if !sp.full(k, in) {
-			return false
-		}
-	}
-	return true
-}
-
-func (sp *space) none(n *pnode, in map[int]bool) bool {
-	if n.self >= 0 && in[n.self] || n.below >= 0 && in[n.below] {
-		return false
-	}
-	for _, k := range n.kids {
-		if !sp.none(k, in) {
-			return false
-		}
-	}
-	return true
-}
-
-// restFull reports whether everything below a node is in the set.
-func (sp *space) restFull(n *pnode, in map[int]bool) bool {
-	if n.below >= 0 && !in[n.below] {
-		return false
-	}
-	for _, k := range n.kids {
-		if !sp.full(k, in) {
+		if !all(k, in, want, true) {
 			return false
 		}
 	}
@@ -1052,40 +839,41 @@ func subtreeText(n *pnode) string {
 	return n.path + " and below"
 }
 
-func (sp *space) describe(n *pnode, in map[int]bool, out *[]string) {
-	if sp.none(n, in) {
-		return
+// describe phrases the paths at and below a node whose representatives
+// are in the set.
+func describe(n *pnode, in map[int]bool) []string {
+	if all(n, in, false, true) {
+		return nil
 	}
-	if sp.full(n, in) {
+	if all(n, in, true, true) {
 		if n.self < 0 {
-			*out = append(*out, "every path")
-		} else {
-			*out = append(*out, subtreeText(n))
+			return []string{"every path"}
 		}
-		return
+		return []string{subtreeText(n)}
 	}
 	selfIn := n.self >= 0 && in[n.self]
+	var out []string
 	if n.below < 0 || !in[n.below] {
 		if selfIn {
-			*out = append(*out, n.path)
+			out = append(out, n.path)
 		}
 		for _, k := range n.kids {
-			sp.describe(k, in, out)
+			out = append(out, describe(k, in)...)
 		}
-		return
+		return out
 	}
 	var exc []string
 	var later []*pnode
 	for _, k := range n.kids {
 		switch {
-		case sp.full(k, in):
-		case k.self >= 0 && !in[k.self] && sp.restFull(k, in):
+		case all(k, in, true, true):
+		case k.self >= 0 && !in[k.self] && all(k, in, true, false):
 			exc = append(exc, k.path)
-		case sp.none(k, in):
-			exc = append(exc, subtreeText(k))
 		default:
 			exc = append(exc, subtreeText(k))
-			later = append(later, k)
+			if !all(k, in, false, true) {
+				later = append(later, k)
+			}
 		}
 	}
 	var s string
@@ -1102,18 +890,16 @@ func (sp *space) describe(n *pnode, in map[int]bool, out *[]string) {
 	if len(exc) > 0 {
 		s += " (not " + strings.Join(exc, ", ") + ")"
 	}
-	*out = append(*out, s)
+	out = append(out, s)
 	for _, k := range later {
-		sp.describe(k, in, out)
+		out = append(out, describe(k, in)...)
 	}
+	return out
 }
 
 func joinAnd(xs []string) string {
-	switch len(xs) {
-	case 0:
-		return ""
-	case 1:
-		return xs[0]
+	if len(xs) < 2 {
+		return strings.Join(xs, "")
 	}
 	return strings.Join(xs[:len(xs)-1], ", ") + " and " + xs[len(xs)-1]
 }
@@ -1121,13 +907,7 @@ func joinAnd(xs []string) string {
 // ruleDiff lists the rule lines that differ between a group's two sites,
 // for plans with too many classes to work through.
 func ruleDiff(g *hostGroup) []PlanLine {
-	text := func(s *Site) []*Route {
-		if s == nil {
-			return nil
-		}
-		return s.Routes
-	}
-	a, b := text(g.oldS), text(g.newS)
+	a, b := cmp.Or(g.oldS, &Site{}).Routes, cmp.Or(g.newS, &Site{}).Routes
 	// longest common subsequence of rule texts
 	n, m := len(a), len(b)
 	lcs := make([][]int, n+1)
@@ -1151,10 +931,10 @@ func ruleDiff(g *hostGroup) []PlanLine {
 			i++
 			j++
 		case j >= m || (i < n && lcs[i+1][j] >= lcs[i][j+1]):
-			out = append(out, PlanLine{Where: g.where, What: "rule removed", Old: fmt.Sprintf("line %d: %s", a[i].Line, a[i].Text)})
+			out = append(out, PlanLine{Where: g.where(), What: "rule removed", Old: fmt.Sprintf("line %d: %s", a[i].Line, a[i].Text)})
 			i++
 		default:
-			out = append(out, PlanLine{Where: g.where, What: "rule added", New: fmt.Sprintf("line %d: %s", b[j].Line, b[j].Text)})
+			out = append(out, PlanLine{Where: g.where(), What: "rule added", New: fmt.Sprintf("line %d: %s", b[j].Line, b[j].Text)})
 			j++
 		}
 	}
@@ -1203,22 +983,15 @@ func planWarnings(c *Config) []string {
 					}
 				}
 			})
-			var ls []int
-			for l := range takers {
-				ls = append(ls, l)
+			var ls []string
+			for _, l := range keysOf(takers) {
+				ls = append(ls, strconv.Itoa(l))
 			}
-			sort.Ints(ls)
 			msg := fmt.Sprintf("line %d: %s never matches", r.Line, r.Text)
-			switch len(ls) {
-			case 0:
-			case 1:
-				msg += fmt.Sprintf(": line %d takes every request it would get", ls[0])
-			default:
-				var parts []string
-				for _, l := range ls {
-					parts = append(parts, strconv.Itoa(l))
-				}
-				msg += ": lines " + joinAnd(parts) + " take every request it would get"
+			if len(ls) == 1 {
+				msg += ": line " + ls[0] + " takes every request it would get"
+			} else if len(ls) > 1 {
+				msg += ": lines " + joinAnd(ls) + " take every request it would get"
 			}
 			ws = append(ws, warn{r.Line, msg})
 		}
@@ -1228,7 +1001,7 @@ func planWarnings(c *Config) []string {
 			ws = append(ws, warn{ps.Line, fmt.Sprintf("line %d: pool %s isn't used by any rule that can match", ps.Line, name)})
 		}
 	}
-	sort.SliceStable(ws, func(i, j int) bool { return ws[i].line < ws[j].line })
+	slices.SortStableFunc(ws, func(a, b warn) int { return cmp.Compare(a.line, b.line) })
 	var out []string
 	for _, w := range ws {
 		out = append(out, w.msg)
@@ -1236,7 +1009,6 @@ func planWarnings(c *Config) []string {
 	return out
 }
 
-// each calls f for every class representative.
 // each calls f for every class representative of a site, with the
 // site's rules for the representative's path (pathSite).
 func (sp *space) each(s *Site, f func(rules *Site, method, path string, h http.Header)) {
@@ -1262,23 +1034,20 @@ func pathSite(s *Site, path string) *Site {
 	return &Site{Line: s.Line, Name: s.Name, Routes: rulesFor(s, path)}
 }
 
+// schemeName names a port's scheme by whether it serves TLS.
+var schemeName = map[bool]string{false: "http", true: "https"}
+
 // settings lists the changes outside routing, one line each.
 func (pl *planner) settings() []string {
 	var out []string
-	scheme := func(p *Port) string {
-		if p.TLS {
-			return "https"
-		}
-		return "http"
-	}
 	for _, pp := range pl.ports {
 		switch {
 		case pp.oldP == nil:
-			out = append(out, fmt.Sprintf("port %d (%s) added (line %d)", pp.num, scheme(pp.newP), pp.newP.Line))
+			out = append(out, fmt.Sprintf("port %d (%s) added (line %d)", pp.num, schemeName[pp.newP.TLS], pp.newP.Line))
 		case pp.newP == nil:
-			out = append(out, fmt.Sprintf("port %d (%s) removed (was line %d)", pp.num, scheme(pp.oldP), pp.oldP.Line))
+			out = append(out, fmt.Sprintf("port %d (%s) removed (was line %d)", pp.num, schemeName[pp.oldP.TLS], pp.oldP.Line))
 		case pp.oldP.TLS != pp.newP.TLS:
-			out = append(out, fmt.Sprintf("port %d switched from %s to %s (line %d)", pp.num, scheme(pp.oldP), scheme(pp.newP), pp.newP.Line))
+			out = append(out, fmt.Sprintf("port %d switched from %s to %s (line %d)", pp.num, schemeName[pp.oldP.TLS], schemeName[pp.newP.TLS], pp.newP.Line))
 		}
 	}
 	out = append(out, globalChanges(pl.old, pl.new)...)
@@ -1301,11 +1070,10 @@ func globalLines(c *Config) map[string]cfgLine {
 		if err != nil || len(toks) == 0 {
 			continue
 		}
-		if raw[0] != ' ' && raw[0] != '\t' {
+		switch {
+		case raw[0] != ' ' && raw[0] != '\t':
 			in = toks[0].s == "global"
-			continue
-		}
-		if in {
+		case in:
 			out[toks[0].s] = cfgLine{joinTokens(toks), i + 1}
 		}
 	}
@@ -1344,20 +1112,8 @@ func lineRef(newLine, oldLine int) string {
 
 func globalChanges(old, new *Config) []string {
 	o, n := globalLines(old), globalLines(new)
-	keys := map[string]bool{}
-	for k := range o {
-		keys[k] = true
-	}
-	for k := range n {
-		keys[k] = true
-	}
-	var list []string
-	for k := range keys {
-		list = append(list, k)
-	}
-	sort.Strings(list)
 	var out []string
-	for _, k := range list {
+	for _, k := range keysOf(o, n) {
 		a, ina := o[k]
 		b, inb := n[k]
 		switch {
@@ -1387,38 +1143,35 @@ func (pl *planner) siteChanges() []string {
 			if siteLabel(a) != siteLabel(b) {
 				name += " (was site " + siteLabel(a) + ")"
 			}
-			tls := func(s *Site) string {
-				switch {
-				case s.TLSAuto:
-					return "auto"
-				case s.CertFile != "":
-					return s.CertFile + " " + s.KeyFile
+			// set adds a line when a setting differs. The line numbers
+			// are those that set it in each site's block, unless given.
+			set := func(key, from, to string, lines ...int) {
+				if from == to {
+					return
 				}
-				return "none"
-			}
-			if tls(a) != tls(b) {
-				out = append(out, fmt.Sprintf("%s: tls %s  ->  %s%s", name, tls(a), tls(b), lineRef(b.TLSLine, a.TLSLine)))
-			}
-			if a.Err404 != b.Err404 {
-				out = append(out, fmt.Sprintf("%s: error 404 page %s  ->  %s%s", name, orNone(a.Err404), orNone(b.Err404), lineRef(b.Err404Line, a.Err404Line)))
-			}
-			if a.BodyLimit != b.BodyLimit {
-				out = append(out, fmt.Sprintf("%s: body-limit %s  ->  %s%s", name, sizeText(a.BodyLimit), sizeText(b.BodyLimit),
-					lineRef(settingLine(pl.new, b.Line, "body-limit"), settingLine(pl.old, a.Line, "body-limit"))))
-			}
-			if a.KeepEncodedSlash != b.KeepEncodedSlash {
-				es := func(s *Site) string {
-					if s.KeepEncodedSlash {
-						return "keep"
-					}
-					return "reject"
+				if lines == nil {
+					lines = []int{settingLine(pl.new, b.Line, key), settingLine(pl.old, a.Line, key)}
 				}
-				out = append(out, fmt.Sprintf("%s: encoded-slashes %s  ->  %s%s", name, es(a), es(b),
-					lineRef(settingLine(pl.new, b.Line, "encoded-slashes"), settingLine(pl.old, a.Line, "encoded-slashes"))))
+				out = append(out, fmt.Sprintf("%s: %s %s  ->  %s%s", name, key, from, to, lineRef(lines[0], lines[1])))
 			}
+			set("tls", tlsText(a), tlsText(b), b.TLSLine, a.TLSLine)
+			set("error 404 page", orNone(a.Err404), orNone(b.Err404), b.Err404Line, a.Err404Line)
+			set("body-limit", sizeText(a.BodyLimit), sizeText(b.BodyLimit))
+			slashes := map[bool]string{false: "reject", true: "keep"}
+			set("encoded-slashes", slashes[a.KeepEncodedSlash], slashes[b.KeepEncodedSlash])
 		}
 	}
 	return out
+}
+
+func tlsText(s *Site) string {
+	switch {
+	case s.TLSAuto:
+		return "auto"
+	case s.CertFile != "":
+		return s.CertFile + " " + s.KeyFile
+	}
+	return "none"
 }
 
 // siteLabel names a site by its first address as written, so sites with
@@ -1430,14 +1183,12 @@ func siteLabel(s *Site) string {
 	return s.Name
 }
 
+// sizeText writes a size in the largest unit that divides it.
 func sizeText(n int64) string {
-	switch {
-	case n > 0 && n%(1<<30) == 0:
-		return fmt.Sprintf("%dGB", n>>30)
-	case n > 0 && n%(1<<20) == 0:
-		return fmt.Sprintf("%dMB", n>>20)
-	case n > 0 && n%(1<<10) == 0:
-		return fmt.Sprintf("%dKB", n>>10)
+	for i, unit := range []string{"GB", "MB", "KB"} {
+		if shift := 30 - 10*i; n > 0 && n%(1<<shift) == 0 {
+			return fmt.Sprintf("%d%s", n>>shift, unit)
+		}
 	}
 	return fmt.Sprintf("%dB", n)
 }
@@ -1450,20 +1201,8 @@ func healthText(h *HealthSpec) string {
 }
 
 func poolChanges(old, new *Config) []string {
-	names := map[string]bool{}
-	for n := range old.Pools {
-		names[n] = true
-	}
-	for n := range new.Pools {
-		names[n] = true
-	}
-	var list []string
-	for n := range names {
-		list = append(list, n)
-	}
-	sort.Strings(list)
 	var out []string
-	for _, name := range list {
+	for _, name := range keysOf(old.Pools, new.Pools) {
 		a, b := old.Pools[name], new.Pools[name]
 		switch {
 		case a == nil:
@@ -1479,23 +1218,16 @@ func poolChanges(old, new *Config) []string {
 			}
 			return x.Addr
 		}
-		inA, inB := map[string]bool{}, map[string]bool{}
-		for _, x := range a.Backends {
-			inA[key(x)] = true
-		}
-		for _, x := range b.Backends {
-			inB[key(x)] = true
-		}
-		for _, x := range a.Backends {
-			if !inB[key(x)] {
-				out = append(out, fmt.Sprintf("pool %s: backend %s removed (was line %d)", name, key(x), x.Line))
+		// missing lists the backends of xs that ys lacks.
+		missing := func(xs, ys []BackendSpec, format string) {
+			for _, x := range xs {
+				if !slices.ContainsFunc(ys, func(y BackendSpec) bool { return key(y) == key(x) }) {
+					out = append(out, fmt.Sprintf(format, name, key(x), x.Line))
+				}
 			}
 		}
-		for _, x := range b.Backends {
-			if !inA[key(x)] {
-				out = append(out, fmt.Sprintf("pool %s: backend %s added (line %d)", name, key(x), x.Line))
-			}
-		}
+		missing(a.Backends, b.Backends, "pool %s: backend %s removed (was line %d)")
+		missing(b.Backends, a.Backends, "pool %s: backend %s added (line %d)")
 		set := func(what, from, to string) {
 			if from != to {
 				out = append(out, fmt.Sprintf("pool %s: %s %s  ->  %s%s", name, what, from, to,
