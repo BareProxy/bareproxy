@@ -37,6 +37,7 @@ const (
 type accPathsFx struct {
 	dir, site, bait, logPath string
 	h                        http.Handler
+	rt                       *Runtime
 	content                  []byte    // a.txt, 1000 bytes
 	mtime                    time.Time // its modification time
 }
@@ -137,7 +138,7 @@ func accBuildPaths(t *testing.T) *accPathsFx {
 	t.Cleanup(func() { rt.Stop(); rt.Trace.Close(); c.Close() })
 	srv := NewServer(conf, rt)
 	srv.logger.SetOutput(nopWriter{})
-	f.h = srv.Handler(8080, false)
+	f.h, f.rt = srv.Handler(8080, false), rt
 	return f
 }
 
