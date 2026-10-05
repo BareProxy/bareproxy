@@ -123,16 +123,15 @@ func (p *PlanResult) Classify(port int, host, method, path string, h http.Header
 		return -1
 	}
 	g := pp.byRep[pp.repFor(host)]
-	if g == nil || g.class == nil {
+	if g == nil {
 		return -1
 	}
 	sp := g.sp
 	t := sp.methodRep(method)*sp.ncombo + sp.comboOf(h)
-	id, ok := g.class[[2]int{sp.pathRep(path), t}]
-	if !ok {
-		return -1
+	if l := g.class[[2]int{sp.pathRep(path), t}]; l != nil {
+		return l.index
 	}
-	return p.pl.lineIdx[id]
+	return -1
 }
 
 // Covers reports whether a request falls in a class the plan lists.
@@ -196,7 +195,6 @@ type planner struct {
 	old, new *Config
 	ports    []*portPlan
 	byNum    map[int]*portPlan
-	lineIdx  []int // line id -> index in Changes
 }
 
 // portPlan splits the hosts on one port into classes: every exact host in
@@ -219,7 +217,7 @@ type hostGroup struct {
 	oldS, newS *Site
 	hosts      []string // its host classes, described, in display order
 	sp         *space
-	class      map[[2]int]int // (path rep, method*combos+combo) -> line id
+	class      map[[2]int]*lineAcc // (path rep, method*combos+combo) -> its line
 }
 
 func (g *hostGroup) where() string {
@@ -356,7 +354,7 @@ func (g *hostGroup) effect(old bool, rules *Site, method, path string, h http.He
 
 // lineAcc is one routing line before sorting.
 type lineAcc struct {
-	id      int
+	index   int // in Changes, once sorted
 	port    int
 	group   int
 	sortKey string
@@ -374,7 +372,7 @@ func (pl *planner) routing(res *PlanResult) {
 		for gi, g := range pp.groups {
 			if res.TooMany {
 				for _, l := range ruleDiff(g) {
-					lines = append(lines, &lineAcc{id: len(lines), port: pp.num, group: gi, sortKey: fmt.Sprintf("%08d", len(lines)), line: l})
+					lines = append(lines, &lineAcc{port: pp.num, group: gi, sortKey: fmt.Sprintf("%08d", len(lines)), line: l})
 				}
 				continue
 			}
@@ -385,9 +383,8 @@ func (pl *planner) routing(res *PlanResult) {
 		return cmp.Or(cmp.Compare(a.port, b.port), cmp.Compare(a.group, b.group), strings.Compare(a.sortKey, b.sortKey),
 			strings.Compare(a.line.What, b.line.What), strings.Compare(a.line.Old, b.line.Old), strings.Compare(a.line.New, b.line.New))
 	})
-	pl.lineIdx = make([]int, len(lines))
 	for i, l := range lines {
-		pl.lineIdx[l.id] = i
+		l.index = i
 		res.Changes = append(res.Changes, l.line)
 	}
 }
@@ -463,10 +460,9 @@ func (pl *planner) analyze(g *hostGroup, gi int, lines []*lineAcc) []*lineAcc {
 			m.paths[pe.pi] = true
 		}
 	}
-	g.class = map[[2]int]int{}
+	g.class = map[[2]int]*lineAcc{}
 	for _, k := range order {
 		m := groups[k]
-		id := len(lines)
 		what := []string{sp.methodPhrase(m.prod[0])}
 		for i := range sp.names {
 			if s := sp.headerPhrase(i, m.prod[i+1]); s != "" {
@@ -478,11 +474,12 @@ func (pl *planner) analyze(g *hostGroup, gi int, lines []*lineAcc) []*lineAcc {
 		for pi := range m.paths {
 			sortKey = min(sortKey, sp.repSort[pi])
 		}
-		lines = append(lines, &lineAcc{id: id, port: g.port.num, group: gi, sortKey: sortKey,
-			line: PlanLine{Where: g.where(), What: strings.Join(what, ", "), Old: m.e.old, New: m.e.new}})
+		l := &lineAcc{port: g.port.num, group: gi, sortKey: sortKey,
+			line: PlanLine{Where: g.where(), What: strings.Join(what, ", "), Old: m.e.old, New: m.e.new}}
+		lines = append(lines, l)
 		for pi := range m.paths {
 			for _, t := range sp.tuples(m.prod) {
-				g.class[[2]int{pi, t}] = id
+				g.class[[2]int{pi, t}] = l
 			}
 		}
 	}
