@@ -249,7 +249,7 @@ func TestPlanFilesFolderChange(t *testing.T) {
 	if len(p.Changes) != 0 {
 		t.Errorf("want no routing change, got:\n%s", p.Text())
 	}
-	wantText(t, p.Settings, "site http://example.com: error 404 page (none)  ->  /404.html (line 2)")
+	wantText(t, p.Settings, "site http://example.com: error 404 /404.html added (line 2)")
 }
 
 func TestPlanHostMovesToAnotherSite(t *testing.T) {
@@ -344,8 +344,10 @@ pool api
 	}
 	wantText(t, p.Settings, "pool api: backend 10.0.0.12:8080 removed (was line 6)")
 	wantText(t, p.Settings, "pool api: backend 10.0.0.13:8080 added (line 6)")
-	wantText(t, p.Settings, "pool api: health none  ->  /healthz every 5s timeout 2s expect 200-399 (line 7)")
-	wantText(t, p.Settings, "pool api: retries 1  ->  2 (line 8)")
+	wantText(t, p.Settings, "pool api: health /healthz added (line 7)")
+	wantText(t, p.Settings, "pool api: retries 2 added (line 8)")
+	p = planOf(t, dir, new, strings.Replace(new, "retries 2", "retries 0", 1))
+	wantText(t, p.Settings, "pool api: retries 2  ->  0 (line 8)")
 	if p.Empty() {
 		t.Errorf("plan with setting changes isn't empty")
 	}
@@ -794,7 +796,7 @@ site example.com:8443
 		t.Errorf("want 4 changes, got:\n%s", p.Text())
 	}
 	wantText(t, p.Settings, "port 8443 switched from http to https (line 9)")
-	wantText(t, p.Settings, "site example.com:8443 (was site http://example.com:8443): tls none  ->  ")
+	wantText(t, p.Settings, "site example.com:8443 (was site http://example.com:8443): tls cert.pem key.pem added (line 10)")
 }
 
 // TestPlanEffectsMatchServer checks plan's effect model against the
