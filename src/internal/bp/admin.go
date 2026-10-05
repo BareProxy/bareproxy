@@ -87,11 +87,12 @@ func changeText(r *http.Request) (string, error) {
 	return string(b), err
 }
 
+// planReply is what POST /plan sends. The config's warnings are in the plan
+// and in its text, once each.
 type planReply struct {
 	PlanID    string      `json:"plan_id"`
 	Running   int         `json:"running"`
 	Unchanged bool        `json:"unchanged"`
-	Warnings  []string    `json:"warnings,omitempty"`
 	Text      string      `json:"text"`
 	Plan      *PlanResult `json:"plan"`
 }
@@ -115,34 +116,22 @@ func (s *Server) adminPlan(w http.ResponseWriter, r *http.Request) {
 	p := MakePlan(rt.Cfg, c)
 	p.OldVer = rt.Version
 	out := planReply{PlanID: p.ID, Running: rt.Version, Unchanged: unchanged, Text: p.Text(), Plan: p}
-	for _, pr := range probs {
-		out.Warnings = append(out.Warnings, pr.String())
-	}
-	changes := out.Text
 	if unchanged {
-		changes = "No changes: the text is the running config.\n"
+		out.Text = "No changes: the text is the running config.\n" + section("Warnings", p.Warnings)
 	}
-	reply(w, r, http.StatusOK, out, fmt.Sprintf("Compared with running version %d:\n%s%s", rt.Version, changes, asLines(out.Warnings)))
+	reply(w, r, http.StatusOK, out, fmt.Sprintf("Compared with running version %d:\n%s", rt.Version, out.Text))
 }
 
-// asLines joins texts as lines, each ending in a newline.
-func asLines(texts []string) string {
-	var b strings.Builder
-	for _, t := range texts {
-		b.WriteString(t + "\n")
-	}
-	return b.String()
-}
-
+// appliedText is the apply reply. The config's warnings came with its plan,
+// so only the apply's own (the history, the file) are here.
 func appliedText(a *Applied) string {
+	text := fmt.Sprintf("Version %d is running (it was %d).\n", a.Version, a.Previous)
 	if a.Unchanged {
-		return asLines(a.Warnings) + fmt.Sprintf("No changes: version %d keeps running.\n", a.Version)
-	}
-	text := asLines(a.Warnings) + fmt.Sprintf("Version %d is running (it was %d).\n", a.Version, a.Previous)
-	if a.Wrote != "" {
+		text = fmt.Sprintf("No changes: version %d keeps running.\n", a.Version)
+	} else if a.Wrote != "" {
 		text += fmt.Sprintf("%s now holds version %d.\n", a.Wrote, a.Version)
 	}
-	return text
+	return strings.Join(append(a.Warnings, text), "\n")
 }
 
 func (s *Server) adminApply(w http.ResponseWriter, r *http.Request) {

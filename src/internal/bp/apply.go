@@ -4,6 +4,7 @@
 package bp
 
 import (
+	"cmp"
 	"context"
 	"crypto/tls"
 	"errors"
@@ -14,6 +15,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -30,6 +32,12 @@ type changeState struct {
 	mismatch string              // why the file doesn't hold the running config, if it doesn't
 	conns    map[string]*connSet // the running version's backend connections, by pool
 	admin    *http.Server        // the admin socket's server, if it runs
+	drains   []drainEntry        // removed backends, while they drain
+}
+
+type drainEntry struct {
+	b            *Backend
+	since, until time.Time
 }
 
 // Stop stops serving: listeners close once their requests in flight finish
@@ -60,7 +68,8 @@ type Change struct {
 	version  int  // run as this history version (startup fallback)
 }
 
-// Applied says what an apply did.
+// Applied says what an apply did. Warnings are about the apply itself; the
+// config's own warnings are in its plan.
 type Applied struct {
 	Version   int         `json:"version"`
 	Previous  int         `json:"previous,omitempty"`
@@ -214,9 +223,6 @@ func (s *Server) apply(ch Change) (*Applied, error) {
 		return nil, &ConfigError{probs}
 	}
 	res := &Applied{}
-	for _, p := range probs {
-		res.Warnings = append(res.Warnings, p.String())
-	}
 	if old != nil && (c.Admin != old.Cfg.Admin || c.State != old.Cfg.State) {
 		c.Close()
 		return nil, errors.New("admin and state can't change while BareProxy runs, so nothing changed: change them in the file and restart")
@@ -289,11 +295,14 @@ func (s *Server) apply(ch Change) (*Applied, error) {
 	if ch.User != "" {
 		how += " by " + ch.User
 	}
-	kind := strings.Replace(ch.How, "startup", "start", 1) // the event kind
+	kind, what := strings.Replace(ch.How, "startup", "start", 1), Summary(c) // the event kind, and what a startup runs
+	if res.Plan != nil {
+		what = "plan " + res.PlanID + ", " + cmp.Or(res.Plan.counts(), "no changes")
+	}
 	if unchanged {
 		s.logEvent(kind, "version %d reloaded, config unchanged (%s)", res.Version, how)
 	} else {
-		s.logEvent(kind, "version %d running (%s): %s", res.Version, how, Summary(c))
+		s.logEvent(kind, "version %d running (%s): %s", res.Version, how, what)
 	}
 	return res, nil
 }
@@ -423,27 +432,27 @@ func (s *Server) closeListeners() {
 // requests can't reach them, since the new version doesn't have them.
 // Requests that started on the old version still may, even for their first
 // try, and their connections close after the pool's drain time (30 s by
-// default).
+// default). status lists them until then.
 func (s *Server) drain(old, rt *Runtime, conns map[string]*connSet) {
-	for key, b := range old.backends {
-		if _, kept := rt.backends[key]; kept {
-			continue
-		}
-		d := 30 * time.Second
-		ps := rt.Cfg.Pools[b.Pool] // the new setting, if the pool is still there
-		if ps == nil {
-			ps = old.Cfg.Pools[b.Pool]
-		}
-		if ps.Drain > 0 {
-			d = ps.Drain
-		}
-		set, pool, addr := conns[b.Pool], b.Pool, b.Spec.Addr
-		s.logf("pool %s: %s removed, draining for %s", pool, addr, d)
-		time.AfterFunc(d, func() {
-			if n := set.close(addr); n > 0 {
-				s.logf("pool %s: %s drained, %d connections closed", pool, addr, n)
+	now := time.Now()
+	s.cs.drains = slices.DeleteFunc(s.cs.drains, func(e drainEntry) bool { return now.After(e.until) })
+	for _, name := range old.Cfg.PoolOrder {
+		for _, b := range old.Pools[name].Backends {
+			if rt.backends[b.key] != nil {
+				continue
 			}
-		})
+			d := 30 * time.Second
+			ps := cmp.Or(rt.Cfg.Pools[name], old.Cfg.Pools[name]) // the new setting, if the pool is still there
+			if ps.Drain > 0 {
+				d = ps.Drain
+			}
+			set, addr := conns[name], b.Spec.Addr
+			s.cs.drains = append(s.cs.drains, drainEntry{b, now, now.Add(d)})
+			s.logEvent("backend", "pool %s: %s removed, draining for %s", name, addr, d)
+			time.AfterFunc(d, func() {
+				s.logEvent("backend", "pool %s: %s drained, %d connections closed", name, addr, set.close(addr))
+			})
+		}
 	}
 }
 

@@ -50,7 +50,8 @@ type PoolStatus struct {
 
 // BackendStatus is one backend. Failures counts the failed checks (or, in a
 // pool without checks, failed connections) in a row right now; Reason is the
-// latest failure.
+// latest failure. A backend that an apply removed is "draining" from Since
+// to Until, when its connections close.
 type BackendStatus struct {
 	Addr     string `json:"addr"`
 	State    string `json:"state"`
@@ -58,6 +59,7 @@ type BackendStatus struct {
 	InFlight int64  `json:"in_flight"`
 	Failures int    `json:"failures"`
 	Reason   string `json:"reason,omitempty"`
+	Until    string `json:"until,omitempty"`
 }
 
 type CertStatus struct {
@@ -161,6 +163,17 @@ func (s *Server) Status() *Status {
 				InFlight: b.InFlight, Failures: b.Fails, Reason: b.Reason})
 		}
 		st.Pools = append(st.Pools, ps)
+	}
+	s.mu.Lock()
+	drains := slices.DeleteFunc(slices.Clone(s.cs.drains), func(d drainEntry) bool { return time.Now().After(d.until) })
+	s.mu.Unlock()
+	for _, d := range drains {
+		i := slices.IndexFunc(st.Pools, func(p PoolStatus) bool { return p.Name == d.b.Pool })
+		if i < 0 { // the pool was removed too, and stays listed while its backends drain
+			i, st.Pools = len(st.Pools), append(st.Pools, PoolStatus{Name: d.b.Pool, Checks: "none, the pool was removed", Backends: []BackendStatus{}})
+		}
+		st.Pools[i].Backends = append(st.Pools[i].Backends, BackendStatus{Addr: d.b.Spec.Addr, State: "draining",
+			Since: stamp(d.since), Until: stamp(d.until), InFlight: d.b.inflight.Load()})
 	}
 	r := &st.Requests
 	r.Last1m.Window, r.Last1m.Complete = rt.Mem.Recent(time.Minute)

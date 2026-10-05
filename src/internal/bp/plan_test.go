@@ -894,7 +894,9 @@ func TestPlanWarningsOnGeneratedConfigs(t *testing.T) {
 		p := MakePlan(nil, c)
 		got := map[string]bool{}
 		for _, w := range p.Warnings {
-			got[w[:strings.Index(w, ":")]] = true
+			if strings.Contains(w, " never matches: ") || strings.Contains(w, " isn't used by any rule") { // not one of Parse's
+				got[w[:strings.Index(w, ":")]] = true
+			}
 		}
 		used := map[string]bool{}
 		want := map[string]bool{}

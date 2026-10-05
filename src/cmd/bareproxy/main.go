@@ -173,15 +173,15 @@ func settings(file string) (*bp.Config, error) {
 	return c, nil
 }
 
-// loadChecked loads a config to use its rules. It reports the problems on
-// stderr, and a config with errors is an error. The folders it opened stay
-// open until the command ends.
+// loadChecked loads a config to use its rules. A config with errors is an
+// error, and its problems go to stderr; warnings are for check and plan to
+// give. The folders it opened stay open until the command ends.
 func loadChecked(file string) (*bp.Config, error) {
 	c, probs := bp.Load(file)
-	for _, p := range probs {
-		fmt.Fprintf(os.Stderr, "%s: %s\n", file, p)
-	}
 	if c == nil || bp.HasErrors(probs) {
+		for _, p := range probs {
+			fmt.Fprintf(os.Stderr, "%s: %s\n", file, p)
+		}
 		return nil, fmt.Errorf("%s has errors, so it can't be used", file)
 	}
 	return c, nil
@@ -203,7 +203,7 @@ func (o options) request(method, target, body string, timeout time.Duration) (*h
 		if errors.Is(err, syscall.EACCES) {
 			err = fmt.Errorf("no permission to use %s: run as root or as a member of its group", c.Admin)
 		} else if err != nil {
-			err = fmt.Errorf("no BareProxy is running on %s", c.Admin)
+			err = fmt.Errorf("no BareProxy is running on %s (if admin was changed in the file: a running BareProxy keeps its old admin socket until a restart)", c.Admin)
 		}
 		return conn, err
 	}
@@ -264,6 +264,9 @@ func check(o options) int {
 	c, err := loadChecked(o.config)
 	if err != nil {
 		return fail("%v", err)
+	}
+	for _, w := range bp.Warnings(c) { // the same ones plan gives
+		fmt.Fprintf(os.Stderr, "%s: %s\n", o.config, w)
 	}
 	fmt.Printf("%s: ok, %s\n", o.config, bp.Summary(c))
 	return 0
@@ -365,7 +368,6 @@ func applyCmd(o options) int {
 		PlanID    string `json:"plan_id"`
 		Running   int
 		Unchanged bool
-		Warnings  []string
 		Text      string
 	}
 	if err := json.Unmarshal([]byte(out), &pr); err != nil {
@@ -375,15 +377,13 @@ func applyCmd(o options) int {
 		err := fmt.Errorf("plan %s doesn't match what %s would do now (that is plan %s), so nothing was applied; see the new plan with: bareproxy plan %[2]s", o.plan, o.config, pr.PlanID)
 		return o.show(toJSON(map[string]string{"error": err.Error()}), err)
 	}
-	// The plan goes to stdout, or to stderr when stdout is for JSON. An
-	// unchanged text has none: the server answers for it (it reloads the
-	// certificate files, as SIGHUP does), and nothing needs a yes.
+	// The plan, with the config's warnings, goes to stdout, or to stderr when
+	// stdout is for JSON. An unchanged text has none: the server answers for
+	// it (it reloads the certificate files, as SIGHUP does), and nothing
+	// needs a yes.
 	planOut := map[bool]*os.File{false: os.Stdout, true: os.Stderr}[o.json]
 	if !pr.Unchanged && (!o.json || !o.yes) {
 		fmt.Fprintf(planOut, "Compared with running version %d:\n%s", pr.Running, pr.Text)
-		for _, w := range pr.Warnings {
-			fmt.Fprintln(planOut, w)
-		}
 	}
 	if !o.yes && !pr.Unchanged {
 		if !isTerminal(os.Stdin) {
@@ -513,11 +513,14 @@ func printStatus(st bp.Status) {
 	for _, p := range st.Pools {
 		fmt.Printf("  %s (line %d): %d of %d up. Checks: %s\n", p.Name, p.Line, p.Up, p.Size, p.Checks)
 		for _, b := range p.Backends {
-			state := b.State
+			state, more := b.State, fmt.Sprintf("%d failures in a row", b.Failures)
 			if b.Reason != "" {
 				state += " (" + b.Reason + ")"
 			}
-			fmt.Printf("    %-22s %s since %s, %d in flight, %d failures in a row\n", b.Addr, state, b.Since, b.InFlight, b.Failures)
+			if end, err := time.Parse(time.RFC3339, b.Until); err == nil { // removed by an apply
+				more = fmt.Sprintf("removed, %s left (ends %s)", time.Until(end).Round(time.Second), b.Until)
+			}
+			fmt.Printf("    %-22s %s since %s, %d in flight, %s\n", b.Addr, state, b.Since, b.InFlight, more)
 		}
 	}
 	fmt.Printf("\nCertificates (%d)\n", len(st.Certificates))

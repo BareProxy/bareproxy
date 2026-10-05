@@ -64,6 +64,7 @@ type Config struct {
 	PoolOrder  []string
 	Ports      map[int]*Port
 	roots      []*os.Root
+	warns      []Problem // what Parse found; Warnings adds plan's
 }
 
 // Port is one listener and the sites it serves.
@@ -144,7 +145,6 @@ type PoolSpec struct {
 	ResponseTimeout time.Duration
 	Retries         int
 	Drain           time.Duration // how long removed backends drain; 0 means 30 s
-	used            bool
 }
 
 // BackendSpec is one backend line.
@@ -363,6 +363,7 @@ func ParseWith(file, src string, o ParseOptions) (*Config, []Problem) {
 	}
 	p.compile()
 	slices.SortStableFunc(p.probs, func(a, b Problem) int { return a.Line - b.Line })
+	c.warns = p.probs
 	return c, p.probs
 }
 
@@ -686,9 +687,7 @@ func (p *parser) compile() {
 		for _, r := range s.Routes {
 			switch r.Act.Kind {
 			case "pool":
-				if ps := c.Pools[r.Act.Pool]; ps != nil {
-					ps.used = true
-				} else {
+				if c.Pools[r.Act.Pool] == nil {
 					p.errf(r.Line, "no pool named %s", r.Act.Pool)
 				}
 			case "files":
@@ -767,9 +766,6 @@ func (p *parser) compile() {
 		ps := c.Pools[name]
 		if len(ps.Backends) == 0 {
 			p.errf(ps.Line, "pool %s has no backends", name)
-		}
-		if !ps.used {
-			p.warnf(ps.Line, "pool %s isn't used by any route", name)
 		}
 	}
 	if len(c.Sites) == 0 {

@@ -64,7 +64,10 @@ func MakePlan(old, new *Config) *PlanResult {
 			res.Changes = append(res.Changes, l.line)
 		}
 	}
-	res.Settings, res.Warnings = settings(res.old, res.new), planWarnings(res.new)
+	res.Settings, res.Warnings = settings(res.old, res.new), []string{}
+	for _, w := range Warnings(res.new) {
+		res.Warnings = append(res.Warnings, fmt.Sprintf("line %d: %s", w.Line, w.Msg))
+	}
 	return res
 }
 
@@ -78,17 +81,22 @@ func PlanID(old, new *Config) string {
 // Empty reports whether the plan changes nothing at all.
 func (p *PlanResult) Empty() bool { return len(p.Changes) == 0 && len(p.Settings) == 0 }
 
-// Text renders the plan for a terminal.
-func (p *PlanResult) Text() string {
+// counts says what the plan holds and leaves out what it has none of, as in
+// "2 routing changes, 1 warning". The heading of Text and events use it.
+func (p *PlanResult) counts() string {
 	kind := map[bool]string{false: "routing change", true: "changed rule"}[p.TooMany]
-	// The heading counts what the plan holds and leaves out what it has none of.
 	var counts []string
 	for _, c := range []string{plural(len(p.Changes), kind), plural(len(p.Settings), "other change"), plural(len(p.Warnings), "warning")} {
 		if !strings.HasPrefix(c, "0 ") {
 			counts = append(counts, c)
 		}
 	}
-	head := "Plan " + p.ID + ": " + strings.Join(counts, ", ") + "\n"
+	return strings.Join(counts, ", ")
+}
+
+// Text renders the plan for a terminal.
+func (p *PlanResult) Text() string {
+	head := "Plan " + p.ID + ": " + p.counts() + "\n"
 	if p.Empty() {
 		head = "No changes.\n"
 	}
@@ -701,10 +709,12 @@ func ruleDiff(g *hostGroup) []PlanLine {
 	return out
 }
 
-// planWarnings checks a config for rules that win no class and pools that
-// no rule able to match uses.
-func planWarnings(c *Config) []string {
-	ws := map[int]string{} // by line: one rule, site or pool per line
+// Warnings lists a config's warnings by line: those Parse found, rules that
+// win no class and pools that no rule able to match uses. check and plan
+// both give these. The config must have no errors.
+func Warnings(c *Config) []Problem {
+	ws := slices.Clone(c.warns)
+	warn := func(line int, f string, a ...any) { ws = append(ws, Problem{line, fmt.Sprintf(f, a...), true}) }
 	used := map[string]bool{}
 	for _, s := range c.Sites {
 		if s.Synthetic {
@@ -712,7 +722,7 @@ func planWarnings(c *Config) []string {
 		}
 		sp := newSpace(s, nil)
 		if sp.size > MaxPlanClasses {
-			ws[s.Line] = fmt.Sprintf("line %d: site %s has too many request classes to check for rules that never match", s.Line, s.Name)
+			warn(s.Line, "site %s has too many request classes to check for rules that never match", s.Name)
 			for _, r := range s.Routes {
 				used[r.Act.Pool] = true
 			}
@@ -746,22 +756,20 @@ func planWarnings(c *Config) []string {
 			for _, l := range keysOf(wins[r]) {
 				ls = append(ls, strconv.Itoa(l))
 			}
-			ws[r.Line] = fmt.Sprintf("line %d: %s never matches: line %s takes every request it would get", r.Line, r.Text, joinAnd(ls))
+			takes := "line " + joinAnd(ls) + " takes"
 			if len(ls) > 1 {
-				ws[r.Line] = fmt.Sprintf("line %d: %s never matches: lines %s take every request it would get", r.Line, r.Text, joinAnd(ls))
+				takes = "lines " + joinAnd(ls) + " take"
 			}
+			warn(r.Line, "%s never matches: %s every request it would get", r.Text, takes)
 		}
 	}
 	for _, name := range c.PoolOrder {
 		if ps := c.Pools[name]; !used[name] {
-			ws[ps.Line] = fmt.Sprintf("line %d: pool %s isn't used by any rule that can match", ps.Line, name)
+			warn(ps.Line, "pool %s isn't used by any rule that can match", name)
 		}
 	}
-	out := []string{}
-	for _, l := range keysOf(ws) {
-		out = append(out, ws[l])
-	}
-	return out
+	slices.SortStableFunc(ws, func(a, b Problem) int { return a.Line - b.Line })
+	return ws
 }
 
 // settings lists the changes outside routing, one line each: listeners,

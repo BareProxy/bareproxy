@@ -14,6 +14,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"bareproxy/internal/bp"
 )
@@ -157,11 +158,14 @@ func TestBadUsageHasOneWording(t *testing.T) {
 	}
 }
 
+// The message also says that a running server keeps its admin socket until a
+// restart (gate 1 review, m8): a file whose admin line was just changed
+// names a socket where nothing runs yet.
 func TestNoServerHasOneWording(t *testing.T) {
 	noTerminal(t)
 	sock := filepath.Join(t.TempDir(), "none.sock")
 	conf := adminConfig(t, sock)
-	want := "bareproxy: no BareProxy is running on " + sock + "\n"
+	want := "bareproxy: no BareProxy is running on " + sock + " (if admin was changed in the file: a running BareProxy keeps its old admin socket until a restart)\n"
 	for _, args := range [][]string{
 		{"status", "-c", conf}, {"events", "-c", conf}, {"history", "-c", conf}, {"rollback", "-c", conf},
 		{"tail", "-c", conf}, {"plan", conf}, {"apply", "--yes", conf},
@@ -205,13 +209,15 @@ func TestAdminErrorsHaveOneWording(t *testing.T) {
 	}
 }
 
+// The plan text holds the config's warnings and the apply reply doesn't, so
+// apply shows each warning once, before the question (gate 1 review, m3).
 func TestApplyShowsThePlanThenApplies(t *testing.T) {
 	noTerminal(t)
 	var applied []string
 	sock := fakeAdmin(t, func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/plan":
-			io.WriteString(w, `{"plan_id":"p1","running":3,"unchanged":false,"warnings":["line 4: a warning"],"text":"+ site x\n"}`)
+			io.WriteString(w, `{"plan_id":"p1","running":3,"unchanged":false,"text":"+ site x\nWarnings\n  line 4: a warning\n"}`)
 		case "/apply":
 			applied = append(applied, r.Method+" "+r.URL.RawQuery)
 			io.WriteString(w, "Version 4 is running (it was 3).\n")
@@ -219,7 +225,7 @@ func TestApplyShowsThePlanThenApplies(t *testing.T) {
 	})
 	conf := adminConfig(t, sock)
 	out, _, code := runCmd(t, "apply", conf, "--yes")
-	want := "Compared with running version 3:\n+ site x\nline 4: a warning\nVersion 4 is running (it was 3).\n"
+	want := "Compared with running version 3:\n+ site x\nWarnings\n  line 4: a warning\nVersion 4 is running (it was 3).\n"
 	if code != 0 || out != want || !reflect.DeepEqual(applied, []string{"POST plan=p1"}) {
 		t.Errorf("apply --yes: exit %d, output %q, requests %q; want output %q and one request, POST plan=p1", code, out, applied, want)
 	}
@@ -263,6 +269,30 @@ func TestApplyOfAnUnchangedTextStillReachesTheServer(t *testing.T) {
 	want := "No changes: version 3 keeps running.\n"
 	if code != 0 || out != want || !reflect.DeepEqual(applied, []string{"plan=p1"}) {
 		t.Errorf("unchanged: exit %d, output %q, requests %q; want output %q and one request, plan=p1", code, out, applied, want)
+	}
+}
+
+// check gives the warnings plan gives, with their lines: rules that never
+// match and pools that no rule able to match uses (gate 1 review, m2). A pool
+// left unused only by an error isn't warned about.
+func TestCheckGivesPlansWarnings(t *testing.T) {
+	dir := t.TempDir()
+	conf, broken := filepath.Join(dir, "shadow.conf"), filepath.Join(dir, "broken.conf")
+	src := "site http://example.com:8080\n  route /api/* -> api\n  route /api/beta/* -> beta\n  route /* -> respond 200 \"x\"\n" +
+		"pool api\n  backend 127.0.0.1:9001\npool beta\n  backend 127.0.0.1:9002\n"
+	if os.WriteFile(conf, []byte(src), 0o644) != nil || os.WriteFile(broken, []byte(strings.Replace(src, "-> api", "-> apii", 1)), 0o644) != nil {
+		t.Fatal("can't write the configs")
+	}
+	out, errOut, code := runCmd(t, "check", conf)
+	want := conf + ": line 3: warning: route /api/beta/* -> beta never matches: line 2 takes every request it would get\n" +
+		conf + ": line 7: warning: pool beta isn't used by any rule that can match\n"
+	if code != 0 || errOut != want || out != conf+": ok, 1 site, 2 pools, 3 rules; listening on :8080 (http)\n" {
+		t.Errorf("check: exit %d, stdout %q, stderr %q; want stderr %q", code, out, errOut, want)
+	}
+	_, errOut, code = runCmd(t, "check", broken)
+	want = broken + ": line 2: error: no pool named apii\nbareproxy: " + broken + " has errors, so it can't be used\n"
+	if code != 1 || errOut != want {
+		t.Errorf("check with an error: exit %d, stderr %q; want %q", code, errOut, want)
 	}
 }
 
@@ -404,6 +434,7 @@ func TestPrintEvents(t *testing.T) {
 }
 
 func TestPrintStatus(t *testing.T) {
+	until := time.Now().Add(time.Minute).UTC().Format(time.RFC3339) // a removed backend drains until then
 	st := bp.Status{Version: "0.1.0-dev (first cut)", ConfigFile: "/etc/bareproxy/bareproxy.conf", ConfigVersion: 12,
 		Started: "2026-10-01T06:00:00Z", UptimeSeconds: 3725,
 		Listeners:    []bp.ListenerStatus{{Port: 80, Sites: []string{"example.com"}}, {Port: 443, TLS: true, Sites: []string{"example.com"}}},
@@ -411,7 +442,8 @@ func TestPrintStatus(t *testing.T) {
 		Certificates: []bp.CertStatus{{Site: "example.com", Subject: "CN=example.com", NotAfter: "2026-12-01T00:00:00Z", DaysLeft: 57}, {Site: "old.example", Subject: "CN=old.example", NotAfter: "2026-09-30T00:00:00Z", DaysLeft: -5}},
 		Pools: []bp.PoolStatus{{Name: "api", Line: 14, Checks: "GET /healthz every 5s, timeout 2s, pass on 200 to 399", Up: 1, Size: 2, Backends: []bp.BackendStatus{
 			{Addr: "10.0.0.11:8080", State: "up", Since: "2026-10-01T06:00:05Z", InFlight: 2},
-			{Addr: "10.0.0.13:8080", State: "down", Since: "2026-10-01T07:02:10Z", Failures: 3, Reason: "connect refused"}}}}}
+			{Addr: "10.0.0.13:8080", State: "down", Since: "2026-10-01T07:02:10Z", Failures: 3, Reason: "connect refused"},
+			{Addr: "10.0.0.12:8080", State: "draining", Since: "2026-10-01T07:03:00Z", InFlight: 3, Until: until}}}}}
 	st.Requests.Last1m = bp.Rate{Window: bp.Window{Requests: 1204, Status5xx: 3, ProxyErrors: 1}, Complete: true}
 	st.Requests.Last5m = bp.Rate{Window: bp.Window{Requests: 6100, Status5xx: 9, ProxyErrors: 4}}
 	st.Requests.Ring.Records, st.Requests.Ring.Limit, st.Requests.Ring.Oldest = 6100, 32<<20, "2026-10-01T07:03:00.000Z"
@@ -424,6 +456,7 @@ func TestPrintStatus(t *testing.T) {
 		"  api (line 14): 1 of 2 up. Checks: GET /healthz every 5s",
 		"    10.0.0.11:8080         up since 2026-10-01T06:00:05Z, 2 in flight, 0 failures in a row",
 		"    10.0.0.13:8080         down (connect refused) since 2026-10-01T07:02:10Z, 0 in flight, 3 failures in a row",
+		"    10.0.0.12:8080         draining since 2026-10-01T07:03:00Z, 3 in flight, removed, ", "s left (ends " + until + ")\n",
 		"  example.com  CN=example.com  ends 2026-12-01, 57 days left",
 		"  old.example  CN=old.example  ends 2026-09-30, -5 days left",
 		"Requests (the 6100 most recent, held in memory, back to 2026-10-01T07:03:00.000Z)",
