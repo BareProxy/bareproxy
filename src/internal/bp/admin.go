@@ -103,11 +103,11 @@ func (s *Server) adminPlan(w http.ResponseWriter, r *http.Request) {
 	}
 	file, _ := filepath.Abs(s.file)
 	c, probs := Parse(file, text)
+	defer c.Close()
 	if HasErrors(probs) {
 		replyErr(w, r, &ConfigError{probs})
 		return
 	}
-	defer c.Close()
 	s.mu.Lock()
 	rt, unchanged := s.rt.Load(), text == s.cs.text
 	s.mu.Unlock()

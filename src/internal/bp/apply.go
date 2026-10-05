@@ -210,6 +210,7 @@ func (s *Server) apply(ch Change) (*Applied, error) {
 	file, _ := filepath.Abs(s.file)
 	c, probs := Parse(file, ch.Text)
 	if HasErrors(probs) {
+		c.Close()
 		return nil, &ConfigError{probs}
 	}
 	res := &Applied{}
