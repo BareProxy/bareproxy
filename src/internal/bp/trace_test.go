@@ -12,6 +12,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -632,4 +633,52 @@ func TestTraceEventRingKeepsTheLast1000(t *testing.T) {
 	if evs := f.rt.Mem.Events(); len(evs) != 1 || evs[0].Kind != "apply" || evs[0].Text != "version 2 applied" {
 		t.Errorf("Server.Event: %+v", evs)
 	}
+}
+
+// TestTraceRingCapacityAtTheDefaultSize measures what the design note
+// estimates: how many typical records the default 32MB ring holds, and what
+// that costs in heap. It logs the numbers (run with -v) and checks they are
+// in a sane range.
+func TestTraceRingCapacityAtTheDefaultSize(t *testing.T) {
+	addr, _ := traceBackend(t)
+	f := newFixture(t, "  backend "+addr+"\n", false)
+	// A mix of what the proxy sees: backend requests (with a traceparent on
+	// some), files, a miss, a local answer.
+	f.do("GET", "/api/orders?page=2", "Traceparent", "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01")
+	f.do("GET", "/api/orders/42")
+	f.do("GET", "/about/", "Accept-Encoding", "gzip")
+	f.do("GET", "/app.js", "Accept-Encoding", "gzip, br")
+	f.do("GET", "/nope/")
+	f.do("GET", "/healthz")
+	var samples [][]byte
+	var avg float64
+	for _, l := range traceReadLines(t, f.log) {
+		samples = append(samples, []byte(l))
+		avg += float64(len(l))
+	}
+	avg /= float64(len(samples))
+
+	const limit = 32 << 20
+	m := newTraceMem()
+	var m0, m1 runtime.MemStats
+	runtime.GC()
+	runtime.ReadMemStats(&m0)
+	for i := 0; m.Stats().Bytes < limit-1024 || i < 1000; i++ {
+		js := append([]byte(nil), samples[i%len(samples)]...)
+		rec := &Record{Status: 200, Outcome: "ok"}
+		rec.ID = fmt.Sprintf("%016x", i)
+		m.Add(rec, js, limit)
+	}
+	runtime.GC()
+	runtime.ReadMemStats(&m1)
+	st := m.Stats()
+	heap := int64(m1.HeapAlloc) - int64(m0.HeapAlloc)
+	t.Logf("average record: %.0f bytes of JSON (%d samples)", avg, len(samples))
+	t.Logf("a %d MB ring holds %d records (%d bytes of JSON)", limit>>20, st.Records, st.Bytes)
+	t.Logf("heap used by the full ring: %.1f MB, %.0f bytes per record (%.2fx the JSON)",
+		float64(heap)/(1<<20), float64(heap)/float64(st.Records), float64(heap)/float64(st.Bytes))
+	if st.Records < 30000 || st.Records > 200000 {
+		t.Errorf("%d records in 32MB is outside the range this test expects", st.Records)
+	}
+	runtime.KeepAlive(m)
 }
