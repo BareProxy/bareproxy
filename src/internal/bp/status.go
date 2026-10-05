@@ -64,6 +64,7 @@ type CertStatus struct {
 	Subject  string `json:"subject"`
 	NotAfter string `json:"not_after"`
 	DaysLeft int    `json:"days_left"`
+	Auto     bool   `json:"auto,omitempty"` // an automatic certificate, read from the cache
 }
 
 // Rate counts requests over a time. Complete is false when the ring of
@@ -145,6 +146,7 @@ func (s *Server) Status() *Status {
 		if subject, end, ok := certOf(site); ok {
 			st.Certificates = append(st.Certificates, CertStatus{Site: site.Name, Subject: subject, NotAfter: stamp(end), DaysLeft: daysLeft(end)})
 		}
+		st.Certificates = append(st.Certificates, cachedCerts(c, site)...)
 	}
 	for _, name := range c.PoolOrder {
 		pool := rt.Pools[name]

@@ -65,6 +65,9 @@ func Explain(rt *Runtime, method, rawURL string, h http.Header, live bool) (stri
 	} else {
 		fmt.Fprintf(&b, "Site %s (line %d): %s\n", site.Name, site.Line, how)
 	}
+	if p.TLS {
+		fmt.Fprintf(&b, "Certificate: %s\n", certSource(c, site))
+	}
 	raw := u.EscapedPath()
 	if strings.Contains(u.RawPath, `\`) {
 		raw = u.RawPath // EscapedPath would turn a raw backslash into %5C; the server sees it as sent and refuses it
@@ -109,7 +112,11 @@ func Explain(rt *Runtime, method, rawURL string, h http.Header, live bool) (stri
 	case "redirect":
 		fmt.Fprintf(&b, "Action: redirect %d to %s\n", a.Code, redirectTarget(a.URL, norm, u.RawQuery))
 	case "https":
-		fmt.Fprintf(&b, "Action: redirect 301 to %s\n", withQuery("https://"+host+norm, u.RawQuery))
+		if site.TLSAuto && strings.HasPrefix(norm, "/.well-known/acme-challenge/") {
+			b.WriteString("Action: BareProxy answers the ACME HTTP-01 challenge itself\n")
+		} else {
+			fmt.Fprintf(&b, "Action: redirect 301 to %s\n", withQuery("https://"+host+norm, u.RawQuery))
+		}
 	case "files":
 		explainFiles(&b, site, route, norm, u.RawQuery, method, h)
 	case "pool":

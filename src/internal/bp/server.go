@@ -36,6 +36,7 @@ type Runtime struct {
 	backends map[string]*Backend
 	Trace    *TraceLog
 	Mem      *TraceMem // recent records and events, inherited across reloads
+	acme     *acmeState
 }
 
 // NewRuntime builds live pools for a config. Backends that old already has
@@ -88,6 +89,13 @@ func NewRuntime(c *Config, old *Runtime, version int, logf func(string, ...any),
 			rt.backends[key] = b
 		}
 		rt.Pools[name] = pool
+	}
+	if checks {
+		var prev *acmeState
+		if old != nil {
+			prev = old.acme
+		}
+		rt.acme = newACME(c, prev, rt.Mem)
 	}
 	return rt, nil
 }
@@ -178,14 +186,17 @@ func (s *Server) shutdown() {
 // certFor picks the certificate of the site named in the TLS handshake.
 func (s *Server) certFor(port int) func(*tls.ClientHelloInfo) (*tls.Certificate, error) {
 	return func(hello *tls.ClientHelloInfo) (*tls.Certificate, error) {
-		c := s.rt.Load().Cfg
+		rt := s.rt.Load()
+		c := rt.Cfg
 		p := c.Ports[port]
 		if p == nil {
 			return nil, errors.New("no sites on this port")
 		}
-		if hello.ServerName != "" {
-			if site, _ := p.Find(hello.ServerName); site != nil && site.Cert != nil {
+		if site, _ := p.Find(hello.ServerName); hello.ServerName != "" && site != nil {
+			if site.Cert != nil {
 				return site.Cert, nil
+			} else if site.TLSAuto && rt.acme != nil {
+				return rt.acme.get(hello)
 			}
 		}
 		for _, site := range c.Sites {
@@ -394,6 +405,11 @@ func (s *Server) serve(w *respWriter, r *http.Request, rt *Runtime, port int, re
 	}
 	rec.Line, rec.Rule = route.Line, route.Text
 	a := route.Act
+	if a.Kind == "https" && site.TLSAuto && rt.acme != nil && strings.HasPrefix(norm, "/.well-known/acme-challenge/") {
+		rec.Outcome, rec.Rule = "local", "ACME challenge (HTTP-01)"
+		rt.acme.HTTPHandler(nil).ServeHTTP(w, r)
+		return
+	}
 	switch a.Kind {
 	case "respond":
 		rec.Outcome = "local"

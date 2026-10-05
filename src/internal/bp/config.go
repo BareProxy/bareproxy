@@ -57,6 +57,8 @@ type Config struct {
 	TraceMem   int64 // bytes of record JSON kept in memory
 	TraceQuery bool
 	IDHeader   bool
+	ACMEEmail  string
+	ACMECA     string // the ACME directory URL; empty means Let's Encrypt
 	Sites      []*Site
 	Pools      map[string]*PoolSpec
 	PoolOrder  []string
@@ -380,7 +382,7 @@ func onOff(s string) (bool, error) {
 
 func (p *parser) global(ln int, w []string) error {
 	c := p.c
-	if len(w) != 2 && slices.Contains([]string{"admin", "state", "trace-memory", "trace-query", "id-header"}, w[0]) {
+	if len(w) != 2 && slices.Contains([]string{"admin", "state", "trace-memory", "trace-query", "id-header", "acme-email", "acme-ca"}, w[0]) {
 		return fmt.Errorf("%s takes one value", w[0])
 	}
 	var err error
@@ -427,7 +429,17 @@ func (p *parser) global(ln int, w []string) error {
 			}
 			c.TraceSize, c.TraceCount = size, count
 		}
-	case "acme-email", "acme-ca", "trust",
+	case "acme-email":
+		if !strings.Contains(w[1], "@") {
+			return errors.New("acme-email takes an email address")
+		}
+		c.ACMEEmail = w[1]
+	case "acme-ca":
+		if u, e := url.Parse(w[1]); e != nil || u.Scheme != "https" || u.Host == "" {
+			return errors.New("acme-ca takes the https:// URL of an ACME directory")
+		}
+		c.ACMECA = w[1]
+	case "trust",
 		"client-header-timeout", "client-body-timeout", "client-idle-timeout", "shutdown-timeout":
 		p.warnf(ln, "%s isn't built yet in this version, so it's ignored", w[0])
 	default:
@@ -699,8 +711,13 @@ func (p *parser) compile() {
 		}
 		https := slices.ContainsFunc(s.Addrs, func(a Addr) bool { return a.Scheme == "https" })
 		switch {
-		case https && (s.TLSAuto || s.CertFile == ""):
-			p.errf(s.Line, "automatic certificates aren't built yet in this version: add tls CERT KEY, or use http:// addresses")
+		case https && s.CertFile == "": // tls auto, or no tls line
+			s.TLSAuto = true
+			for _, a := range s.Addrs {
+				if a.Scheme == "https" && strings.HasPrefix(a.Host, "*") {
+					p.errf(s.Line, "%s needs certificate files (tls CERT KEY): automatic certificates are for exact host names only", a.Text)
+				}
+			}
 		case https && p.opt.NoDisk:
 			// the certificate files are not read, so they are not checked
 		case https:
@@ -740,7 +757,7 @@ func (p *parser) compile() {
 		if port.TLS {
 			continue
 		}
-		red := &Site{Line: s.Line, Name: s.Name, Synthetic: true, BodyLimit: s.BodyLimit,
+		red := &Site{Line: s.Line, Name: s.Name, Synthetic: true, BodyLimit: s.BodyLimit, TLSAuto: s.TLSAuto,
 			Routes: []*Route{{Line: s.Line, Text: "plain HTTP goes to https://", Prefix: true, Act: Action{Kind: "https", Code: 301}}}}
 		for _, h := range hosts {
 			port.claim(h, red)

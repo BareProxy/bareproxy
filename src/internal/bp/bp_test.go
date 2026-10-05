@@ -67,13 +67,13 @@ func TestConfigErrorsNameTheirLines(t *testing.T) {
   route /bad//path -> respond 200
   route /y -> respond 99
   wibble
-site example.org
+site *.example.org
   route /* -> respond 200
 pool files
   backend 10.0.0.1:80
 `
 	_, probs := Parse("/tmp/test.conf", src)
-	want := map[int]string{2: "no pool named nopool", 3: "can't open folder", 4: "normal form", 5: "respond needs a status", 6: "unknown site setting", 7: "automatic certificates", 9: "pool needs one name"}
+	want := map[int]string{2: "no pool named nopool", 3: "can't open folder", 4: "normal form", 5: "respond needs a status", 6: "unknown site setting", 7: "needs certificate files", 9: "pool needs one name"}
 	for line, frag := range want {
 		found := false
 		for _, p := range probs {

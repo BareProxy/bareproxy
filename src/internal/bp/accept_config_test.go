@@ -98,7 +98,11 @@ func accBrokenConfigs() []accBroken {
 		{"host-header without a value", ok + "pool api\n  backend 10.0.0.1:80\n  host-header\n", 5, "host-header takes"},
 
 		// Things only the whole file shows.
-		{"https site without a certificate", "site b.test:8443\n  route /* -> respond 200\n", 1, "automatic certificates"},
+		{"wildcard https site without certificate files", "site *.b.test:8443\n  route /* -> respond 200\n", 1, "*.b.test:8443 needs certificate files"},
+		{"catch-all https site without certificate files", "site *\n  tls auto\n  route /* -> respond 200\n", 1, "* needs certificate files"},
+		{"acme-email that isn't an address", "global\n  acme-email ops\n" + ok, 2, "acme-email takes an email address"},
+		{"acme-ca that isn't https", "global\n  acme-ca http://ca.test/dir\n" + ok, 2, "acme-ca takes the https:// URL"},
+		{"acme-ca with two values", "global\n  acme-ca https://a.test/dir https://b.test/dir\n" + ok, 2, "acme-ca takes one value"},
 		{"certificate files that don't exist", "site b.test:8443\n  tls nothere.pem nothere.key\n  route /* -> respond 200\n", 2, "can't load the certificate"},
 		{"same host and port in two sites", ok + "site http://a.test:8080\n  route /* -> respond 200\n", 3, "already belongs to the site on line 1"},
 		{"same wildcard in two sites", "site http://*.a.test:8080\n  route /* -> respond 200\nsite http://*.a.test:8080\n  route /* -> respond 200\n", 3, "already belongs"},

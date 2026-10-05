@@ -49,9 +49,9 @@ func TestParseNoDisk(t *testing.T) {
 	}
 
 	// Everything else is still checked.
-	_, probs = ParseWith("x.conf", "site example.com\n  route /* -> nopool\n", ParseOptions{NoDisk: true})
-	if len(probs) == 0 || !strings.Contains(probs[0].Msg, "automatic certificates") {
-		t.Errorf("NoDisk dropped the automatic certificate error: %v", probs)
+	_, probs = ParseWith("x.conf", "site *.example.com\n  route /* -> nopool\n", ParseOptions{NoDisk: true})
+	if len(probs) == 0 || !strings.Contains(probs[0].Msg, "needs certificate files") {
+		t.Errorf("NoDisk dropped the certificate check: %v", probs)
 	}
 	_, probs = ParseWith("x.conf", "site http://a.test\n  route /* -> nopool\n", ParseOptions{NoDisk: true})
 	if len(probs) != 1 || !strings.Contains(probs[0].Msg, "no pool named nopool") {

@@ -17,6 +17,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"golang.org/x/crypto/acme"
 )
 
 // changeState is what a Server keeps for config changes. It is guarded by
@@ -375,7 +377,7 @@ func clientServer(h http.Handler) *http.Server {
 func (s *Server) serveOn(port int, isTLS bool, ln net.Listener) {
 	srv := clientServer(s.Handler(port, isTLS))
 	if isTLS {
-		srv.TLSConfig = &tls.Config{MinVersion: tls.VersionTLS12, GetCertificate: s.certFor(port)}
+		srv.TLSConfig = &tls.Config{MinVersion: tls.VersionTLS12, GetCertificate: s.certFor(port), NextProtos: []string{"h2", "http/1.1", acme.ALPNProto}}
 		go srv.ServeTLS(ln, "", "")
 	} else {
 		go srv.Serve(ln)
