@@ -17,8 +17,9 @@ import (
 	"time"
 )
 
-// The config change endpoints of the admin socket. Each answers in plain
-// text, or in JSON with json=1.
+// The admin socket's endpoints, besides explain. The config change ones
+// (plan, apply, rollback, history) answer in plain text, or in JSON with
+// json=1. The trace ones are in admin_trace.go.
 func init() {
 	adminHandlers = append(adminHandlers, func(s *Server, mux *http.ServeMux) {
 		mux.HandleFunc("GET /plan", s.adminPlan)
@@ -26,6 +27,10 @@ func init() {
 		mux.HandleFunc("POST /apply", s.adminApply)
 		mux.HandleFunc("POST /rollback", s.adminRollback)
 		mux.HandleFunc("GET /history", s.adminHistory)
+		mux.HandleFunc("GET /why", s.adminWhy)
+		mux.HandleFunc("GET /tail", s.adminTail)
+		mux.HandleFunc("GET /status", func(w http.ResponseWriter, r *http.Request) { writeJSON(w, s.Status()) })
+		mux.HandleFunc("GET /events", func(w http.ResponseWriter, r *http.Request) { writeJSON(w, s.Current().Mem.Events()) })
 	})
 }
 
@@ -46,27 +51,23 @@ func peerUser(r *http.Request) string {
 
 // reply sends v as JSON with json=1, or text otherwise.
 func reply(w http.ResponseWriter, r *http.Request, code int, v any, text string) {
+	body, ctype := text, "text/plain; charset=utf-8"
 	if r.URL.Query().Get("json") == "1" {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(code)
-		e := json.NewEncoder(w)
-		e.SetIndent("", "  ")
-		e.Encode(v)
-		return
+		js, _ := json.MarshalIndent(v, "", "  ")
+		body, ctype = string(js)+"\n", "application/json"
 	}
-	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	w.Header().Set("Content-Type", ctype)
 	w.WriteHeader(code)
-	io.WriteString(w, text)
+	io.WriteString(w, body)
 }
 
 func replyErr(w http.ResponseWriter, r *http.Request, err error) {
 	code := http.StatusBadRequest
 	var ce *ConfigError
 	var pe *PlanChangedError
-	switch {
-	case errors.As(err, &ce):
+	if errors.As(err, &ce) {
 		code = http.StatusUnprocessableEntity
-	case errors.As(err, &pe):
+	} else if errors.As(err, &pe) {
 		code = http.StatusConflict
 	}
 	reply(w, r, code, map[string]string{"error": err.Error()}, err.Error()+"\n")
@@ -117,30 +118,27 @@ func (s *Server) adminPlan(w http.ResponseWriter, r *http.Request) {
 	for _, pr := range probs {
 		out.Warnings = append(out.Warnings, pr.String())
 	}
-	var b strings.Builder
-	fmt.Fprintf(&b, "Compared with running version %d:\n", rt.Version)
+	changes := out.Text
 	if unchanged {
-		b.WriteString("No changes: the text is the running config.\n")
-	} else {
-		b.WriteString(out.Text)
+		changes = "No changes: the text is the running config.\n"
 	}
-	for _, wn := range out.Warnings {
-		b.WriteString(wn + "\n")
+	reply(w, r, http.StatusOK, out, fmt.Sprintf("Compared with running version %d:\n%s%s", rt.Version, changes, asLines(out.Warnings)))
+}
+
+// asLines joins texts as lines, each ending in a newline.
+func asLines(texts []string) string {
+	var b strings.Builder
+	for _, t := range texts {
+		b.WriteString(t + "\n")
 	}
-	reply(w, r, http.StatusOK, out, b.String())
+	return b.String()
 }
 
 func appliedText(a *Applied) string {
-	var b strings.Builder
-	for _, wn := range a.Warnings {
-		b.WriteString(wn + "\n")
-	}
 	if a.Unchanged {
-		fmt.Fprintf(&b, "No changes: version %d keeps running.\n", a.Version)
-	} else {
-		fmt.Fprintf(&b, "Version %d is running (it was %d).\n", a.Version, a.Previous)
+		return asLines(a.Warnings) + fmt.Sprintf("No changes: version %d keeps running.\n", a.Version)
 	}
-	return b.String()
+	return asLines(a.Warnings) + fmt.Sprintf("Version %d is running (it was %d).\n", a.Version, a.Previous)
 }
 
 func (s *Server) adminApply(w http.ResponseWriter, r *http.Request) {
@@ -158,13 +156,11 @@ func (s *Server) adminApply(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) adminRollback(w http.ResponseWriter, r *http.Request) {
-	n := 0
-	if v := r.URL.Query().Get("version"); v != "" {
-		var err error
-		if n, err = strconv.Atoi(v); err != nil || n < 1 {
-			replyErr(w, r, fmt.Errorf("bad version %q: give a version number from the history", v))
-			return
-		}
+	v := r.URL.Query().Get("version")
+	n, err := strconv.Atoi(v) // no version gives 0: the one before the running version
+	if v != "" && (err != nil || n < 1) {
+		replyErr(w, r, fmt.Errorf("bad version %q: give a version number from the history", v))
+		return
 	}
 	a, err := s.Rollback(n, peerUser(r))
 	if err != nil {
@@ -181,12 +177,13 @@ func (s *Server) adminRollback(w http.ResponseWriter, r *http.Request) {
 func (s *Server) adminHistory(w http.ResponseWriter, r *http.Request) {
 	es := s.History()
 	running := s.Current().Version
-	var b strings.Builder
 	if es == nil {
-		b.WriteString("No config history is kept: the state folder couldn't be used (see the log).\n")
-	} else {
-		b.WriteString("Version  Time (UTC)           How       User        Plan\n")
+		reply(w, r, http.StatusOK, map[string]any{"running": running, "versions": []Entry{}},
+			"No config history is kept: the state folder couldn't be used (see the log).\n")
+		return
 	}
+	var b strings.Builder
+	b.WriteString("Version  Time (UTC)           How       User        Plan\n")
 	for _, e := range es {
 		t, _ := time.Parse(time.RFC3339, e.Time)
 		plan := e.Plan
@@ -197,9 +194,6 @@ func (s *Server) adminHistory(w http.ResponseWriter, r *http.Request) {
 			plan += " (running)"
 		}
 		fmt.Fprintf(&b, "%7d  %s  %-8s  %-10s  %s\n", e.Version, t.UTC().Format("2006-01-02 15:04:05"), e.How, e.User, plan)
-	}
-	if es == nil {
-		es = []Entry{}
 	}
 	reply(w, r, http.StatusOK, map[string]any{"running": running, "versions": es}, b.String())
 }

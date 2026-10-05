@@ -4,12 +4,14 @@
 package bp
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io/fs"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 )
 
@@ -66,9 +68,10 @@ func (h *history) path(n int) string {
 	return filepath.Join(h.dir, "versions", fmt.Sprintf("%d.conf", n))
 }
 
-// last returns the newest version number, or 0 when the history is empty.
+// last returns the newest version number, or 0 when the history is empty or
+// isn't kept.
 func (h *history) last() int {
-	if len(h.entries) == 0 {
+	if h == nil || len(h.entries) == 0 {
 		return 0
 	}
 	return h.entries[len(h.entries)-1].Version
@@ -76,23 +79,20 @@ func (h *history) last() int {
 
 // text returns the config text of version n.
 func (h *history) text(n int) (string, error) {
-	for _, e := range h.entries {
-		if e.Version == n {
-			b, err := os.ReadFile(h.path(n))
-			return string(b), err
-		}
+	if !slices.ContainsFunc(h.entries, func(e Entry) bool { return e.Version == n }) {
+		return "", fmt.Errorf("version %d isn't in the history (it keeps the last %d)", n, keepVersions)
 	}
-	return "", fmt.Errorf("version %d isn't in the history (it keeps the last %d)", n, keepVersions)
+	b, err := os.ReadFile(h.path(n))
+	return string(b), err
 }
 
 // before returns the version that went live before version n, or 0.
 func (h *history) before(n int) int {
-	for i, e := range h.entries {
-		if e.Version == n && i > 0 {
-			return h.entries[i-1].Version
-		}
+	i := slices.IndexFunc(h.entries, func(e Entry) bool { return e.Version == n })
+	if i < 1 {
+		return 0
 	}
-	return 0
+	return h.entries[i-1].Version
 }
 
 // save stores a new version and drops the oldest past the last 100.
@@ -105,13 +105,12 @@ func (h *history) save(e Entry, text string) error {
 		os.Remove(h.path(h.entries[0].Version))
 		h.entries = h.entries[1:]
 	}
-	var b strings.Builder
+	var b bytes.Buffer
+	enc := json.NewEncoder(&b)
 	for _, e := range h.entries {
-		line, _ := json.Marshal(e)
-		b.Write(line)
-		b.WriteByte('\n')
+		enc.Encode(e)
 	}
-	return writeFileAtomic(filepath.Join(h.dir, "history.jsonl"), []byte(b.String()), 0o640)
+	return writeFileAtomic(filepath.Join(h.dir, "history.jsonl"), b.Bytes(), 0o640)
 }
 
 // writeFileAtomic writes a file through a temporary file and a rename, so
@@ -121,7 +120,6 @@ func writeFileAtomic(path string, data []byte, perm fs.FileMode) error {
 	if err != nil {
 		return err
 	}
-	tmp := f.Name()
 	_, err = f.Write(data)
 	if err == nil {
 		err = f.Sync()
@@ -133,10 +131,10 @@ func writeFileAtomic(path string, data []byte, perm fs.FileMode) error {
 		err = cerr
 	}
 	if err == nil {
-		err = os.Rename(tmp, path)
+		err = os.Rename(f.Name(), path)
 	}
 	if err != nil {
-		os.Remove(tmp)
+		os.Remove(f.Name())
 	}
 	return err
 }

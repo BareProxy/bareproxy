@@ -72,12 +72,11 @@ type Applied struct {
 type ConfigError struct{ Problems []Problem }
 
 func (e *ConfigError) Error() string {
-	var b strings.Builder
-	b.WriteString("the config has errors, so nothing changed")
+	msg := "the config has errors, so nothing changed"
 	for _, p := range e.Problems {
-		b.WriteString("\n  " + p.String())
+		msg += "\n  " + p.String()
 	}
-	return b.String()
+	return msg
 }
 
 // PlanChangedError refuses an apply whose plan is out of date.
@@ -106,10 +105,8 @@ func Start(file string) (*Server, error) {
 	for _, p := range probs {
 		s.logf("%s", p)
 	}
-	if h, err := openHistory(stateDir(c)); err != nil {
+	if s.cs.hist, err = openHistory(stateDir(c)); err != nil {
 		s.logf("no config history: %v (set state in global to a folder BareProxy can write)", err)
-	} else {
-		s.cs.hist = h
 	}
 	if c != nil {
 		c.Close()
@@ -121,10 +118,10 @@ func Start(file string) (*Server, error) {
 		}
 		return s, nil
 	}
-	if s.cs.hist == nil || s.cs.hist.last() == 0 {
+	n := s.cs.hist.last()
+	if n == 0 {
 		return nil, errors.New("the config has errors, so BareProxy didn't start")
 	}
-	n := s.cs.hist.last()
 	text, err := s.cs.hist.text(n)
 	if err == nil {
 		_, err = s.Apply(Change{Text: text, How: "startup", User: user, keepFile: true, version: n})
@@ -243,17 +240,11 @@ func (s *Server) apply(ch Change) (*Applied, error) {
 		res.Version, res.Unchanged = old.Version, true
 	case ch.version > 0:
 		res.Version = ch.version
-	case old == nil && h != nil && h.last() > 0 && h.lastText() == ch.Text:
+	case old == nil && h.last() > 0 && h.lastText() == ch.Text:
 		res.Version = h.last()
 	default:
 		save = true
-		res.Version = 1
-		if old != nil {
-			res.Version = old.Version + 1
-		}
-		if h != nil && h.last() >= res.Version {
-			res.Version = h.last() + 1
-		}
+		res.Version = max(res.Previous, h.last()) + 1
 	}
 	rt, err := NewRuntime(c, old, res.Version, s.logf, true)
 	if err != nil {
@@ -293,10 +284,7 @@ func (s *Server) apply(ch Change) (*Applied, error) {
 	if ch.User != "" {
 		how += " by " + ch.User
 	}
-	kind := ch.How
-	if kind == "startup" {
-		kind = "start"
-	}
+	kind := strings.Replace(ch.How, "startup", "start", 1) // the event kind
 	if unchanged {
 		s.logEvent(kind, "version %d reloaded, config unchanged (%s)", res.Version, how)
 	} else {

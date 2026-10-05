@@ -5,20 +5,13 @@ package bp
 
 import (
 	"fmt"
-	"io"
 	"net/http"
 	"strconv"
 	"strings"
 )
 
-func init() {
-	adminHandlers = append(adminHandlers, func(s *Server, mux *http.ServeMux) {
-		mux.HandleFunc("GET /why", s.adminWhy)
-		mux.HandleFunc("GET /tail", s.adminTail)
-		mux.HandleFunc("GET /status", func(w http.ResponseWriter, r *http.Request) { writeJSON(w, s.Status()) })
-		mux.HandleFunc("GET /events", func(w http.ResponseWriter, r *http.Request) { writeJSON(w, s.Current().Mem.Events()) })
-	})
-}
+// The trace endpoints of the admin socket (why, tail, status, events),
+// registered in admin.go. They answer in JSON.
 
 func writeJSON(w http.ResponseWriter, v any) {
 	b, err := RecordJSON(v)
@@ -66,10 +59,9 @@ func ParseTailFilter(s string) (TailFilter, error) {
 		return TailFilter{}, fmt.Errorf("filter %q needs a key, an operator and a value, such as status>=500 or pool=api", s)
 	}
 	f := TailFilter{Key: s[:i]}
-	rest := s[i:]
 	for _, op := range []string{">=", "<=", "!=", ">", "<", "="} {
-		if strings.HasPrefix(rest, op) {
-			f.Op, f.Val = op, rest[len(op):]
+		if val, ok := strings.CutPrefix(s[i:], op); ok {
+			f.Op, f.Val = op, val
 			break
 		}
 	}
@@ -161,8 +153,7 @@ func (s *Server) adminTail(w http.ResponseWriter, r *http.Request) {
 			return
 		case it := <-t.C:
 			if MatchAll(fs, it.rec) {
-				w.Write(it.js)
-				io.WriteString(w, "\n")
+				fmt.Fprintf(w, "%s\n", it.js)
 			}
 		}
 		if n := t.Dropped.Swap(0); n > 0 {
