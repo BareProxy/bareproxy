@@ -160,10 +160,10 @@ func statusCmd(args []string) int {
 }
 
 func count(n int, word string) string {
-	if n == 1 {
-		return "1 " + word
+	if n != 1 {
+		word += "s"
 	}
-	return fmt.Sprintf("%d %ss", n, word)
+	return fmt.Sprintf("%d %s", n, word)
 }
 
 // stamp turns 2026-10-01T06:00:00Z into 2026-10-01 06:00:00.

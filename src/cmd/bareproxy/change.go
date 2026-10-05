@@ -68,15 +68,16 @@ func callServer(file, method, path string, q url.Values, body string) (int, stri
 
 // show prints an admin reply: errors go to stderr, except in JSON.
 func show(code int, out string, asJSON bool) int {
-	if code == http.StatusOK || asJSON {
+	switch {
+	case code == http.StatusOK:
 		fmt.Print(out)
-	} else {
+		return 0
+	case asJSON:
+		fmt.Print(out)
+	default:
 		fmt.Fprint(os.Stderr, "bareproxy: "+out)
 	}
-	if code != http.StatusOK {
-		return 1
-	}
-	return 0
+	return 1
 }
 
 // jsonOr renders v as indented JSON, or returns text as it is.
@@ -89,11 +90,10 @@ func jsonOr(asJSON bool, v any, text string) string {
 }
 
 func jsonQuery(asJSON bool) url.Values {
-	q := url.Values{}
 	if asJSON {
-		q.Set("json", "1")
+		return url.Values{"json": {"1"}}
 	}
-	return q
+	return url.Values{}
 }
 
 func planCmd(args []string) int {
@@ -161,12 +161,11 @@ func applyCmd(args []string) int {
 		return fail("%v", err)
 	}
 	var pr struct {
-		PlanID    string `json:"plan_id"`
-		Running   int    `json:"running"`
-		Unchanged bool   `json:"unchanged"`
-		Warnings  []string
-		Text      string
-		Error     string
+		PlanID      string `json:"plan_id"`
+		Running     int
+		Unchanged   bool
+		Warnings    []string
+		Text, Error string
 	}
 	if json.Unmarshal([]byte(out), &pr) != nil || code != http.StatusOK {
 		if pr.Error != "" && !f.json {

@@ -123,55 +123,33 @@ type options struct {
 // ignore an option that lacks its value. A strict command refuses both, says
 // why and returns false.
 func parse(args []string, strict bool, names ...string) (o options, ok bool) {
+	flags := map[string]*bool{"--json": &o.json, "--yes": &o.yes, "-y": &o.yes, "--offline": &o.offline}
+	values := map[string]*string{"--config": &o.config, "-c": &o.config, "--from": &o.from, "--plan": &o.plan}
 	for i := 0; i < len(args); i++ {
 		a := args[i]
-		if !slices.Contains(names, a) {
+		switch {
+		case !slices.Contains(names, a):
 			if strict && strings.HasPrefix(a, "-") {
 				fmt.Fprintf(os.Stderr, "bareproxy: unknown option %s\n", a)
 				return o, false
 			}
 			o.pos = append(o.pos, a)
-			continue
-		}
-		switch a {
-		case "--json":
-			o.json = true
-		case "--yes", "-y":
-			o.yes = true
-		case "--offline":
-			o.offline = true
-		default: // an option with a value
-			if i++; i == len(args) {
-				if strict {
-					fmt.Fprintf(os.Stderr, "bareproxy: %s needs a value\n", a)
-					return o, false
-				}
-				break
+		case flags[a] != nil:
+			*flags[a] = true
+		case i == len(args)-1: // an option that takes a value, and none is left
+			if strict {
+				fmt.Fprintf(os.Stderr, "bareproxy: %s needs a value\n", a)
+				return o, false
 			}
-			switch a {
-			case "--config", "-c":
-				o.config = args[i]
-			case "--from":
-				o.from = args[i]
-			case "--plan":
-				o.plan = args[i]
-			case "-H":
-				o.headers = append(o.headers, args[i])
-			}
+		case a == "-H":
+			i++
+			o.headers = append(o.headers, args[i])
+		default: // --config, -c, --from and --plan
+			i++
+			*values[a] = args[i]
 		}
 	}
 	return o, true
-}
-
-// fileArg is the optional FILE argument of run and check.
-func fileArg(args []string) (file string, ok bool) {
-	if len(args) > 1 {
-		return "", false
-	}
-	if len(args) == 1 {
-		file = args[0]
-	}
-	return configFile(file), true
 }
 
 // loadConfig loads a config just to learn where its admin socket and trace
@@ -188,21 +166,20 @@ func loadConfig(file string) *bp.Config {
 }
 
 func run(args []string) int {
-	file, ok := fileArg(args)
-	if !ok {
+	if len(args) > 1 {
 		return badUsage()
 	}
-	if err := bp.Run(file); err != nil {
+	if err := bp.Run(configFile(cmp.Or(args...))); err != nil {
 		return fail("%v", err)
 	}
 	return 0
 }
 
 func check(args []string) int {
-	file, ok := fileArg(args)
-	if !ok {
+	if len(args) > 1 {
 		return badUsage()
 	}
+	file := configFile(cmp.Or(args...))
 	c, probs := bp.Load(file)
 	printProblems(os.Stdout, probs)
 	if c == nil || bp.HasErrors(probs) {
@@ -286,13 +263,10 @@ func why(args []string) int {
 // adminClient makes an HTTP client that talks to the admin socket. A zero
 // timeout means none, for streams.
 func adminClient(sock string, timeout time.Duration) *http.Client {
-	return &http.Client{
-		Timeout: timeout,
-		Transport: &http.Transport{DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
-			var d net.Dialer
-			return d.DialContext(ctx, "unix", sock)
-		}},
+	dial := func(ctx context.Context, _, _ string) (net.Conn, error) {
+		return (&net.Dialer{}).DialContext(ctx, "unix", sock)
 	}
+	return &http.Client{Timeout: timeout, Transport: &http.Transport{DialContext: dial}}
 }
 
 // adminCall sends one request to the admin socket. target is the path with
