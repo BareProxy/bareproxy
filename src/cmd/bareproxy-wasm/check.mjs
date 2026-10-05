@@ -18,7 +18,7 @@
 //
 //   usage: node check.mjs [--dist DIR] [--shots DIR] [--log FILE] [--allow-plan-stub]
 //
-// Needs: Go on the PATH (or in /home/claude/tools/go1.27.1), openssl, and
+// Needs: Go 1.27.1 or newer on the PATH, openssl, and
 // Playwright with its Chromium (NODE_PATH=/opt/npm-tools/node_modules).
 // The exit code is 1 when any check fails.
 
@@ -39,8 +39,9 @@ const repoDir = path.resolve(srcDir, '..');
 
 const args = process.argv.slice(2);
 const opt = (name, dflt) => { const i = args.indexOf(name); return i >= 0 && args[i + 1] ? args[i + 1] : dflt; };
-const DIST = path.resolve(opt('--dist', '/home/claude/out/demo-dist'));
-const SHOTS = path.resolve(opt('--shots', '/home/claude/out/demo-shots'));
+const REPO = path.resolve(path.dirname(new URL(import.meta.url).pathname), '..', '..', '..');
+const DIST = path.resolve(opt('--dist', path.join(REPO, 'dist', 'demo')));
+const SHOTS = path.resolve(opt('--shots', path.join(REPO, 'dist', 'demo-shots')));
 const LOGFILE = path.resolve(opt('--log', path.join(repoDir, 'results', 'demo-check.log')));
 const ALLOW_PLAN_STUB = args.includes('--allow-plan-stub');
 
@@ -64,7 +65,6 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 // ---- tools -------------------------------------------------------------------
 
 const goEnv = { ...process.env, GOTOOLCHAIN: 'local', GOPROXY: 'off', GOFLAGS: '-buildvcs=false' };
-if (!/go1\.27/.test(goEnv.PATH || '')) goEnv.PATH = '/home/claude/tools/go1.27.1/bin:' + goEnv.PATH;
 
 function run(cmd, argv, o = {}) {
   try {

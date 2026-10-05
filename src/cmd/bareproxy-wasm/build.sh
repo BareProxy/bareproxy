@@ -4,7 +4,7 @@
 #
 # Build the BareProxy browser demo: bareproxy.wasm and the page that runs it.
 #
-#   usage: build.sh [DIST]        DIST defaults to /home/claude/out/demo-dist
+#   usage: build.sh [DIST]        DIST defaults to dist/demo at the repository root
 #
 # Needs Go on the PATH. Only the standard library is used, so nothing is
 # downloaded. The result is a folder of static files; serve it with any web
@@ -13,7 +13,7 @@ set -eu
 
 here=$(cd "$(dirname "$0")" && pwd)
 src=$(cd "$here/../.." && pwd) # the folder with go.mod
-dist=${1:-/home/claude/out/demo-dist}
+dist=${1:-$(cd "$(dirname "$0")/../../.." && pwd)/dist/demo}
 
 mkdir -p "$dist"
 rm -f "$dist/bareproxy.wasm" "$dist/wasm_exec.js"

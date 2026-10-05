@@ -67,11 +67,11 @@ always matches the compiler that built the wasm. It is not kept in the source tr
 ## Build
 
 ```
-export PATH=/home/claude/tools/go1.27.1/bin:$PATH GOTOOLCHAIN=local GOPROXY=off GOFLAGS=-buildvcs=false
+export GOTOOLCHAIN=local GOFLAGS=-buildvcs=false   # with Go 1.27.1 or newer on the PATH
 sh src/cmd/bareproxy-wasm/build.sh [DIST]
 ```
 
-`DIST` defaults to `/home/claude/out/demo-dist`. The build uses only the Go standard library, so
+`DIST` defaults to `dist/demo` at the repository root (ignored by git). The build uses only the Go standard library, so
 nothing is downloaded. It runs
 `GOOS=js GOARCH=wasm go build -trimpath -ldflags="-s -w"`, copies the page files and
 `wasm_exec.js` next to the result, and prints the wasm size raw and gzipped. The folder holds
@@ -121,7 +121,7 @@ on localhost, and drives the page in headless Chromium like a visitor. Then it c
 - **Speed.** Median time of each call in the browser, measured.
 - **Layout.** No sideways page scroll at 1280, 760 (in an iframe), 375 and 320 px, and every
   button and field at least 32 px tall. Screenshots go to `--shots` (default
-  `/home/claude/out/demo-shots`).
+  `dist/demo-shots`).
 - **Network.** Every request the page makes is a GET to the local server for one of the five
   files. None goes anywhere else.
 

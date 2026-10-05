@@ -169,11 +169,11 @@ Attempts disturbed by other processes (they used more than 10% of the server or 
 ## Setup
 
 - Routes, the same on both servers: `/` is served from the public folder of the built bareproxy.com site (`index.html` for folders); `/api/*` goes to the test backend with the prefix stripped (BareProxy `route /api/* -> api strip`; nginx `location /api/` with `proxy_pass http://api/;`, an upstream with `keepalive 64`, HTTP/1.1 and an empty `Connection` header); both use the site's `404.html` for missing pages. Both add `X-Forwarded-For`, `-Proto` and `-Host` on the proxied request.
-- BareProxy runs with `GOMAXPROCS=1` under `taskset -c 0`. nginx runs `worker_processes 1` under `taskset -c 0`, from its own config and prefix (`nginx -p /home/claude/bench/nginx/`); the system nginx is never touched. The generator is `wrk -t1 -c50` under `taskset -c 1`, and this script runs there too.
+- BareProxy runs with `GOMAXPROCS=1` under `taskset -c 0`. nginx runs `worker_processes 1` under `taskset -c 0`, from its own config and prefix (`nginx -p` pointing at the bench's own nginx/ folder); the system nginx is never touched. The generator is `wrk -t1 -c50` under `taskset -c 1`, and this script runs there too.
 - The test backend (`tools/testapi`) is pinned to the server's core, so in the API case the proxy and the backend share one core. The row `testapi alone` shows what the backend manages with the same generator and no proxy in between.
 - Servers and cases take turns within each round (BareProxy, then nginx, case by case), so slow changes on the machine hit both alike.
 - Logging off: BareProxy `trace-log off`, nginx `access_log off`. Logging to a file: BareProxy `trace-log FILE`, nginx `access_log FILE` with the default format and no buffering. The log file is emptied before each run.
-- To repeat: `BAREPROXY=/path/to/binary ./bench.sh` in `/home/claude/bench`, or `python3 summarize.py LOG` to rebuild this file from a log.
+- To repeat: `BAREPROXY=/path/to/binary ./bench.sh` in `live/bench/`, or `python3 summarize.py LOG` to rebuild this file from a log.
 
 ## Caveats
 

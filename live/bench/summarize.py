@@ -472,7 +472,7 @@ def main(paths):
       "an upstream with `keepalive 64`, HTTP/1.1 and an empty `Connection` header); both use the site's `404.html` for missing pages. "
       "Both add `X-Forwarded-For`, `-Proto` and `-Host` on the proxied request.")
     w("- BareProxy runs with `GOMAXPROCS=1` under `taskset -c 0`. nginx runs `worker_processes 1` under `taskset -c 0`, from its own "
-      "config and prefix (`nginx -p /home/claude/bench/nginx/`); the system nginx is never touched. "
+      "config and prefix (`nginx -p` pointing at the bench's own nginx/ folder); the system nginx is never touched. "
       "The generator is `wrk -t1 -c50` under `taskset -c 1`, and this script runs there too.")
     w("- The test backend (`tools/testapi`) is pinned to the server's core, so in the API case the proxy and the backend share one core. "
       "The row `testapi alone` shows what the backend manages with the same generator and no proxy in between.")
@@ -485,7 +485,7 @@ def main(paths):
           "`site bench.local:PORT` and `tls CERT KEY`; nginx with `listen PORT ssl http2`. The generator is `h2load -c50 -m1 -t1` "
           "(50 clients with one stream each, so 50 requests in flight as in the plain runs; many streams on few connections is not covered). "
           "p50 and p99 come from h2load's per-request log. The negotiated TLS version and cipher are in the raw log.")
-    w("- To repeat: `BAREPROXY=/path/to/binary ./bench.sh` in `/home/claude/bench`, or `python3 summarize.py LOG` to rebuild this file from a log.")
+    w("- To repeat: `BAREPROXY=/path/to/binary ./bench.sh` in `live/bench/`, or `python3 summarize.py LOG` to rebuild this file from a log.")
     w("")
 
     w("## Caveats")

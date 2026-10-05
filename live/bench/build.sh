@@ -15,7 +15,7 @@ SRC="${SRC:-$(cd "$(dirname "$0")/../../src" && pwd)}"
 SITE_SRC="${SITE_SRC:?set SITE_SRC to the bareproxy.com site source}"
 HUGO="${HUGO:-hugo}"
 
-export PATH=/home/claude/tools/go1.27.1/bin:$PATH GOTOOLCHAIN=local GOPROXY=off GOFLAGS=-buildvcs=false
+export GOTOOLCHAIN=local GOFLAGS=-buildvcs=false
 
 mkdir -p "$HERE/bin" "$HERE/site"
 cd "$SRC"

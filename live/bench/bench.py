@@ -33,6 +33,9 @@ import sys
 import threading
 import time
 
+# The repository root: this script lives in live/bench/.
+REPO = os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..'))
+
 HERE = os.path.dirname(os.path.abspath(__file__))
 
 
@@ -701,7 +704,7 @@ def environment():
     LOG.w("cpu MHz: " + sh("grep -m1 MHz /proc/cpuinfo | cut -d: -f2"))
     LOG.w("kernel: " + sh("uname -srvm"))
     LOG.w("memory: " + sh("free -m | head -2"))
-    LOG.w("go (build tool): " + sh("PATH=/home/claude/tools/go1.27.1/bin:$PATH GOTOOLCHAIN=local go version"))
+    LOG.w("go (build tool): " + sh("GOTOOLCHAIN=local go version"))
     LOG.w(f"bareproxy binary: {BAREPROXY}")
     LOG.w("bareproxy version: " + sh(f"'{BAREPROXY}' version"))
     LOG.w("bareproxy binary sha256: " + sh(f"sha256sum '{BAREPROXY}' | cut -c1-16") + " (first 16 hex digits)")
@@ -709,9 +712,9 @@ def environment():
     info = os.path.join(HERE, "bin", "build-info.txt")
     if os.path.exists(info):
         LOG.w("bareproxy build info (bin/build-info.txt): " + open(info).read().strip())
-    LOG.w("bareproxy source tree at run time: git " + sh("git -C /home/claude/bareproxy log -1 --format='%h %s' 2>&1")
-          + "; uncommitted files: " + sh("git -C /home/claude/bareproxy status --short 2>&1 | wc -l"))
-    LOG.w("go version of the binary: " + sh(f"PATH=/home/claude/tools/go1.27.1/bin:$PATH GOTOOLCHAIN=local go version '{BAREPROXY}' 2>&1 | head -1"))
+    LOG.w("bareproxy source tree at run time: git " + sh(f"git -C '{REPO}' log -1 --format='%h %s' 2>&1")
+          + "; uncommitted files: " + sh(f"git -C '{REPO}' status --short 2>&1 | wc -l"))
+    LOG.w("go version of the binary: " + sh(f"GOTOOLCHAIN=local go version '{BAREPROXY}' 2>&1 | head -1"))
     LOG.w("nginx: " + sh(f"{NGINX} -v 2>&1"))
     LOG.w("nginx build: " + sh(f"dpkg -l nginx-light nginx 2>/dev/null | grep '^ii' | awk '{{print $2, $3}}' | tr '\\n' ' '"))
     LOG.w("nginx package: " + sh(f"dpkg -S {NGINX} 2>&1 | head -1"))
