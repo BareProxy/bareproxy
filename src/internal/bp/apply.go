@@ -112,7 +112,9 @@ func Start(file string) (*Server, error) {
 	var c *Config
 	probs := []Problem{{Msg: fmt.Sprint(err)}}
 	if err == nil {
-		c, probs = Parse(abs, string(data))
+		if c, probs = Parse(abs, string(data)); !HasErrors(probs) {
+			probs = Warnings(c) // the ones check gives, plan's included
+		}
 	}
 	for _, p := range probs {
 		s.logf("%s", p)
@@ -441,11 +443,8 @@ func (s *Server) drain(old, rt *Runtime, conns map[string]*connSet) {
 			if rt.backends[b.key] != nil {
 				continue
 			}
-			d := 30 * time.Second
-			ps := cmp.Or(rt.Cfg.Pools[name], old.Cfg.Pools[name]) // the new setting, if the pool is still there
-			if ps.Drain > 0 {
-				d = ps.Drain
-			}
+			// The pool's new drain time if it is still there, else its old one.
+			d := cmp.Or(cmp.Or(rt.Cfg.Pools[name], old.Cfg.Pools[name]).Drain, 30*time.Second)
 			set, addr := conns[name], b.Spec.Addr
 			s.cs.drains = append(s.cs.drains, drainEntry{b, now, now.Add(d)})
 			s.logEvent("backend", "pool %s: %s removed, draining for %s", name, addr, d)

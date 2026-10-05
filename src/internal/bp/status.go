@@ -39,6 +39,8 @@ type SiteStatus struct {
 	Rules     int      `json:"rules"`
 }
 
+// PoolStatus is one pool. A pool that an apply removed has line 0 and is
+// listed while its backends drain.
 type PoolStatus struct {
 	Name     string          `json:"name"`
 	Line     int             `json:"line"`
@@ -169,8 +171,8 @@ func (s *Server) Status() *Status {
 	s.mu.Unlock()
 	for _, d := range drains {
 		i := slices.IndexFunc(st.Pools, func(p PoolStatus) bool { return p.Name == d.b.Pool })
-		if i < 0 { // the pool was removed too, and stays listed while its backends drain
-			i, st.Pools = len(st.Pools), append(st.Pools, PoolStatus{Name: d.b.Pool, Checks: "none, the pool was removed", Backends: []BackendStatus{}})
+		if i < 0 { // the pool was removed too (line 0), and stays listed while its backends drain
+			i, st.Pools = len(st.Pools), append(st.Pools, PoolStatus{Name: d.b.Pool, Checks: "none", Backends: []BackendStatus{}})
 		}
 		st.Pools[i].Backends = append(st.Pools[i].Backends, BackendStatus{Addr: d.b.Spec.Addr, State: "draining",
 			Since: stamp(d.since), Until: stamp(d.until), InFlight: d.b.inflight.Load()})

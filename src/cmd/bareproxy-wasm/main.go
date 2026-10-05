@@ -54,10 +54,14 @@ func parse(text string) (*bp.Config, []bp.Problem) {
 	return bp.ParseWith(confName, text, bp.ParseOptions{NoDisk: true})
 }
 
-// check returns {ok, problems: [{line, msg, warn}], summary}.
+// check returns {ok, problems: [{line, msg, warn}], summary}. A config
+// without errors gets the warnings bareproxy check gives, plan's included.
 func check(args []js.Value) any {
 	c, probs := parse(arg(args, 0))
 	ok := c != nil && !bp.HasErrors(probs)
+	if ok {
+		probs = bp.Warnings(c)
+	}
 	list := make([]any, 0, len(probs))
 	for _, p := range probs {
 		list = append(list, map[string]any{"line": p.Line, "msg": p.Msg, "warn": p.Warn})

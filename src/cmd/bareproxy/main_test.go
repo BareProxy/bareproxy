@@ -443,7 +443,8 @@ func TestPrintStatus(t *testing.T) {
 		Pools: []bp.PoolStatus{{Name: "api", Line: 14, Checks: "GET /healthz every 5s, timeout 2s, pass on 200 to 399", Up: 1, Size: 2, Backends: []bp.BackendStatus{
 			{Addr: "10.0.0.11:8080", State: "up", Since: "2026-10-01T06:00:05Z", InFlight: 2},
 			{Addr: "10.0.0.13:8080", State: "down", Since: "2026-10-01T07:02:10Z", Failures: 3, Reason: "connect refused"},
-			{Addr: "10.0.0.12:8080", State: "draining", Since: "2026-10-01T07:03:00Z", InFlight: 3, Until: until}}}}}
+			{Addr: "10.0.0.12:8080", State: "draining", Since: "2026-10-01T07:03:00Z", InFlight: 3, Until: until}}},
+			{Name: "old", Checks: "none", Backends: []bp.BackendStatus{{Addr: "10.0.0.20:8080", State: "draining", Since: "2026-10-01T07:03:00Z", Until: until}}}}}
 	st.Requests.Last1m = bp.Rate{Window: bp.Window{Requests: 1204, Status5xx: 3, ProxyErrors: 1}, Complete: true}
 	st.Requests.Last5m = bp.Rate{Window: bp.Window{Requests: 6100, Status5xx: 9, ProxyErrors: 4}}
 	st.Requests.Ring.Records, st.Requests.Ring.Limit, st.Requests.Ring.Oldest = 6100, 32<<20, "2026-10-01T07:03:00.000Z"
@@ -457,6 +458,7 @@ func TestPrintStatus(t *testing.T) {
 		"    10.0.0.11:8080         up since 2026-10-01T06:00:05Z, 2 in flight, 0 failures in a row",
 		"    10.0.0.13:8080         down (connect refused) since 2026-10-01T07:02:10Z, 0 in flight, 3 failures in a row",
 		"    10.0.0.12:8080         draining since 2026-10-01T07:03:00Z, 3 in flight, removed, ", "s left (ends " + until + ")\n",
+		"  old (removed): 0 of 0 up. Checks: none\n    10.0.0.20:8080         draining since 2026-10-01T07:03:00Z, 0 in flight, removed, ",
 		"  example.com  CN=example.com  ends 2026-12-01, 57 days left",
 		"  old.example  CN=old.example  ends 2026-09-30, -5 days left",
 		"Requests (the 6100 most recent, held in memory, back to 2026-10-01T07:03:00.000Z)",

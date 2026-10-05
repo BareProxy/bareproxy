@@ -208,7 +208,7 @@ func TestStatusListsDrainingBackends(t *testing.T) {
 		t.Errorf("pool api after A was removed: %+v", p)
 	}
 	mustApply(t, l.s, l.text("v1")) // the pool is removed, and B with it
-	if p := pool(); p == nil || p.Checks != "none, the pool was removed" || !draining(p, addrB) {
+	if p := pool(); p == nil || p.Line != 0 || p.Size != 0 || !draining(p, addrB) {
 		t.Errorf("pool api after it was removed: %+v", p)
 	}
 	once.Do(func() { close(release) })
@@ -216,5 +216,43 @@ func TestStatusListsDrainingBackends(t *testing.T) {
 		if time.Now().After(deadline) {
 			t.Fatalf("pool api is still listed after its drain time: %+v", pool())
 		}
+	}
+}
+
+// lockedLog collects what a server logs, from any goroutine.
+type lockedLog struct {
+	mu sync.Mutex
+	b  strings.Builder
+}
+
+func (l *lockedLog) Write(p []byte) (int, error) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.b.Write(p)
+}
+
+func (l *lockedLog) String() string {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.b.String()
+}
+
+// A startup logs the warnings check gives, plan's included: Parse leaves the
+// unused pool to plan's wording.
+func TestStartupLogsCheckWarnings(t *testing.T) {
+	var logged lockedLog
+	logOutput = &logged
+	defer func() { logOutput = io.Discard }()
+	l := &liveServer{dir: t.TempDir()}
+	l.port = freePort(t)
+	l.conf = filepath.Join(l.dir, "bareproxy.conf")
+	writeFile(t, l.conf, l.textWith("", "v1", "\npool spare\n  backend 127.0.0.1:1\n"))
+	s, err := Start(l.conf)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Stop()
+	if want := "line 9: warning: pool spare isn't used by any rule that can match\n"; !strings.Contains(logged.String(), want) {
+		t.Errorf("the startup log lacks %q:\n%s", want, logged.String())
 	}
 }

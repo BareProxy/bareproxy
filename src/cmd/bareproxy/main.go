@@ -511,7 +511,11 @@ func printStatus(st bp.Status) {
 	}
 	fmt.Printf("\nPools (%d)\n", len(st.Pools))
 	for _, p := range st.Pools {
-		fmt.Printf("  %s (line %d): %d of %d up. Checks: %s\n", p.Name, p.Line, p.Up, p.Size, p.Checks)
+		where := fmt.Sprintf("line %d", p.Line)
+		if p.Line == 0 { // a pool an apply removed, listed while its backends drain
+			where = "removed"
+		}
+		fmt.Printf("  %s (%s): %d of %d up. Checks: %s\n", p.Name, where, p.Up, p.Size, p.Checks)
 		for _, b := range p.Backends {
 			state, more := b.State, fmt.Sprintf("%d failures in a row", b.Failures)
 			if b.Reason != "" {
