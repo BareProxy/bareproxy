@@ -1,0 +1,211 @@
+BareProxy load experiments: what the 20 applies of the load test stay clear of, 5 October 2026
+
+live/load-experiments.sh runs five cases under load, each on its own BareProxy with two test backends, 1,000 requests per second
+over HTTP/1.1 for 24 seconds (the WebSocket case: 400 messages per second on 20 connections for 20 seconds). The applies come
+every 1.4 seconds from the 4th second. None of this is part of the load test's pass rule. The machine is the shared 2-CPU VM
+described in load-test.log, and the counts differ a little from run to run (a first run of the same cases, before the script
+was committed, gave 11 closed WebSocket connections and 17, 0, 24 and 17 failed requests).
+
+case     what each apply does                                         applies    sent  failed  how it fails
+drain    removes a backend from the pool that carries WebSocket tunnels   1    8020      11  10 of 20 connections closed when the 3 s drain ended
+newpool  adds a new pool and points a route at it, in one apply        10   24000      25  503, No backend is up
+twostep  adds the new pool, then 0.6 s later points the route at it    20   24000       0  none
+health   changes a pool's health line                                  10   24000      10  503, No backend is up
+swap     replaces the only backend of a pool with another one          10   24000      10  503, No backend is up
+
+What they show
+  newpool, health and swap: the apply swaps in the new config before the first health check of its new backends has finished. A backend
+  that is new to its pool (a new pool, a pool whose health line changed, which counts as new backends, or a replaced backend) is
+  'unknown' until that check passes and takes no requests, so a route with no other backend gets 503 until then. Here (a backend on
+  the same machine) that took about a millisecond or two: 1 to 2.5 failed requests per apply at 1,000 requests per second (computed
+  from the counts). With a backend farther away the first check takes longer and so does the window.
+  Nothing in the output of `plan` or `apply` says so (see run/exp-*/ap.out in a run's folder). The two-step version has no failures.
+  drain: a WebSocket connection is a tunnel, and when the pool's drain time ends BareProxy closes the connections of the removed backend,
+  in use or not. That is what the README says about drain (connections close after the drain time, 30 seconds by default), and it
+  means every apply that removes a backend cuts the WebSocket connections that went through it. The load test's applies leave the
+  WebSocket pool alone for that reason.
+
+====================================================================================================
+Full output
+====================================================================================================
+
+## drain: remove a backend from the pool that carries 20 WebSocket connections (drain 3s)
+starting config:
+     1	global
+     2	  admin admin.sock
+     3	  state state
+     4	  trace-log off
+     5	
+     6	site http://plain.test:45877
+     7	  route /ws -> ws
+     8	
+     9	pool ws
+    10	  backend 127.0.0.1:60773
+    11	  backend 127.0.0.1:35405
+    12	  health /healthz every 1s
+    13	  drain 3s
+apply 1 at 4.0 s: Version 2 is running (it was 1).
+the load tool:
+  
+  kind        sent  answered  failed  conns last open  reset  closed   p50 ms   p99 ms   max ms
+  ws          8020      8019      11     30      6.8s      0      10     0.74     1.39   105.13
+  WebSocket messages: 8020 sent, 8019 echoed, 1 lost
+  total: 8020 sent, 8019 answered, 11 failed, 10 connections reset, 20.1 s, rate held: true, loadtest CPU 0.8 s
+    failure, ws: websocket connection lost: connection closed with no answer (EOF): 10
+    failure, ws: websocket message sent, never echoed: 1
+  loadtest: FAIL
+BareProxy's log, drain lines:
+  2026/10/05 16:05:13 pool ws: 127.0.0.1:60773 removed, draining for 3s
+  2026/10/05 16:05:16 pool ws: 127.0.0.1:60773 drained, 10 connections closed
+
+## newpool: 10 applies, each adds a new pool and points /moved/* at it in the same apply
+starting config:
+     1	global
+     2	  admin admin.sock
+     3	  state state
+     4	  trace-log off
+     5	
+     6	site http://plain.test:57075
+     7	  route /moved/* -> p0 strip
+     8	
+     9	pool p0
+    10	  backend 127.0.0.1:41419
+    11	  health /healthz every 1s
+apply 1 at 4.0 s: Version 2 is running (it was 1).
+apply 2 at 5.5 s: Version 3 is running (it was 2).
+apply 3 at 6.9 s: Version 4 is running (it was 3).
+apply 4 at 8.3 s: Version 5 is running (it was 4).
+apply 5 at 9.8 s: Version 6 is running (it was 5).
+apply 6 at 11.2 s: Version 7 is running (it was 6).
+apply 7 at 12.7 s: Version 8 is running (it was 7).
+apply 8 at 14.1 s: Version 9 is running (it was 8).
+apply 9 at 15.5 s: Version 10 is running (it was 9).
+apply 10 at 16.9 s: Version 11 is running (it was 10).
+the load tool:
+  
+  kind        sent  answered  failed  conns last open  reset  closed   p50 ms   p99 ms   max ms
+  http1      24000     23975      25     16      0.0s      0       0     1.00     4.21    33.61
+  total: 24000 sent, 23975 answered, 25 failed, 0 connections reset, 24.0 s, rate held: true, loadtest CPU 4.6 s
+    failure, http1: status 503: 25
+  loadtest: FAIL
+BareProxy's log, drain lines:
+  2026/10/05 16:05:35 pool p1: 127.0.0.1:47285 removed, draining for 30s
+  2026/10/05 16:05:37 pool p2: 127.0.0.1:47285 removed, draining for 30s
+  2026/10/05 16:05:38 pool p3: 127.0.0.1:47285 removed, draining for 30s
+  2026/10/05 16:05:40 pool p4: 127.0.0.1:47285 removed, draining for 30s
+  2026/10/05 16:05:41 pool p5: 127.0.0.1:47285 removed, draining for 30s
+  2026/10/05 16:05:43 pool p6: 127.0.0.1:47285 removed, draining for 30s
+
+## twostep: 10 times: one apply adds a new pool, the next (0.6 s later) points /moved/* at it
+starting config:
+     1	global
+     2	  admin admin.sock
+     3	  state state
+     4	  trace-log off
+     5	
+     6	site http://plain.test:41873
+     7	  route /moved/* -> p0 strip
+     8	
+     9	pool p0
+    10	  backend 127.0.0.1:38571
+    11	  health /healthz every 1s
+apply 1 at 4.6 s: Version 3 is running (it was 2).
+apply 2 at 6.7 s: Version 5 is running (it was 4).
+apply 3 at 8.8 s: Version 7 is running (it was 6).
+apply 4 at 10.9 s: Version 9 is running (it was 8).
+apply 5 at 13.0 s: Version 11 is running (it was 10).
+apply 6 at 15.0 s: Version 13 is running (it was 12).
+apply 7 at 17.1 s: Version 15 is running (it was 14).
+apply 8 at 19.1 s: Version 17 is running (it was 16).
+apply 9 at 21.2 s: Version 19 is running (it was 18).
+apply 10 at 23.2 s: Version 21 is running (it was 20).
+the load tool:
+  
+  kind        sent  answered  failed  conns last open  reset  closed   p50 ms   p99 ms   max ms
+  http1      24000     24000       0     16      0.0s      0       0     1.02     5.63    39.65
+  total: 24000 sent, 24000 answered, 0 failed, 0 connections reset, 24.0 s, rate held: true, loadtest CPU 4.5 s
+  loadtest: PASS
+BareProxy's log, drain lines:
+  2026/10/05 16:06:00 pool p0: 127.0.0.1:38571 removed, draining for 30s
+  2026/10/05 16:06:02 pool p1: 127.0.0.1:50201 removed, draining for 30s
+  2026/10/05 16:06:04 pool p2: 127.0.0.1:50201 removed, draining for 30s
+  2026/10/05 16:06:06 pool p3: 127.0.0.1:50201 removed, draining for 30s
+  2026/10/05 16:06:08 pool p4: 127.0.0.1:50201 removed, draining for 30s
+  2026/10/05 16:06:10 pool p5: 127.0.0.1:50201 removed, draining for 30s
+
+## health: 10 applies that change a pool's health line (every 1s and every 2s in turn)
+starting config:
+     1	global
+     2	  admin admin.sock
+     3	  state state
+     4	  trace-log off
+     5	
+     6	site http://plain.test:33081
+     7	  route /moved/* -> api strip
+     8	
+     9	pool api
+    10	  backend 127.0.0.1:46221
+    11	  backend 127.0.0.1:38925
+    12	  health /healthz every 1s
+apply 1 at 4.0 s: Version 2 is running (it was 1).
+apply 2 at 5.4 s: Version 3 is running (it was 2).
+apply 3 at 6.8 s: Version 4 is running (it was 3).
+apply 4 at 8.3 s: Version 5 is running (it was 4).
+apply 5 at 9.7 s: Version 6 is running (it was 5).
+apply 6 at 11.1 s: Version 7 is running (it was 6).
+apply 7 at 12.5 s: Version 8 is running (it was 7).
+apply 8 at 14.0 s: Version 9 is running (it was 8).
+apply 9 at 15.4 s: Version 10 is running (it was 9).
+apply 10 at 16.8 s: Version 11 is running (it was 10).
+the load tool:
+  
+  kind        sent  answered  failed  conns last open  reset  closed   p50 ms   p99 ms   max ms
+  http1      24000     23990      10     16      0.0s      0       0     0.99     2.23    19.21
+  total: 24000 sent, 23990 answered, 10 failed, 0 connections reset, 24.0 s, rate held: true, loadtest CPU 6.6 s
+    failure, http1: status 503: 10
+  loadtest: FAIL
+BareProxy's log, drain lines:
+  2026/10/05 16:06:25 pool api: 127.0.0.1:46221 removed, draining for 30s
+  2026/10/05 16:06:25 pool api: 127.0.0.1:38925 removed, draining for 30s
+  2026/10/05 16:06:26 pool api: 127.0.0.1:46221 removed, draining for 30s
+  2026/10/05 16:06:26 pool api: 127.0.0.1:38925 removed, draining for 30s
+  2026/10/05 16:06:28 pool api: 127.0.0.1:46221 removed, draining for 30s
+  2026/10/05 16:06:28 pool api: 127.0.0.1:38925 removed, draining for 30s
+
+## swap: 10 applies that replace the only backend of a pool with the other one, and back
+starting config:
+     1	global
+     2	  admin admin.sock
+     3	  state state
+     4	  trace-log off
+     5	
+     6	site http://plain.test:46587
+     7	  route /moved/* -> api strip
+     8	
+     9	pool api
+    10	  backend 127.0.0.1:59993
+    11	  health /healthz every 1s
+apply 1 at 4.0 s: Version 2 is running (it was 1).
+apply 2 at 5.4 s: Version 3 is running (it was 2).
+apply 3 at 6.8 s: Version 4 is running (it was 3).
+apply 4 at 8.3 s: Version 5 is running (it was 4).
+apply 5 at 9.7 s: Version 6 is running (it was 5).
+apply 6 at 11.1 s: Version 7 is running (it was 6).
+apply 7 at 12.5 s: Version 8 is running (it was 7).
+apply 8 at 13.9 s: Version 9 is running (it was 8).
+apply 9 at 15.4 s: Version 10 is running (it was 9).
+apply 10 at 16.8 s: Version 11 is running (it was 10).
+the load tool:
+  
+  kind        sent  answered  failed  conns last open  reset  closed   p50 ms   p99 ms   max ms
+  http1      24000     23990      10     16      0.0s      0       0     0.98     1.92     6.21
+  total: 24000 sent, 23990 answered, 10 failed, 0 connections reset, 24.0 s, rate held: true, loadtest CPU 6.7 s
+    failure, http1: status 503: 10
+  loadtest: FAIL
+BareProxy's log, drain lines:
+  2026/10/05 16:06:50 pool api: 127.0.0.1:59993 removed, draining for 30s
+  2026/10/05 16:06:51 pool api: 127.0.0.1:46309 removed, draining for 30s
+  2026/10/05 16:06:52 pool api: 127.0.0.1:59993 removed, draining for 30s
+  2026/10/05 16:06:54 pool api: 127.0.0.1:46309 removed, draining for 30s
+  2026/10/05 16:06:55 pool api: 127.0.0.1:59993 removed, draining for 30s
+  2026/10/05 16:06:57 pool api: 127.0.0.1:46309 removed, draining for 30s
