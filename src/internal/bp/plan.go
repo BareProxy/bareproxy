@@ -437,6 +437,9 @@ type effPair struct{ old, new string }
 // analyze runs every class of a host group through both configs and turns
 // the classes whose effect changes into lines.
 func (pl *planner) analyze(g *hostGroup, gi int, lines []*lineAcc) []*lineAcc {
+	if o, n := g.port.oldP, g.port.newP; o != nil && n != nil && o.TLS == n.TLS && sameRules(g.oldS, g.newS) {
+		return lines // the matcher picks the same rule with the same effect for every request
+	}
 	sp := g.sp
 	changed := map[int]map[effPair][]int{} // path rep -> effects -> tuples
 	for c := 0; c < sp.ncombo; c++ {
@@ -520,6 +523,26 @@ func (pl *planner) analyze(g *hostGroup, gi int, lines []*lineAcc) []*lineAcc {
 		}
 	}
 	return lines
+}
+
+// sameRules reports whether two sites have the same rules in the same
+// order, each with the same matchers and effect, and the same no-rule
+// effect. Then every request is handled the same by both.
+func sameRules(a, b *Site) bool {
+	if a == nil || b == nil {
+		return a == b
+	}
+	if len(a.Routes) != len(b.Routes) || routeEffect(a, nil) != routeEffect(b, nil) {
+		return false
+	}
+	for i, x := range a.Routes {
+		y := b.Routes[i]
+		if x.Path != y.Path || x.Prefix != y.Prefix || strings.Join(x.Methods, ",") != strings.Join(y.Methods, ",") ||
+			fmt.Sprint(x.Headers) != fmt.Sprint(y.Headers) || routeEffect(a, x) != routeEffect(b, y) {
+			return false
+		}
+	}
+	return true
 }
 
 // factor splits a set of distinct tuples into a few cartesian products.
