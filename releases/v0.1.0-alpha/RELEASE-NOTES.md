@@ -17,12 +17,12 @@ BareProxy is a small web server and reverse proxy that explains every routing de
 
 ## Install
 
-Pick the tarball for your CPU: `bareproxy-0.1.0-alpha-linux-amd64.tar.gz` for x86-64, or `bareproxy-0.1.0-alpha-linux-arm64.tar.gz` for 64-bit ARM. Check it against `SHA256SUMS` before you unpack it.
+The files are in this folder. Pick the tarball for your CPU: `bareproxy-0.1.0-alpha-linux-amd64.tar.gz` for x86-64, or `bareproxy-0.1.0-alpha-linux-arm64.tar.gz` for 64-bit ARM. Check it against `SHA256SUMS` before you unpack it.
 
 ```
 VERSION=0.1.0-alpha
-curl -LO https://github.com/BareProxy/bareproxy/releases/download/v$VERSION/bareproxy-$VERSION-linux-amd64.tar.gz
-curl -LO https://github.com/BareProxy/bareproxy/releases/download/v$VERSION/SHA256SUMS
+curl -LO https://github.com/BareProxy/bareproxy/raw/main/releases/v$VERSION/bareproxy-$VERSION-linux-amd64.tar.gz
+curl -LO https://github.com/BareProxy/bareproxy/raw/main/releases/v$VERSION/SHA256SUMS
 sha256sum --ignore-missing -c SHA256SUMS
 tar xzf bareproxy-$VERSION-linux-amd64.tar.gz
 cd bareproxy-$VERSION-linux-amd64

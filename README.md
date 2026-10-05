@@ -10,12 +10,15 @@ The whole project is open source under the Apache License 2.0. Copyright 2026 Ba
 
 ## Install
 
-Download the tarball for your CPU and `SHA256SUMS` from the [v0.1.0-alpha release](https://github.com/BareProxy/bareproxy/releases/tag/v0.1.0-alpha). There are two tarballs: `bareproxy-0.1.0-alpha-linux-amd64.tar.gz` for x86-64 and `bareproxy-0.1.0-alpha-linux-arm64.tar.gz` for 64-bit ARM. The binary inside is static, so it needs no libraries on the machine. The same files are in this repository under [releases/v0.1.0-alpha](releases/v0.1.0-alpha/).
+The Linux binaries are in this repository, in [releases/v0.1.0-alpha](releases/v0.1.0-alpha/): `bareproxy-0.1.0-alpha-linux-amd64.tar.gz` for x86-64 and `bareproxy-0.1.0-alpha-linux-arm64.tar.gz` for 64-bit ARM, with `SHA256SUMS` and the [release notes](releases/v0.1.0-alpha/RELEASE-NOTES.md). The binary inside is static, so it needs no libraries on the machine.
 
 ```
+V=0.1.0-alpha
+curl -LO https://github.com/BareProxy/bareproxy/raw/main/releases/v$V/bareproxy-$V-linux-amd64.tar.gz
+curl -LO https://github.com/BareProxy/bareproxy/raw/main/releases/v$V/SHA256SUMS
 sha256sum --ignore-missing -c SHA256SUMS
-tar xzf bareproxy-0.1.0-alpha-linux-amd64.tar.gz
-cd bareproxy-0.1.0-alpha-linux-amd64
+tar xzf bareproxy-$V-linux-amd64.tar.gz
+cd bareproxy-$V-linux-amd64
 ./bareproxy version
 sudo install -m 0755 bareproxy /usr/local/bin/bareproxy
 ```
