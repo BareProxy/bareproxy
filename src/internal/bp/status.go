@@ -131,7 +131,7 @@ func (s *Server) Status() *Status {
 	c := rt.Cfg
 	st := &Status{Version: Version, ConfigFile: c.File, ConfigVersion: rt.Version,
 		Listeners: []ListenerStatus{}, Sites: []SiteStatus{}, Pools: []PoolStatus{}, Certificates: []CertStatus{}}
-	started := rt.Mem.Started()
+	started := rt.Mem.started
 	st.Started, st.UptimeSeconds = stamp(started), time.Since(started).Seconds()
 	for _, p := range sortedPorts(c) {
 		st.Listeners = append(st.Listeners, ListenerStatus{Port: p.Num, TLS: p.TLS, Sites: portSites(p)})

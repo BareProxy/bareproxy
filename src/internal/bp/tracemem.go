@@ -77,7 +77,8 @@ func newTraceMem() *TraceMem { return &TraceMem{started: time.Now(), subs: map[*
 // isProxyError reports outcomes where BareProxy, not the application,
 // failed to deliver.
 func isProxyError(outcome string) bool {
-	return slices.Contains([]string{"no_backend", "connect_failed", "bad_response", "timeout"}, outcome)
+	return outcome == "no_backend" || outcome == "connect_failed" ||
+		outcome == "bad_response" || outcome == "timeout"
 }
 
 // Add stores a finished record, given with its JSON. The oldest records go
@@ -230,9 +231,6 @@ func (m *TraceMem) Events() []Event {
 	defer m.mu.Unlock()
 	return append([]Event{}, m.events...)
 }
-
-// Started is when this process began keeping the ring, which is when it started.
-func (m *TraceMem) Started() time.Time { return m.started }
 
 // Event records a change in BareProxy's own state, such as an apply, a
 // reload or a backend going down, for the events command.

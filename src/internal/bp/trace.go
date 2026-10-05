@@ -341,18 +341,21 @@ func parseTraceparent(v string) (traceID, flags string, ok bool) {
 }
 
 func lowerHex(s string) bool {
-	return !strings.ContainsFunc(s, func(c rune) bool { return (c < '0' || c > '9') && (c < 'a' || c > 'f') })
+	for i := 0; i < len(s); i++ {
+		if c := s[i]; (c < '0' || c > '9') && (c < 'a' || c > 'f') {
+			return false
+		}
+	}
+	return true
 }
 
 // requestTrace returns the trace ID and flags of a request's traceparent
 // header, or empty strings unless there is exactly one and it is valid.
 func requestTrace(h http.Header) (traceID, flags string) {
 	if vs := h.Values("Traceparent"); len(vs) == 1 {
-		if id, fl, ok := parseTraceparent(vs[0]); ok {
-			return id, fl
-		}
+		traceID, flags, _ = parseTraceparent(vs[0])
 	}
-	return "", ""
+	return traceID, flags
 }
 
 // setTraceparent puts the request ID in as the new parent ID of the

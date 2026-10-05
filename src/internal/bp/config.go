@@ -495,29 +495,27 @@ func (p *parser) route(ln int, toks []token) (*Route, error) {
 	if len(left) == 0 {
 		return nil, errors.New("route needs a path, such as /api/*")
 	}
-	i := 0
 	if !strings.HasPrefix(left[0].s, "/") {
 		r.Methods = strings.Split(left[0].s, ",")
 		if j := slices.IndexFunc(r.Methods, func(m string) bool { return !validMethod(m) }); j >= 0 {
 			return nil, fmt.Errorf("%q isn't a method; write methods in capitals, such as GET,HEAD", r.Methods[j])
 		}
-		i = 1
+		left = left[1:]
 	}
-	if i >= len(left) {
+	if len(left) == 0 {
 		return nil, errors.New("route needs a path after the methods")
 	}
-	ps := left[i].s
-	i++
+	ps := left[0].s
 	r.Path, r.Prefix = strings.CutSuffix(ps, "/*")
 	check := cmp.Or(r.Path, "/")
 	if strings.Contains(check, "*") || !isNormalPath(check) || (r.Prefix && strings.HasSuffix(r.Path, "/")) {
 		return nil, fmt.Errorf("path %q isn't in normal form: no * except a final /*, no //, no . or .. parts, and escapes only where needed", ps)
 	}
-	for ; i < len(left); i += 2 {
-		if left[i].s != "header" || i+1 >= len(left) {
-			return nil, fmt.Errorf("unexpected %q: after the path a route takes only header NAME or header NAME=VALUE", left[i].s)
+	for left = left[1:]; len(left) > 0; left = left[2:] {
+		if left[0].s != "header" || len(left) < 2 {
+			return nil, fmt.Errorf("unexpected %q: after the path a route takes only header NAME or header NAME=VALUE", left[0].s)
 		}
-		name, val, has := strings.Cut(left[i+1].s, "=")
+		name, val, has := strings.Cut(left[1].s, "=")
 		if !validHeaderName(name) {
 			return nil, fmt.Errorf("%q isn't a header name", name)
 		}
