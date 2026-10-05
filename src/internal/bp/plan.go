@@ -536,7 +536,6 @@ func factor(ts [][]int) [][][]int {
 // space is the classes of requests a site pair can tell apart: path
 // representatives, method representatives and header combinations.
 type space struct {
-	seg     string
 	reps    []string          // representative paths
 	repSort []string          // sort key per representative
 	nodes   map[string]*pnode // pattern path ("" for the root) -> its node
@@ -580,22 +579,22 @@ func newSpace(a, b *Site) *space {
 	}
 	list := keysOf(pats)
 	// seg is a path segment no pattern holds, for fresh paths.
-	sp := &space{seg: "~bp"}
-	for n := 2; slices.ContainsFunc(list, func(p string) bool { return strings.Contains(p, sp.seg) }); n++ {
-		sp.seg = "~bp" + strconv.Itoa(n)
+	seg := "~bp"
+	for n := 2; slices.ContainsFunc(list, func(p string) bool { return strings.Contains(p, seg) }); n++ {
+		seg = "~bp" + strconv.Itoa(n)
 	}
+	sp := &space{root: &pnode{self: -1}}
 	add := func(path, sortKey string) int {
 		sp.reps = append(sp.reps, path)
 		sp.repSort = append(sp.repSort, sortKey)
 		return len(sp.reps) - 1
 	}
-	sp.root = &pnode{self: -1}
-	sp.root.below = add("/"+sp.seg, "\xfe")
+	sp.root.below = add("/"+seg, "\xfe")
 	sp.nodes = map[string]*pnode{"": sp.root}
 	for _, p := range list {
 		n := &pnode{path: p, self: add(p, p), below: -1}
 		if !strings.HasSuffix(p, "/") {
-			n.below = add(p+"/"+sp.seg, p+"/\xfe")
+			n.below = add(p+"/"+seg, p+"/\xfe")
 		}
 		sp.nodes[p] = n
 	}
