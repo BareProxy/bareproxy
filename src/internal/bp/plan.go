@@ -86,7 +86,7 @@ func (p *PlanResult) Text() string {
 		if len(p.Changes) > 0 {
 			b.WriteString("Routing\n")
 			if p.TooMany {
-				fmt.Fprintf(&b, "  (more than %d request classes in a site, so this lists changed rules instead)\n", MaxPlanClasses)
+				fmt.Fprintf(&b, "  (more than %s request classes in a site, so this lists changed rules instead)\n", groupDigits(MaxPlanClasses))
 			}
 			for _, l := range p.Changes {
 				fmt.Fprintf(&b, "  %s, %s\n      %s  ->  %s\n", l.Where, l.What, orNone(l.Old), orNone(l.New))
@@ -111,6 +111,15 @@ func (p *PlanResult) Text() string {
 // JSON renders the plan for programs.
 func (p *PlanResult) JSON() ([]byte, error) { return json.MarshalIndent(p, "", "  ") }
 
+// groupDigits writes a count with commas, such as 1,000,000.
+func groupDigits(n int) string {
+	s := strconv.Itoa(n)
+	for i := len(s) - 3; i > 0; i -= 3 {
+		s = s[:i] + "," + s[i:]
+	}
+	return s
+}
+
 func orNone(s string) string {
 	if s == "" {
 		return "(none)"
@@ -119,8 +128,9 @@ func orNone(s string) string {
 }
 
 // Classify returns the index in Changes of the line whose class holds a
-// request, or -1 when the plan lists no change for it. The path must be
-// in normal form (NormalizePath). It always returns -1 when TooMany is set.
+// request, or -1 when the plan lists no change for it. The host has no
+// port, and the path is in normal form (NormalizePath). It always returns
+// -1 when TooMany is set.
 func (p *PlanResult) Classify(port int, host, method, path string, h http.Header) int {
 	if p.pl == nil || p.TooMany {
 		return -1
