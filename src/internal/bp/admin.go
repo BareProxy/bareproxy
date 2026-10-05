@@ -51,17 +51,14 @@ func peerUser(r *http.Request) string {
 
 // reply sends v as JSON with json=1, or text otherwise.
 func reply(w http.ResponseWriter, r *http.Request, code int, v any, text string) {
+	body, ctype := text, "text/plain; charset=utf-8"
 	if r.URL.Query().Get("json") == "1" {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(code)
-		e := json.NewEncoder(w)
-		e.SetIndent("", "  ")
-		e.Encode(v)
-		return
+		js, _ := json.MarshalIndent(v, "", "  ")
+		body, ctype = string(js)+"\n", "application/json"
 	}
-	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	w.Header().Set("Content-Type", ctype)
 	w.WriteHeader(code)
-	io.WriteString(w, text)
+	io.WriteString(w, body)
 }
 
 func replyErr(w http.ResponseWriter, r *http.Request, err error) {
