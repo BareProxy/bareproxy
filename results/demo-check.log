@@ -1,5 +1,5 @@
 BareProxy browser demo check
-Run: Mon Oct 05 2026 09:50:18 GMT+0300 (Israel Daylight Time)
+Run: Mon Oct 05 2026 09:54:15 GMT+0300 (Israel Daylight Time)
 Demo folder: /home/claude/out/demo-dist
 bareproxy.wasm: 11502780 bytes raw, 3027740 bytes gzipped (gzip -9)
 
@@ -16,11 +16,11 @@ bareproxy.wasm: 11502780 bytes raw, 3027740 bytes gzipped (gzip -9)
      the rule table lines up. The native build is from the same source tree as the wasm build.
 
 == Setup
-fixture folder: /tmp/bpdc-NQzFTz
+fixture folder: /tmp/bpdc-u9HSVp
 PASS  native bareproxy builds
 PASS  native planref builds
 native: bareproxy 0.1.0-dev (first cut), built with go1.27.1
-serving /home/claude/out/demo-dist at http://127.0.0.1:46319
+serving /home/claude/out/demo-dist at http://127.0.0.1:35747
 browser: Chromium 141.0.7390.37 (headless, Playwright)
 
 == Loading
@@ -30,7 +30,7 @@ PASS  page becomes ready after the delayed load
 PASS  page still starts when the host sends .wasm with the wrong content type
 PASS  a missing wasm file shows an error, not a blank page
 PASS  and the output panels say the core is not running
-status line: "Ready. BareProxy 0.1.0-dev (first cut), loaded in 0.2 s." (page load to ready, wall clock 0.4 s, local server)
+status line: "Ready. BareProxy 0.1.0-dev (first cut), loaded in 0.3 s." (page load to ready, wall clock 0.4 s, local server)
 core version string: 0.1.0-dev (first cut)
 PASS  the core version equals the native one
 
@@ -265,9 +265,9 @@ PASS  plan of a config against itself says no changes
 PASS  plan with a broken new config lists its problems
 
 == Speed (measured in this browser)
-  check    median 0.10 ms, slowest 19.20 ms
-  explain  median 0.20 ms, slowest 6.40 ms
-  plan     median 0.60 ms, slowest 1.00 ms
+  check    median 0.10 ms, slowest 21.90 ms
+  explain  median 0.20 ms, slowest 9.70 ms
+  plan     median 0.50 ms, slowest 4.80 ms
 PASS  every call is under 100 ms in the median
 
 == Layout and screenshots
@@ -281,12 +281,22 @@ PASS  320 px: no horizontal page scroll
 PASS  320 px: every button, chip and field is at least 32 px tall
 NOTE  320 px: fields below 16 px font (iOS zooms into those on focus): cfg-a:13px, headers:13px, cfg-b:13px
 screenshot: /home/claude/out/demo-shots/demo-320.png
+PASS  the demo loads inside an iframe whose src is /live-demo/ (the way the site embeds it)
 PASS  760 px iframe: no horizontal scroll inside the frame
-screenshot: /home/claude/out/demo-shots/demo-iframe-760.png (frame content 2459 px tall)
+screenshot: /home/claude/out/demo-shots/demo-iframe-760-h1100.png (the frame as the site embeds it: 760 x 1100 px, page scrolls inside)
+  the demo is 2463 px tall at 760 px wide, so a 1100 px frame scrolls inside
+  at 760 px wide the three panels end 779, 1433, 2398 px from the top, so a frame about 1449 px tall shows the config and the whole explain panel without scrolling inside
+screenshot: /home/claude/out/demo-shots/demo-iframe-760.png (frame content 2463 px tall)
+
+== Served under /live-demo/ (the path the site uses)
+PASS  https://.../live-demo/ opens the page and the core starts (relative links work from that folder)
+PASS  and explain answers there
+  requests under /live-demo/: /live-demo/ 200, /live-demo/demo.css 200, /live-demo/wasm_exec.js 200, /live-demo/demo.js 200, /live-demo/bareproxy.wasm 200
+PASS  every file under /live-demo/ was found
 
 == Network: nothing is sent anywhere
-  requests the local server saw: 36, methods: GET
-  paths: /index.html x7, /demo.css x7, /wasm_exec.js x7, /demo.js x7, /bareproxy.wasm x7, /_frame.html x1
+  requests the local server saw: 41, methods: GET
+  paths: /index.html x6, /demo.css x6, /wasm_exec.js x6, /demo.js x6, /bareproxy.wasm x6, /_frame.html x1, /live-demo/ x2, /live-demo/demo.css x2, /live-demo/wasm_exec.js x2, /live-demo/demo.js x2, /live-demo/bareproxy.wasm x2
 PASS  the page only makes GET requests
 PASS  every request goes to the local server (none to any other host)
 PASS  the only files requested are the five that were built (plus the check's own frame page)
@@ -294,4 +304,4 @@ PASS  no request failed except the ones this check forced
 PASS  no console errors or warnings (apart from the forced wrong-content-type case)
 
 == Summary
-105 passed, 0 failed, in 13 s
+109 passed, 0 failed, in 15 s

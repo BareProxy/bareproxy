@@ -126,7 +126,10 @@ function serve(dist, extra) {
   const seen = [];
   const server = http.createServer((req, res) => {
     const url = new URL(req.url, 'http://localhost');
-    const name = decodeURIComponent(url.pathname).replace(/^\/+/, '') || 'index.html';
+    let name = decodeURIComponent(url.pathname).replace(/^\/+/, '');
+    // The real site serves the demo at /live-demo/, so the same files answer there too.
+    if (name.startsWith('live-demo/')) name = name.slice('live-demo/'.length);
+    if (name === '') name = 'index.html';
     const rec = { method: req.method, path: url.pathname, status: 0 };
     seen.push(rec);
     if (extra[name]) { rec.status = 200; res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' }); res.end(extra[name]); return; }
@@ -338,7 +341,7 @@ async function main() {
 
   const { chromium } = loadPlaywright();
   const extra = {
-    '_frame.html': `<!doctype html><meta charset="utf-8"><title>frame</title><body style="margin:0;padding:16px;background:#e9edf1"><iframe id="f" src="/index.html" style="display:block;width:760px;height:900px;border:1px solid #b8c2cc;background:#fff"></iframe></body>`,
+    '_frame.html': `<!doctype html><meta charset="utf-8"><title>frame</title><body style="margin:0;padding:16px;background:#e9edf1"><iframe id="f" src="/live-demo/" title="BareProxy live demo" style="display:block;width:760px;height:1100px;border:1px solid #b8c2cc;background:#fff"></iframe></body>`,
   };
   const { server, seen, port } = await serve(DIST, extra);
   const base = `http://127.0.0.1:${port}`;
@@ -659,14 +662,40 @@ async function main() {
       await p3.goto(base + '/_frame.html');
       const frame = p3.frameLocator('#f');
       await frame.locator('#status[data-state="ready"]').waitFor({ timeout: 120000 });
-      await frame.locator('#presets .chip').nth(1).click();
-      const f = p3.frames().find((x) => x.url().endsWith('/index.html'));
+      await frame.locator('#presets .chip').nth(2).click(); // the old-page request, which has the longest output
+      const f = p3.frames().find((x) => x.url().endsWith('/live-demo/'));
+      ok('the demo loads inside an iframe whose src is /live-demo/ (the way the site embeds it)', !!f);
       o = await f.evaluate(() => ({ sw: document.documentElement.scrollWidth, cw: document.documentElement.clientWidth, h: document.documentElement.scrollHeight }));
       ok('760 px iframe: no horizontal scroll inside the frame', o.sw <= o.cw, JSON.stringify(o));
+      await p3.setViewportSize({ width: 800, height: 1160 });
+      await p3.screenshot({ path: path.join(SHOTS, 'demo-iframe-760-h1100.png') });
+      out('screenshot: ' + path.join(SHOTS, 'demo-iframe-760-h1100.png') + ' (the frame as the site embeds it: 760 x 1100 px, page scrolls inside)');
+      out(`  the demo is ${o.h} px tall at 760 px wide, so a 1100 px frame scrolls inside`);
+      const ends = await f.evaluate(() => [...document.querySelectorAll('.panel')].map((pn) => Math.round(pn.getBoundingClientRect().bottom + window.scrollY)));
+      out(`  at 760 px wide the three panels end ${ends.join(', ')} px from the top, so a frame about ${ends[1] + 16} px tall shows the config and the whole explain panel without scrolling inside`);
       await p3.evaluate((h) => { document.getElementById('f').style.height = h + 'px'; }, o.h);
       await p3.screenshot({ path: path.join(SHOTS, 'demo-iframe-760.png'), fullPage: true });
       out('screenshot: ' + path.join(SHOTS, 'demo-iframe-760.png') + ` (frame content ${o.h} px tall)`);
       await c3.close();
+    }
+
+    // ---- served under /live-demo/ -------------------------------------------------------
+    head('Served under /live-demo/ (the path the site uses)');
+    {
+      const c4 = await browser.newContext({ viewport: { width: 1280, height: 900 } });
+      hookRequests(c4);
+      const p4 = await c4.newPage(); hookPage(p4, 'live-demo');
+      await p4.goto(base + '/live-demo/');
+      let ready = true;
+      try { await p4.waitForSelector('#status[data-state="ready"]', { timeout: 120000 }); } catch { ready = false; }
+      ok('https://.../live-demo/ opens the page and the core starts (relative links work from that folder)', ready);
+      await p4.click('#presets .chip[data-url="https://example.com/api/orders"]');
+      const txt = await p4.textContent('#explain-out');
+      ok('and explain answers there', /Sent upstream as GET \/orders/.test(txt), txt);
+      const lp = seen.filter((x) => x.path.startsWith('/live-demo/')).map((x) => `${x.path} ${x.status}`);
+      out('  requests under /live-demo/: ' + [...new Set(lp)].join(', '));
+      ok('every file under /live-demo/ was found', lp.length >= 5 && seen.filter((x) => x.path.startsWith('/live-demo/') && x.status !== 200).length === 0);
+      await c4.close();
     }
 
     // ---- network ------------------------------------------------------------------------
@@ -678,7 +707,7 @@ async function main() {
     ok('the page only makes GET requests', methods.every((m) => m === 'GET'), methods.join(','));
     ok('every request goes to the local server (none to any other host)', outside.length === 0, outside.join('\n'));
     const pageFiles = new Set(['/index.html', '/demo.css', '/demo.js', '/wasm_exec.js', '/bareproxy.wasm', '/_frame.html', '/favicon.ico']);
-    ok('the only files requested are the five that were built (plus the check\'s own frame page)', Object.keys(byPath).every((p) => pageFiles.has(p)), Object.keys(byPath).join(', '));
+    ok('the only files requested are the five that were built (plus the check\'s own frame page)', Object.keys(byPath).every((p) => pageFiles.has(p.replace(/^\/live-demo\//, '/')) || p === '/live-demo/'), Object.keys(byPath).join(', '));
     ok('no request failed except the ones this check forced', seen.filter((s) => s.status >= 400 && s.path !== '/favicon.ico').length === 0, JSON.stringify(seen.filter((s) => s.status >= 400)));
     const real = consoleProblems.filter((m) => !m.startsWith('wrong-type'));
     ok('no console errors or warnings (apart from the forced wrong-content-type case)', real.length === 0 || real.every((m) => /Failed to load resource.*(404|gone)/.test(m)), real.join('\n'));
