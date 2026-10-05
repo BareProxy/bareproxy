@@ -54,12 +54,7 @@ func MakePlan(old, new *Config) *PlanResult {
 
 // PlanID is a short hash of both configs' text.
 func PlanID(old, new *Config) string {
-	text := func(c *Config) string {
-		if c == nil {
-			return ""
-		}
-		return strings.Join(c.Lines, "\n")
-	}
+	text := func(c *Config) string { return strings.Join(cmp.Or(c, &Config{}).Lines, "\n") }
 	sum := sha256.Sum256([]byte(text(old) + "\x00" + text(new)))
 	return hex.EncodeToString(sum[:])[:12]
 }
@@ -78,28 +73,26 @@ func (p *PlanResult) Text() string {
 			kind = "changed rule"
 		}
 		fmt.Fprintf(&b, "Plan %s: %s, %s\n", p.ID, plural(len(p.Changes), kind), plural(len(p.Settings), "other change"))
-		if len(p.Changes) > 0 {
-			b.WriteString("Routing\n")
-			if p.TooMany {
-				fmt.Fprintf(&b, "  (more than %s request classes in a site, so this lists changed rules instead)\n", groupDigits(MaxPlanClasses))
-			}
-			for _, l := range p.Changes {
-				fmt.Fprintf(&b, "  %s, %s\n      %s  ->  %s\n", l.Where, l.What, orNone(l.Old), orNone(l.New))
-			}
+	}
+	if len(p.Changes) > 0 {
+		b.WriteString("Routing\n")
+		if p.TooMany {
+			fmt.Fprintf(&b, "  (more than %s request classes in a site, so this lists changed rules instead)\n", groupDigits(MaxPlanClasses))
 		}
-		if len(p.Settings) > 0 {
-			b.WriteString("Other changes\n")
-			for _, s := range p.Settings {
+		for _, l := range p.Changes {
+			fmt.Fprintf(&b, "  %s, %s\n      %s  ->  %s\n", l.Where, l.What, orNone(l.Old), orNone(l.New))
+		}
+	}
+	list := func(title string, items []string) {
+		if len(items) > 0 {
+			b.WriteString(title + "\n")
+			for _, s := range items {
 				fmt.Fprintf(&b, "  %s\n", s)
 			}
 		}
 	}
-	if len(p.Warnings) > 0 {
-		b.WriteString("Warnings\n")
-		for _, w := range p.Warnings {
-			fmt.Fprintf(&b, "  %s\n", w)
-		}
-	}
+	list("Other changes", p.Settings)
+	list("Warnings", p.Warnings)
 	return b.String()
 }
 
@@ -115,12 +108,7 @@ func groupDigits(n int) string {
 	return s
 }
 
-func orNone(s string) string {
-	if s == "" {
-		return "(none)"
-	}
-	return s
-}
+func orNone(s string) string { return cmp.Or(s, "(none)") }
 
 // Classify returns the index in Changes of the line whose class holds a
 // request, or -1 when the plan lists no change for it. The host has no
@@ -379,9 +367,7 @@ type lineAcc struct {
 func (pl *planner) routing(res *PlanResult) {
 	for _, pp := range pl.ports {
 		for _, g := range pp.groups {
-			if g.sp.count() > MaxPlanClasses {
-				res.TooMany = true
-			}
+			res.TooMany = res.TooMany || g.sp.count() > MaxPlanClasses
 		}
 	}
 	var lines []*lineAcc
@@ -462,13 +448,12 @@ func (pl *planner) analyze(g *hostGroup, gi int, lines []*lineAcc) []*lineAcc {
 	}
 	groups := map[key]*merged{}
 	var order []key
-	sizes := append([]int{len(sp.methods)}, sp.nstates...)
 	for pe, ts := range changed {
 		digits := make([][]int, len(ts))
 		for i, t := range ts {
 			digits[i] = sp.digits(t)
 		}
-		for _, prod := range factor(digits, sizes) {
+		for _, prod := range factor(digits) {
 			k := key{pe.e, fmt.Sprint(prod)}
 			m := groups[k]
 			if m == nil {
@@ -545,8 +530,8 @@ func rulesFor(s *Site, path string) []*Route {
 
 // factor splits a set of distinct tuples into a few cartesian products.
 // Each result holds one sorted set of values per dimension.
-func factor(ts [][]int, sizes []int) [][][]int {
-	nd := len(sizes)
+func factor(ts [][]int) [][][]int {
+	nd := len(ts[0])
 	proj := make([][]int, nd)
 	total := 1
 	for d := 0; d < nd; d++ {
@@ -589,7 +574,7 @@ func factor(ts [][]int, sizes []int) [][][]int {
 	}
 	var out [][][]int
 	for _, p := range parts {
-		for _, sub := range factor(p.rest, sizes[1:]) {
+		for _, sub := range factor(p.rest) {
 			out = append(out, append([][]int{p.vals}, sub...))
 		}
 	}
@@ -667,12 +652,12 @@ func newSpace(a, b *Site) *space {
 		}
 		nodes[p] = n
 	}
+	// A pattern's parent is the longest pattern that ends where one of its
+	// slashes starts (the root, "", at worst).
 	for _, p := range list {
-		for i := len(p) - 1; i >= 0; i-- {
-			if p[i] != '/' {
-				continue
-			}
-			if parent := nodes[p[:i]]; parent != nil {
+		for q := p; ; {
+			q = q[:strings.LastIndexByte(q, '/')]
+			if parent := nodes[q]; parent != nil {
 				parent.kids = append(parent.kids, nodes[p])
 				break
 			}
@@ -715,11 +700,8 @@ func newSpace(a, b *Site) *space {
 // count is the number of classes, or more than MaxPlanClasses when there
 // are too many to count.
 func (sp *space) count() int {
-	if sp.big || sp.ncombo > MaxPlanClasses {
-		return MaxPlanClasses + 1
-	}
 	n := len(sp.reps) * len(sp.methods)
-	if n > MaxPlanClasses || n*sp.ncombo > MaxPlanClasses {
+	if sp.big || sp.ncombo > MaxPlanClasses || n > MaxPlanClasses || n*sp.ncombo > MaxPlanClasses {
 		return MaxPlanClasses + 1
 	}
 	return n * sp.ncombo
@@ -1108,7 +1090,6 @@ func planWarnings(c *Config) []string {
 	return out
 }
 
-// each calls f for every class representative.
 // each calls f for every class representative of a site, with the
 // site's rules for the representative's path (pathSite).
 func (sp *space) each(s *Site, f func(rules *Site, method, path string, h http.Header)) {
