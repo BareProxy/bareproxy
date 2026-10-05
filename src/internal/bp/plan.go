@@ -562,7 +562,7 @@ func newSpace(a, b *Site) *space {
 	pats := map[string]bool{}
 	methods := map[string]bool{}
 	hv := map[string]map[string]bool{}
-	for _, r := range slices.Concat(routesOf(a), routesOf(b)) {
+	for _, r := range slices.Concat(cmp.Or(a, &Site{}).Routes, cmp.Or(b, &Site{}).Routes) {
 		if r.Path != "" {
 			pats[r.Path] = true
 		}
@@ -907,7 +907,7 @@ func joinAnd(xs []string) string {
 // ruleDiff lists the rule lines that differ between a group's two sites,
 // for plans with too many classes to work through.
 func ruleDiff(g *hostGroup) []PlanLine {
-	a, b := routesOf(g.oldS), routesOf(g.newS)
+	a, b := cmp.Or(g.oldS, &Site{}).Routes, cmp.Or(g.newS, &Site{}).Routes
 	// longest common subsequence of rule texts
 	n, m := len(a), len(b)
 	lcs := make([][]int, n+1)
@@ -1024,13 +1024,6 @@ func (sp *space) each(s *Site, f func(rules *Site, method, path string, h http.H
 			}
 		}
 	}
-}
-
-func routesOf(s *Site) []*Route {
-	if s == nil {
-		return nil
-	}
-	return s.Routes
 }
 
 // pathSite is a site cut down to its rules for one path, or nil.
