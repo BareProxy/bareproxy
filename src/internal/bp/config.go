@@ -53,6 +53,9 @@ type Config struct {
 	Lines      []string
 	Admin      string
 	TraceLog   string
+	TraceSize  int64 // rotate the trace log file past this many bytes; 0 means never
+	TraceCount int   // old trace log files kept
+	TraceMem   int64 // bytes of record JSON kept in memory
 	TraceQuery bool
 	IDHeader   bool
 	Sites      []*Site
@@ -262,6 +265,7 @@ func Parse(file, src string) (*Config, []Problem) {
 		File:     file,
 		Admin:    "/run/bareproxy/admin.sock",
 		TraceLog: "stdout",
+		TraceMem: 32 << 20,
 		IDHeader: true,
 		Pools:    map[string]*PoolSpec{},
 		Ports:    map[int]*Port{},
@@ -394,8 +398,31 @@ func (p *parser) global(ln int, w []string) {
 		default:
 			c.TraceLog = p.path(w[1])
 		}
+		c.TraceSize, c.TraceCount = 0, 0
 		if len(w) == 4 {
-			p.warnf(ln, "trace-log rotation isn't built yet, so the file grows without limit")
+			size, err := parseSize(w[2])
+			count, err2 := strconv.Atoi(w[3])
+			switch {
+			case c.TraceLog == "stdout" || c.TraceLog == "off":
+				p.errf(ln, "only a trace log file can rotate, not %s", w[1])
+			case err != nil || size == 0:
+				p.errf(ln, "the size to rotate at must be more than zero, such as 10MB")
+			case err2 != nil || count < 1:
+				p.errf(ln, "the number of old files to keep must be 1 or more")
+			default:
+				c.TraceSize, c.TraceCount = size, count
+			}
+		}
+	case "trace-memory":
+		if !one() {
+			return
+		}
+		if w[1] == "off" {
+			c.TraceMem = 0
+		} else if n, err := parseSize(w[1]); err != nil {
+			p.errf(ln, "%v", err)
+		} else {
+			c.TraceMem = n
 		}
 	case "trace-query":
 		if one() {
@@ -405,7 +432,7 @@ func (p *parser) global(ln int, w []string) {
 		if one() {
 			c.IDHeader = p.onOff(ln, w[1])
 		}
-	case "state", "acme-email", "acme-ca", "trust", "trace-memory",
+	case "state", "acme-email", "acme-ca", "trust",
 		"client-header-timeout", "client-body-timeout", "client-idle-timeout", "shutdown-timeout":
 		p.warnf(ln, "%s isn't built yet in this version, so it's ignored", w[0])
 	default:

@@ -61,7 +61,8 @@ func usage() {
   bareproxy check [FILE]                check a config without starting
   bareproxy explain [--config FILE] [--offline] [-H "Name: value"]... METHOD URL
                                         how a request would be handled
-  bareproxy why [--config FILE] ID      what happened to a request
+  bareproxy why [--config FILE] [--json] ID
+                                        what happened to a request (memory first, then the trace log)
   bareproxy version
 FILE defaults to $BAREPROXY_CONFIG, then /etc/bareproxy/bareproxy.conf.
 `)
@@ -207,12 +208,15 @@ func askServer(sock, method, rawURL string, hs []string) (string, error) {
 func why(args []string) int {
 	var file string
 	var pos []string
+	asJSON := false
 	for i := 0; i < len(args); i++ {
 		switch args[i] {
 		case "--config", "-c":
 			if i++; i < len(args) {
 				file = args[i]
 			}
+		case "--json":
+			asJSON = true
 		default:
 			pos = append(pos, args[i])
 		}
@@ -229,15 +233,26 @@ func why(args []string) int {
 		return 1
 	}
 	c.Close()
-	if c.TraceLog == "stdout" || c.TraceLog == "off" {
-		fmt.Fprintf(os.Stderr, "bareproxy: why reads the trace log, and this config sends it to %s; point trace-log at a file\n", c.TraceLog)
-		return 1
+	rec, asked, err := traceWhy(c.Admin, pos[0])
+	if rec == nil && err == nil {
+		if c.TraceLog == "stdout" || c.TraceLog == "off" {
+			if asked {
+				fmt.Fprintf(os.Stderr, "bareproxy: no request with an ID starting %s in memory, and this config sends the trace log to %s, so there is no file to look in\n", pos[0], c.TraceLog)
+			} else {
+				fmt.Fprintf(os.Stderr, "bareproxy: no running server answered, and this config sends the trace log to %s; point trace-log at a file\n", c.TraceLog)
+			}
+			return 1
+		}
+		rec, err = bp.FindRecord(c.TraceLog, pos[0])
 	}
-	rec, err := bp.FindRecord(c.TraceLog, pos[0])
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "bareproxy:", err)
 		return 1
 	}
-	fmt.Print(bp.RenderWhy(rec))
+	if asJSON {
+		traceJSON(rec)
+	} else {
+		fmt.Print(bp.RenderWhy(rec))
+	}
 	return 0
 }
