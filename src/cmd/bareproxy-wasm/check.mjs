@@ -487,7 +487,11 @@ async function main() {
       ok('no disk: the native program reports both (the expected difference)', nDisk.code === 1 && /can't open folder/.test(nDisk.stdout) && /can't load the certificate/.test(nDisk.stdout), nDisk.stdout);
       const autoConf = 'site example.com\n  route /* -> respond 200 "x"\n';
       const aRes = await page.evaluate((t) => window.bareproxyCheck(t), autoConf);
-      ok('automatic certificates: the demo gives the same error the server gives', !aRes.ok && /automatic certificates aren't built yet/.test(aRes.problems[0].msg) && native.check(autoConf).stdout.includes(aRes.problems[0].msg));
+      const nAuto = native.check(autoConf);
+      ok('automatic certificates: the demo accepts an https site with no tls line, as the server does', aRes.ok && aRes.problems.length === 0 && nAuto.code === 0, JSON.stringify(aRes) + ' / ' + nAuto.stdout);
+      const wildConf = 'site *.example.com\n  route /* -> respond 200 "x"\n';
+      const wRes = await page.evaluate((t) => window.bareproxyCheck(t), wildConf);
+      ok('a wildcard https site without certificate files: the demo gives the same error the server gives', !wRes.ok && /needs certificate files/.test(wRes.problems[0].msg) && native.check(wildConf).stdout.includes(wRes.problems[0].msg), JSON.stringify(wRes));
     }
 
     // ---- when the core misbehaves ------------------------------------------------------
