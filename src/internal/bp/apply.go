@@ -76,11 +76,14 @@ func (e *PlanChangedError) Error() string {
 	return fmt.Sprintf("the running config or the file changed since plan %s was made, so nothing changed; make a new plan", e.ID)
 }
 
+// logOutput is where a started server logs.
+var logOutput io.Writer = os.Stderr
+
 // Start starts BareProxy with a config file and serves until Stop. When the
 // file has errors it runs the last version in the history, if there is one,
 // and flags the mismatch.
 func Start(file string) (*Server, error) {
-	s := &Server{file: file, logger: log.New(os.Stderr, "bareproxy: ", log.LstdFlags)}
+	s := &Server{file: file, logger: log.New(logOutput, "bareproxy: ", log.LstdFlags)}
 	s.cs.lns = map[int]*listener{}
 	abs, _ := filepath.Abs(file)
 	data, err := os.ReadFile(abs)

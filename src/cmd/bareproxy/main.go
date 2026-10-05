@@ -62,8 +62,14 @@ func usage() {
   bareproxy explain [--config FILE] [--offline] [-H "Name: value"]... METHOD URL
                                         how a request would be handled
   bareproxy why [--config FILE] ID      what happened to a request
+  bareproxy plan [FILE] [--from FILE]   what FILE would change, against the running config or another file
+  bareproxy apply [FILE] [--yes] [--plan ID]
+                                        check, show the plan, ask, make FILE live
+  bareproxy rollback [VERSION]          make an earlier version live (default: the one before)
+  bareproxy history                     config versions: time, how, Unix user, plan ID
   bareproxy version
 FILE defaults to $BAREPROXY_CONFIG, then /etc/bareproxy/bareproxy.conf.
+plan, apply, rollback and history take --json; rollback and history take --config FILE.
 `)
 }
 
