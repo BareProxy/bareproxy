@@ -371,6 +371,8 @@ type effPair struct{ old, new string }
 func (g *hostGroup) analyze() []*lineAcc {
 	o, n := g.port.oldP, g.port.newP
 	samePort := o != nil && n != nil && o.TLS == n.TLS
+	// sameElse: same scheme, a site on both sides, and the same effect when
+	// no rule matches. Then only the rules can make a difference.
 	sameElse := samePort && g.oldS != nil && g.newS != nil && routeEffect(g.oldS, nil) == routeEffect(g.newS, nil)
 	if sameElse && sameList(g.oldS.Routes, g.newS.Routes) {
 		return nil // the matcher picks the same rule with the same effect for every request
