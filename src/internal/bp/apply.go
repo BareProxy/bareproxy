@@ -412,17 +412,16 @@ func (s *Server) closeListeners() {
 	wg.Wait()
 }
 
-// drain takes backends that the new version dropped out of service: they
-// get no new requests from now on, requests in flight finish, and their
-// connections close after the pool's drain time (30 s by default).
+// drain takes backends that the new version dropped out of service. New
+// requests can't reach them, since the new version doesn't have them.
+// Requests that started on the old version still may, even for their first
+// try, and their connections close after the pool's drain time (30 s by
+// default).
 func (s *Server) drain(old, rt *Runtime, conns map[string]*connSet) {
 	for key, b := range old.backends {
 		if _, kept := rt.backends[key]; kept {
 			continue
 		}
-		b.mu.Lock()
-		b.state, b.since, b.reason = "draining", time.Now(), "removed from the config"
-		b.mu.Unlock()
 		d := 30 * time.Second
 		ps := rt.Cfg.Pools[b.Pool] // the new setting, if the pool is still there
 		if ps == nil {
