@@ -60,10 +60,9 @@ func ParseTailFilter(s string) (TailFilter, error) {
 		return TailFilter{}, fmt.Errorf("filter %q needs a key, an operator and a value, such as status>=500 or pool=api", s)
 	}
 	f := TailFilter{Key: s[:i]}
-	rest := s[i:]
 	for _, op := range []string{">=", "<=", "!=", ">", "<", "="} {
-		if strings.HasPrefix(rest, op) {
-			f.Op, f.Val = op, rest[len(op):]
+		if val, ok := strings.CutPrefix(s[i:], op); ok {
+			f.Op, f.Val = op, val
 			break
 		}
 	}
