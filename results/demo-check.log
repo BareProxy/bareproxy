@@ -1,7 +1,7 @@
 BareProxy browser demo check
-Run: Mon Oct 05 2026 09:55:37 GMT+0300 (Israel Daylight Time)
+Run: Mon Oct 05 2026 09:57:19 GMT+0300 (Israel Daylight Time)
 Demo folder: /home/claude/out/demo-dist
-bareproxy.wasm: 11502780 bytes raw, 3027740 bytes gzipped (gzip -9)
+bareproxy.wasm: 11521637 bytes raw, 3032933 bytes gzipped (gzip -9)
 
 == What differs between the demo and the native program, and why
   1. The first line names bareproxy.conf, the demo's config name. The native program prints the file's path.
@@ -16,11 +16,11 @@ bareproxy.wasm: 11502780 bytes raw, 3027740 bytes gzipped (gzip -9)
      the rule table lines up. The native build is from the same source tree as the wasm build.
 
 == Setup
-fixture folder: /tmp/bpdc-ZxSIm3
+fixture folder: /tmp/bpdc-XTCbt6
 PASS  native bareproxy builds
 PASS  native planref builds
 native: bareproxy 0.1.0-dev (first cut), built with go1.27.1
-serving /home/claude/out/demo-dist at http://127.0.0.1:35169
+serving /home/claude/out/demo-dist at http://127.0.0.1:39611
 browser: Chromium 141.0.7390.37 (headless, Playwright)
 
 == Loading
@@ -30,7 +30,8 @@ PASS  page becomes ready after the delayed load
 PASS  page still starts when the host sends .wasm with the wrong content type
 PASS  a missing wasm file shows an error, not a blank page
 PASS  and the output panels say the core is not running
-status line: "Ready. BareProxy 0.1.0-dev (first cut), loaded in 0.2 s." (page load to ready, wall clock 0.3 s, local server)
+PASS  opened from disk the page says so and says to use a web server
+status line: "Ready. BareProxy 0.1.0-dev (first cut), loaded in 0.2 s." (page load to ready, wall clock 0.4 s, local server)
 core version string: 0.1.0-dev (first cut)
 PASS  the core version equals the native one
 
@@ -270,9 +271,9 @@ PASS  plan of a config against itself says no changes
 PASS  plan with a broken new config lists its problems
 
 == Speed (measured in this browser)
-  check    median 0.10 ms, slowest 14.10 ms
-  explain  median 0.20 ms, slowest 4.70 ms
-  plan     median 0.50 ms, slowest 5.70 ms
+  check    median 0.20 ms, slowest 21.00 ms
+  explain  median 0.20 ms, slowest 3.00 ms
+  plan     median 0.60 ms, slowest 1.10 ms
 PASS  every call is under 100 ms in the median
 
 == Layout and screenshots
@@ -309,4 +310,4 @@ PASS  no request failed except the ones this check forced
 PASS  no console errors or warnings (apart from the forced wrong-content-type case)
 
 == Summary
-112 passed, 0 failed, in 16 s
+113 passed, 0 failed, in 18 s

@@ -131,13 +131,13 @@ All measured on the build in this tree (Go 1.27.1, `-trimpath -ldflags="-s -w"`)
 
 | File | Bytes |
 | --- | --- |
-| `bareproxy.wasm` | 11,502,780 raw, 3,027,740 gzipped (`gzip -9`) |
+| `bareproxy.wasm` | 11,521,637 raw, 3,032,933 gzipped (`gzip -9`) |
 | `index.html` | 7,495 |
 | `demo.css` | 10,297 |
-| `demo.js` | 13,066 |
+| `demo.js` | 13,702 |
 | `wasm_exec.js` | 16,992 |
 
-The four small files add up to 47,850 bytes (computed). For scale, an empty Go program that only
+The four small files add up to 48,486 bytes (computed). For scale, an empty Go program that only
 imports `syscall/js`, built the same way, is 1,966,166 bytes raw and 575,344 gzipped. The rest of
 the wasm is BareProxy and the standard library it uses. A smaller build is possible work for later
 and hasn't been tried. These numbers change with the code, so `build.sh` prints the current ones.
