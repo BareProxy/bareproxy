@@ -1,0 +1,69 @@
+BareProxy memory under load, by the size of the in-memory record store, 5 October 2026
+
+Each row is one full run of live/load-test.sh (2,000 requests per second for 60 seconds over HTTP/1.1, HTTP/2
+and WebSocket, 20 applies), with TRACE_MEMORY set to the value in the first column, on the tree at ea04f9e (the
+uncommitted change the runs show is that setting of load-test.sh itself). The
+trace log went to a file in every run. Peak memory is BareProxy's VmHWM (the most resident memory it held at
+any time), read from /proc when the load ends. The machine is the shared 2-CPU VM described in load-test.log;
+nothing else was running.
+
+trace-memory                   sent     failed  peak memory    CPU s result
+off                         120,020          0       25 MiB     22.4 PASS
+8MB                         120,020          0       46 MiB     21.5 PASS
+16MB                        120,020          0       74 MiB     21.4 PASS
+32MB (the old default)      120,020          0      111 MiB     21.4 PASS
+
+What it shows
+  The record store is most of BareProxy's memory under load. With it off, the peak is 25 MiB. Each MB of store
+  adds about 2.6 to 3.1 MiB at the peak (computed from the rows above): the store keeps that much record JSON,
+  and Go's garbage collector lets the heap grow past what is live before it runs.
+  The default is now 8 MB. A full 8 MB store holds about 17,000 typical records of 493 bytes
+  (TestTraceRingCapacityAtTheDefaultSize, 9.4 MB of heap), which is about 2 minutes of requests at 140 per
+  second, or 8.5 seconds at 2,000 per second (computed). `status` says when its 1- and 5-minute counts
+  cover less than the window. The trace log file keeps every record whatever the store's size.
+
+Lines from each run (load-test.log has the full output of a run at the new default)
+
+== trace-memory off
+  load average before the test (1, 5, 15 minutes): 0.31 0.58 1.20
+  tree: ea04f9e plus uncommitted changes
+  6	  trace-memory off
+  No requests counted: trace-memory is off, or none has arrived yet
+  total: 120020 sent, 120020 answered, 0 failed, 0 connections reset, 60.1 s, rate held: true, loadtest CPU 20.6 s
+  load average before (1, 5, 15 minutes): 0.31 0.58 1.20; after: 1.49 0.87 1.26
+  machine, over the run: 43% of both CPUs busy (idle 57%, taken by the host 0%)
+  BareProxy: 22.4 CPU seconds in 60 seconds, peak memory 25 MiB
+  requests BareProxy was sent: 96300 (48000 HTTP/1.1, 48000 HTTP/2, 20 WebSocket handshakes, 280 probes after the applies); records written: 96300 (equal)
+  PASS: 120020 requests and WebSocket messages sent, 120020 answered, 0 failed, 0 connections reset, 0 WebSocket messages lost, 20 of 20 applies done
+
+== trace-memory 8MB
+  load average before the test (1, 5, 15 minutes): 1.53 0.89 1.27
+  tree: ea04f9e plus uncommitted changes
+  6	  trace-memory 8MB
+  total: 120020 sent, 120020 answered, 0 failed, 0 connections reset, 60.1 s, rate held: true, loadtest CPU 20.2 s
+  load average before (1, 5, 15 minutes): 1.53 0.89 1.27; after: 1.98 1.13 1.32
+  machine, over the run: 41% of both CPUs busy (idle 58%, taken by the host 0%)
+  BareProxy: 21.5 CPU seconds in 60 seconds, peak memory 46 MiB
+  requests BareProxy was sent: 96300 (48000 HTTP/1.1, 48000 HTTP/2, 20 WebSocket handshakes, 280 probes after the applies); records written: 96300 (equal)
+  PASS: 120020 requests and WebSocket messages sent, 120020 answered, 0 failed, 0 connections reset, 0 WebSocket messages lost, 20 of 20 applies done
+
+== trace-memory 16MB
+  load average before the test (1, 5, 15 minutes): 1.98 1.13 1.32
+  tree: ea04f9e plus uncommitted changes
+  6	  trace-memory 16MB
+  total: 120020 sent, 120020 answered, 0 failed, 0 connections reset, 60.1 s, rate held: true, loadtest CPU 20.0 s
+  load average before (1, 5, 15 minutes): 1.98 1.13 1.32; after: 2.57 1.40 1.40
+  machine, over the run: 41% of both CPUs busy (idle 59%, taken by the host 0%)
+  BareProxy: 21.4 CPU seconds in 60 seconds, peak memory 74 MiB
+  requests BareProxy was sent: 96300 (48000 HTTP/1.1, 48000 HTTP/2, 20 WebSocket handshakes, 280 probes after the applies); records written: 96300 (equal)
+  PASS: 120020 requests and WebSocket messages sent, 120020 answered, 0 failed, 0 connections reset, 0 WebSocket messages lost, 20 of 20 applies done
+
+== trace-memory 32MB (the old default)
+  load average before the test (1, 5, 15 minutes): 2.37 1.38 1.40
+  tree: ea04f9e plus uncommitted changes
+  total: 120020 sent, 120020 answered, 0 failed, 0 connections reset, 60.1 s, rate held: true, loadtest CPU 20.0 s
+  load average before (1, 5, 15 minutes): 2.37 1.38 1.40; after: 2.42 1.51 1.43
+  machine, over the run: 41% of both CPUs busy (idle 58%, taken by the host 0%)
+  BareProxy: 21.4 CPU seconds in 60 seconds, peak memory 111 MiB
+  requests BareProxy was sent: 96300 (48000 HTTP/1.1, 48000 HTTP/2, 20 WebSocket handshakes, 280 probes after the applies); records written: 96300 (equal)
+  PASS: 120020 requests and WebSocket messages sent, 120020 answered, 0 failed, 0 connections reset, 0 WebSocket messages lost, 20 of 20 applies done

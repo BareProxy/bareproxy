@@ -12,7 +12,8 @@
 #
 # Needs Go (to build), openssl, curl and python3. Settings from the
 # environment: DURATION (seconds, default 60), RATE (requests per second,
-# default 2000), APPLIES (default 20). KILL_BACKEND_AT=SECONDS kills backend
+# default 2000), APPLIES (default 20), TRACE_MEMORY (the config's trace-memory,
+# such as off or 8MB; empty leaves the default). KILL_BACKEND_AT=SECONDS kills backend
 # api-1 that long into the load (with APPLIES=0 this is the control run: the
 # test must then fail, which shows that the load tool sees failures).
 set -u
@@ -20,6 +21,7 @@ cd "$(dirname "$0")"
 DURATION=${DURATION:-60}
 RATE=${RATE:-2000}
 APPLIES=${APPLIES:-20}
+TM=""; if [ -n "${TRACE_MEMORY:-}" ]; then TM=$'\n'"  trace-memory $TRACE_MEMORY"; fi
 BIN=../bin
 RUN=run/load
 BP=$BIN/bareproxy
@@ -131,7 +133,7 @@ conf() {
 global
   admin admin.sock
   state state
-  trace-log requests.log
+  trace-log requests.log$TM
 
 site http://plain.test:$P_HTTP
 $(routes)

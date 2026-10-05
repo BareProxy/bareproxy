@@ -245,8 +245,8 @@ func TestTraceConfigSettings(t *testing.T) {
 		t.Errorf("got log %q size %d count %d memory %d", c.TraceLog, c.TraceSize, c.TraceCount, c.TraceMem)
 	}
 	c, _ = Parse("/etc/x/bp.conf", "global\n  admin off\n"+site)
-	if c.TraceMem != 32<<20 || c.TraceSize != 0 || c.TraceLog != "stdout" {
-		t.Errorf("defaults are log %q, size %d, memory %d; want stdout, 0, 32MB", c.TraceLog, c.TraceSize, c.TraceMem)
+	if c.TraceMem != 8<<20 || c.TraceSize != 0 || c.TraceLog != "stdout" {
+		t.Errorf("defaults are log %q, size %d, memory %d; want stdout, 0, 8MB", c.TraceLog, c.TraceSize, c.TraceMem)
 	}
 	c, _ = Parse("/etc/x/bp.conf", "global\n  trace-memory off\n"+site)
 	if c.TraceMem != 0 {
@@ -652,7 +652,7 @@ func TestTraceEventRingKeepsTheLast1000(t *testing.T) {
 }
 
 // TestTraceRingCapacityAtTheDefaultSize measures what the design note
-// estimates: how many typical records the default 32MB ring holds, and what
+// estimates: how many typical records the default 8MB ring holds, and what
 // that costs in heap. It logs the numbers (run with -v) and checks they are
 // in a sane range.
 func TestTraceRingCapacityAtTheDefaultSize(t *testing.T) {
@@ -674,7 +674,7 @@ func TestTraceRingCapacityAtTheDefaultSize(t *testing.T) {
 	}
 	avg /= float64(len(samples))
 
-	const limit = 32 << 20
+	const limit = 8 << 20
 	m := newTraceMem()
 	var m0, m1 runtime.MemStats
 	runtime.GC()
@@ -693,8 +693,8 @@ func TestTraceRingCapacityAtTheDefaultSize(t *testing.T) {
 	t.Logf("a %d MB ring holds %d records (%d bytes of JSON)", limit>>20, st.Records, st.Bytes)
 	t.Logf("heap used by the full ring: %.1f MB, %.0f bytes per record (%.2fx the JSON)",
 		float64(heap)/(1<<20), float64(heap)/float64(st.Records), float64(heap)/float64(st.Bytes))
-	if st.Records < 30000 || st.Records > 200000 {
-		t.Errorf("%d records in 32MB is outside the range this test expects", st.Records)
+	if st.Records < 7500 || st.Records > 50000 {
+		t.Errorf("%d records in 8MB is outside the range this test expects", st.Records)
 	}
 	runtime.KeepAlive(m)
 }

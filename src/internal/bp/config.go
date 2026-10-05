@@ -262,7 +262,7 @@ func ParseWith(file, src string, o ParseOptions) (*Config, []Problem) {
 		File:     file,
 		Admin:    "/run/bareproxy/admin.sock",
 		TraceLog: "stdout",
-		TraceMem: 32 << 20,
+		TraceMem: 8 << 20,
 		IDHeader: true,
 		Pools:    map[string]*PoolSpec{},
 		Ports:    map[int]*Port{},
