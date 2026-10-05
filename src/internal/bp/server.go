@@ -180,6 +180,8 @@ func Run(file string) error {
 		}
 	}
 	s.logf("version 1 running: %s", Summary(c))
+	s.Event("start", fmt.Sprintf("BareProxy %s started, version 1 running: %s", Version, Summary(c)))
+	rt.certEvents(nil)
 	if err := s.startAdmin(c.Admin); err != nil {
 		s.logf("no admin socket (%v), so explain reads the file instead", err)
 	}
@@ -246,23 +248,24 @@ func (s *Server) Reload() {
 		s.logf("reload: %s", p)
 	}
 	if c == nil || HasErrors(probs) {
-		s.logf("reload failed, so version %d keeps running", old.Version)
+		s.logEvent("reload", "reload failed (%s), so version %d keeps running", firstError(probs), old.Version)
 		return
 	}
 	if !sameListeners(old.Cfg, c) {
 		c.Close()
-		s.logf("reload refused: adding or removing listeners needs a restart in this build, so version %d keeps running", old.Version)
+		s.logEvent("reload", "reload refused: adding or removing listeners needs a restart in this build, so version %d keeps running", old.Version)
 		return
 	}
 	rt, err := NewRuntime(c, old, old.Version+1, s.logf, true)
 	if err != nil {
 		c.Close()
-		s.logf("reload failed (%v), so version %d keeps running", err, old.Version)
+		s.logEvent("reload", "reload failed (%v), so version %d keeps running", err, old.Version)
 		return
 	}
 	s.rt.Store(rt)
 	retire(old, rt)
-	s.logf("version %d running: %s", rt.Version, Summary(c))
+	s.logEvent("reload", "version %d running: %s", rt.Version, Summary(c))
+	rt.certEvents(old)
 }
 
 func sameListeners(a, b *Config) bool {

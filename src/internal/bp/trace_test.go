@@ -5,9 +5,17 @@ package bp
 
 import (
 	"bufio"
+	"context"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
+	"crypto/x509"
+	"crypto/x509/pkix"
 	"encoding/json"
+	"encoding/pem"
 	"fmt"
 	"io"
+	"math/big"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -681,4 +689,445 @@ func TestTraceRingCapacityAtTheDefaultSize(t *testing.T) {
 		t.Errorf("%d records in 32MB is outside the range this test expects", st.Records)
 	}
 	runtime.KeepAlive(m)
+}
+
+func TestTraceFilterParsing(t *testing.T) {
+	good := map[string]TailFilter{
+		"status>=500": {Key: "status", Op: ">=", Val: "500", n: 500},
+		"status<=399": {Key: "status", Op: "<=", Val: "399", n: 399},
+		"status>499":  {Key: "status", Op: ">", Val: "499", n: 499},
+		"status<300":  {Key: "status", Op: "<", Val: "300", n: 300},
+		"status=404":  {Key: "status", Op: "=", Val: "404", n: 404},
+		"status!=200": {Key: "status", Op: "!=", Val: "200", n: 200},
+		"pool=api":    {Key: "pool", Op: "=", Val: "api"},
+		"path!=/ping": {Key: "path", Op: "!=", Val: "/ping"},
+		"path=/a=b":   {Key: "path", Op: "=", Val: "/a=b"},
+	}
+	for in, want := range good {
+		if got, err := ParseTailFilter(in); err != nil || got != want {
+			t.Errorf("ParseTailFilter(%q) = %+v, %v; want %+v", in, got, err, want)
+		}
+	}
+	bad := map[string]string{
+		"":             "needs a key",
+		"status":       "needs a key",
+		"=500":         "needs a key",
+		"status>=":     "status must be a number",
+		"status>=abc":  "status must be a number",
+		"status=99":    "status must be a number",
+		"status=600":   "status must be a number",
+		"pool>api":     "takes = or !=",
+		"method>=GET":  "takes = or !=",
+		"colour=red":   "unknown key",
+		"pool=":        "needs an operator and a value",
+		"pool!":        "takes = or !=",
+		"site~example": "needs a key",
+	}
+	for in, frag := range bad {
+		if _, err := ParseTailFilter(in); err == nil || !strings.Contains(err.Error(), frag) {
+			t.Errorf("ParseTailFilter(%q): error %v, want one mentioning %q", in, err, frag)
+		}
+	}
+}
+
+func TestTraceFilterMatching(t *testing.T) {
+	rec := &Record{Status: 502, Pool: "api", Site: "example.com", Host: "Example.com:8443", Outcome: "connect_failed",
+		Method: "GET", Path: "/api/%2e%2e/admin/users", NormPath: "/admin/users"}
+	cases := map[string]bool{
+		"status>=500": true, "status>=503": false, "status>501": true, "status>502": false,
+		"status<=502": true, "status<502": false, "status<599": true, "status=502": true, "status=404": false,
+		"status!=404": true, "status!=502": false,
+		"pool=api": true, "pool=web": false, "pool!=web": true, "pool!=api": false,
+		"site=example.com": true, "site=EXAMPLE.COM": true, "site=other.org": false,
+		"host=example.com": true, "host=example.com:8443": true, "host=EXAMPLE.com": true, "host=other.org": false,
+		"outcome=connect_failed": true, "outcome=ok": false, "outcome!=ok": true,
+		"method=GET": true, "method=get": true, "method=POST": false,
+		"path=/api": true, "path=/admin": true, "path=/api/%2e": true, "path=/other": false, "path!=/admin": false, "path!=/other": true,
+	}
+	for in, want := range cases {
+		f, err := ParseTailFilter(in)
+		if err != nil {
+			t.Fatalf("%s: %v", in, err)
+		}
+		if got := f.Match(rec); got != want {
+			t.Errorf("%s on the 502 record: %v, want %v", in, got, want)
+		}
+	}
+	// Filters are ANDed.
+	f1, _ := ParseTailFilter("status>=500")
+	f2, _ := ParseTailFilter("pool=web")
+	f3, _ := ParseTailFilter("pool=api")
+	if MatchAll([]TailFilter{f1, f2}, rec) || !MatchAll([]TailFilter{f1, f3}, rec) || !MatchAll(nil, rec) {
+		t.Errorf("MatchAll doesn't AND the filters")
+	}
+}
+
+func traceAdmin(t *testing.T, f *fixture) (*Server, *httptest.Server) {
+	t.Helper()
+	s := NewServer(f.conf, f.rt)
+	mux := http.NewServeMux()
+	for _, add := range adminHandlers {
+		add(s, mux)
+	}
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+	return s, srv
+}
+
+func TestTraceTailStreamsOnlyWhatMatches(t *testing.T) {
+	f := newFixture(t, "  backend "+deadAddr(t)+"\n", false)
+	_, srv := traceAdmin(t, f)
+	resp, err := http.Get(srv.URL + "/tail?f=status%3E%3D500&f=path%3D/api")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != 200 {
+		t.Fatalf("status %d", resp.StatusCode)
+	}
+	lines := make(chan string, 16)
+	go func() {
+		sc := bufio.NewScanner(resp.Body)
+		for sc.Scan() {
+			lines <- sc.Text()
+		}
+		close(lines)
+	}()
+	f.mustServe(t, "/")          // 200 from files: no
+	a := f.do("GET", "/api/one") // 502 from the dead backend: yes
+	f.do("GET", "/healthz")      // 200 local: no
+	b := f.do("GET", "/api/two") // 502: yes
+	f.do("GET", "/nope/")        // 404: no
+	var got []string
+	for len(got) < 2 {
+		select {
+		case l := <-lines:
+			got = append(got, l)
+		case <-time.After(3 * time.Second):
+			t.Fatalf("only %d lines arrived: %q", len(got), got)
+		}
+	}
+	for i, want := range []string{a.Header().Get("BareProxy-Id"), b.Header().Get("BareProxy-Id")} {
+		var rec Record
+		if err := json.Unmarshal([]byte(got[i]), &rec); err != nil || rec.ID != want || rec.Status != 502 {
+			t.Errorf("line %d: %q, want the 502 with ID %s", i, got[i], want)
+		}
+	}
+	select {
+	case l := <-lines:
+		t.Errorf("an extra line came through: %q", l)
+	case <-time.After(150 * time.Millisecond):
+	}
+	// A reader that goes away is dropped from the feed.
+	resp.Body.Close()
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		f.rt.Mem.mu.Lock()
+		n := len(f.rt.Mem.subs)
+		f.rt.Mem.mu.Unlock()
+		if n == 0 {
+			return
+		}
+		f.do("GET", "/api/three") // a write is what shows the server the reader is gone
+		time.Sleep(20 * time.Millisecond)
+	}
+	t.Errorf("the tail is still subscribed after the reader left")
+}
+
+func (f *fixture) mustServe(t *testing.T, target string) {
+	t.Helper()
+	if rr := f.do("GET", target); rr.Code != 200 {
+		t.Fatalf("GET %s: %d", target, rr.Code)
+	}
+}
+
+func TestTailRefusesABadFilter(t *testing.T) {
+	f := newFixture(t, "", false)
+	_, srv := traceAdmin(t, f)
+	resp, err := http.Get(srv.URL + "/tail?f=colour%3Dred")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	b, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != 400 || !strings.Contains(string(b), "unknown key") {
+		t.Errorf("got %d %q, want 400 naming the key", resp.StatusCode, b)
+	}
+}
+
+// slowWriter is a response writer whose first write waits at a gate, to be a slow reader.
+type slowWriter struct {
+	mu   sync.Mutex
+	out  strings.Builder
+	gate chan struct{}
+	once sync.Once
+}
+
+func (w *slowWriter) Header() http.Header { return http.Header{} }
+func (w *slowWriter) WriteHeader(int)     {}
+func (w *slowWriter) Flush()              {}
+func (w *slowWriter) Write(b []byte) (int, error) {
+	w.once.Do(func() { <-w.gate })
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.out.Write(b)
+}
+func (w *slowWriter) text() string {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.out.String()
+}
+
+func TestTraceTailSaysHowManyRecordsItSkipped(t *testing.T) {
+	f := newFixture(t, "", false)
+	s := NewServer(f.conf, f.rt)
+	ctx, cancel := context.WithCancel(context.Background())
+	w := &slowWriter{gate: make(chan struct{})}
+	done := make(chan struct{})
+	go func() {
+		s.adminTail(w, httptest.NewRequest("GET", "/tail", nil).WithContext(ctx))
+		close(done)
+	}()
+	for { // wait for the subscription
+		f.rt.Mem.mu.Lock()
+		n := len(f.rt.Mem.subs)
+		f.rt.Mem.mu.Unlock()
+		if n == 1 {
+			break
+		}
+		time.Sleep(time.Millisecond)
+	}
+	const total = 700 // the first is stuck in the slow write; the feed holds 256; the rest are skipped
+	for i := 1; i <= total; i++ {
+		rec, js := traceTestRec(traceTestID(i), 0)
+		f.rt.Mem.Add(rec, js, 1<<20)
+	}
+	close(w.gate)
+	var delivered, skipped int
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		delivered, skipped = 0, 0
+		for _, l := range strings.Split(strings.TrimSpace(w.text()), "\n") {
+			var d struct{ Dropped int }
+			switch {
+			case strings.HasPrefix(l, `{"dropped":`):
+				json.Unmarshal([]byte(l), &d)
+				skipped += d.Dropped
+			case strings.HasPrefix(l, `{"id":`):
+				delivered++
+			}
+		}
+		if delivered+skipped == total {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	cancel()
+	<-done
+	if delivered+skipped != total || skipped < total-300 || delivered < 200 {
+		t.Errorf("%d delivered and %d skipped of %d; every record must be one or the other", delivered, skipped, total)
+	}
+}
+
+// traceTestCert writes a self-signed certificate and its key into dir.
+func traceTestCert(t *testing.T, dir, cn string, notAfter time.Time) {
+	t.Helper()
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tmpl := &x509.Certificate{SerialNumber: big.NewInt(1), Subject: pkix.Name{CommonName: cn},
+		NotBefore: time.Now().Add(-time.Hour), NotAfter: notAfter, DNSNames: []string{cn}}
+	der, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, &key.PublicKey, key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	keyDER, _ := x509.MarshalECPrivateKey(key)
+	writeFile(t, dir+"/cert.pem", string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der})))
+	writeFile(t, dir+"/key.pem", string(pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: keyDER})))
+}
+
+func TestTraceStatusShape(t *testing.T) {
+	dir := t.TempDir()
+	traceTestCert(t, dir, "example.com", time.Now().Add(90*24*time.Hour+time.Hour))
+	conf := dir + "/bareproxy.conf"
+	writeFile(t, conf, `global
+  admin off
+site https://example.com:8443
+  tls cert.pem key.pem
+  route /* -> respond 200 "secure"
+site http://example.com:8080
+  route /api/* -> api
+  route /* -> respond 200 "plain"
+pool api
+  backend 127.0.0.1:1
+  backend 127.0.0.1:2
+`)
+	c, probs := Load(conf)
+	if HasErrors(probs) {
+		t.Fatal(probs)
+	}
+	rt, err := NewRuntime(c, nil, 7, nil, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := NewServer(conf, rt)
+	for i := 0; i < 3; i++ {
+		rt.Pools["api"].Backends[1].connFailed("connect refused")
+	}
+	// Requests: a 200, a proxy error, and an application 500 (not a proxy error), one of them 2 minutes old.
+	for _, r := range []struct {
+		status  int
+		outcome string
+	}{{200, "ok"}, {502, "connect_failed"}, {500, "ok"}} {
+		rec, js := traceTestRec(traceTestID(r.status), 0)
+		rec.Status, rec.Outcome = r.status, r.outcome
+		rt.Mem.Add(rec, js, 1<<20)
+	}
+	rt.Mem.recs[rt.Mem.start].at = time.Now().Add(-2 * time.Minute).UnixNano()
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { writeJSON(w, s.Status()) }))
+	defer srv.Close()
+	resp, err := http.Get(srv.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	raw, _ := io.ReadAll(resp.Body)
+	var doc map[string]any
+	if err := json.Unmarshal(raw, &doc); err != nil {
+		t.Fatalf("%v: %s", err, raw)
+	}
+	for _, k := range []string{"version", "config_file", "config_version", "started", "uptime_seconds", "listeners", "sites", "pools", "certificates", "requests"} {
+		if _, ok := doc[k]; !ok {
+			t.Errorf("the status JSON has no %q: %s", k, raw)
+		}
+	}
+	reqs := doc["requests"].(map[string]any)
+	for _, k := range []string{"last_1m", "last_5m", "ring"} {
+		if _, ok := reqs[k]; !ok {
+			t.Errorf("requests has no %q", k)
+		}
+	}
+	var st Status
+	if err := json.Unmarshal(raw, &st); err != nil {
+		t.Fatal(err)
+	}
+	if st.ConfigFile != conf || st.ConfigVersion != 7 || st.Version != Version || st.UptimeSeconds < 0 || st.Started == "" {
+		t.Errorf("header: %+v", st)
+	}
+	if len(st.Listeners) != 2 || st.Listeners[0].Port != 8080 || st.Listeners[0].TLS || st.Listeners[1].Port != 8443 || !st.Listeners[1].TLS ||
+		strings.Join(st.Listeners[1].Sites, ",") != "example.com" {
+		t.Errorf("listeners: %+v", st.Listeners)
+	}
+	if len(st.Sites) != 2 || st.Sites[1].Name != "example.com" || st.Sites[1].Rules != 2 || st.Sites[1].Line != 6 {
+		t.Errorf("sites: %+v", st.Sites)
+	}
+	if len(st.Certificates) != 1 || st.Certificates[0].Site != "example.com" || st.Certificates[0].Subject != "CN=example.com" ||
+		st.Certificates[0].DaysLeft != 90 || st.Certificates[0].NotAfter == "" {
+		t.Errorf("certificates: %+v", st.Certificates)
+	}
+	if len(st.Pools) != 1 || st.Pools[0].Name != "api" || st.Pools[0].Up != 1 || st.Pools[0].Size != 2 || len(st.Pools[0].Backends) != 2 {
+		t.Fatalf("pools: %+v", st.Pools)
+	}
+	if b := st.Pools[0].Backends; b[0].State != "up" || b[1].State != "down" || b[1].Failures != 3 || b[1].Reason != "connect refused" || b[1].Since == "" {
+		t.Errorf("backends: %+v", b)
+	}
+	if r := st.Requests; r.Last1m.Requests != 2 || r.Last1m.Status5xx != 2 || r.Last1m.ProxyErrors != 1 || !r.Last1m.Complete ||
+		r.Last5m.Requests != 3 || r.Last5m.Status5xx != 2 || r.Last5m.ProxyErrors != 1 || r.Ring.Records != 3 || r.Ring.Limit != 1<<20 || r.Ring.Oldest == "" {
+		t.Errorf("requests: %+v", r)
+	}
+}
+
+func TestTraceRateSaysWhenTheRingHasWrapped(t *testing.T) {
+	m := newTraceMem()
+	_, one := traceTestRec(traceTestID(1), 0)
+	for i := 1; i <= 100; i++ {
+		rec, js := traceTestRec(traceTestID(i), 0)
+		m.Add(rec, js, int64(10*len(one)))
+	}
+	if w, complete := m.Recent(time.Minute); w.Requests != 10 || complete {
+		t.Errorf("a wrapped ring: %+v complete=%v; want 10 requests and incomplete", w, complete)
+	}
+	m.recs[m.start].at = time.Now().Add(-10 * time.Minute).UnixNano() // the ring does reach back past the window
+	if w, complete := m.Recent(time.Minute); w.Requests != 9 || !complete {
+		t.Errorf("a ring that reaches back: %+v complete=%v; want 9 requests and complete", w, complete)
+	}
+	if w, complete := newTraceMem().Recent(time.Minute); w.Requests != 0 || !complete {
+		t.Errorf("an empty ring that never wrapped: %+v complete=%v", w, complete)
+	}
+}
+
+func TestTraceCertificateEvents(t *testing.T) {
+	dir := t.TempDir()
+	traceTestCert(t, dir, "example.com", time.Now().Add(30*24*time.Hour+time.Hour))
+	conf := dir + "/bareproxy.conf"
+	writeFile(t, conf, "global\n  admin off\nsite https://example.com:8443\n  tls cert.pem key.pem\n  route /* -> respond 200 \"x\"\n")
+	c, probs := Load(conf)
+	if HasErrors(probs) {
+		t.Fatal(probs)
+	}
+	rt, err := NewRuntime(c, nil, 1, nil, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rt.certEvents(nil)
+	evs := rt.Mem.Events()
+	if len(evs) != 1 || evs[0].Kind != "certificate" || !strings.Contains(evs[0].Text, "example.com: certificate for CN=example.com loaded, ends ") ||
+		!strings.Contains(evs[0].Text, "(30 days left)") {
+		t.Fatalf("events: %+v", evs)
+	}
+	rt.certEvents(rt) // the same certificate again is nothing new
+	if n := len(rt.Mem.Events()); n != 1 {
+		t.Errorf("an unchanged certificate made another event (%d)", n)
+	}
+	traceTestCert(t, dir, "example.com", time.Now().Add(60*24*time.Hour+time.Hour)) // a renewed one on disk
+	c2, _ := Load(conf)
+	rt2, _ := NewRuntime(c2, rt, 2, nil, false)
+	rt2.certEvents(rt)
+	if evs := rt2.Mem.Events(); len(evs) != 2 || !strings.Contains(evs[1].Text, "(60 days left)") {
+		t.Errorf("a renewed certificate should give a new event: %+v", evs)
+	}
+}
+
+func TestTraceReloadEvents(t *testing.T) {
+	f := newFixture(t, "", false)
+	s := NewServer(f.conf, f.rt)
+	s.logger.SetOutput(io.Discard)
+	writeFile(t, f.conf, "site http://example.com:8080\n  route /* -> nopool\n")
+	s.Reload()
+	writeFile(t, f.conf, "global\n  admin off\n  trace-log requests.log\nsite http://example.com:8080\n  route /* -> respond 200 \"v2\"\n")
+	s.Reload()
+	defer s.Current().Stop()
+	evs := s.Current().Mem.Events()
+	if len(evs) != 2 || evs[0].Kind != "reload" || evs[1].Kind != "reload" ||
+		!strings.Contains(evs[0].Text, "reload failed (line 2: error: no pool named nopool), so version 1 keeps running") ||
+		!strings.HasPrefix(evs[1].Text, "version 2 running: 1 site") {
+		t.Errorf("events: %+v", evs)
+	}
+}
+
+func TestTraceEventsEndpoint(t *testing.T) {
+	f := newFixture(t, "", false)
+	_, srv := traceAdmin(t, f)
+	get := func() []Event {
+		resp, err := http.Get(srv.URL + "/events")
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer resp.Body.Close()
+		var evs []Event
+		b, _ := io.ReadAll(resp.Body)
+		if err := json.Unmarshal(b, &evs); err != nil || evs == nil {
+			t.Fatalf("%q: %v (an empty list must be [], not null)", b, err)
+		}
+		return evs
+	}
+	if evs := get(); len(evs) != 0 {
+		t.Errorf("a new server has events: %+v", evs)
+	}
+	f.rt.Mem.Event("apply", "version 2 applied by uid 1000")
+	if evs := get(); len(evs) != 1 || evs[0].Kind != "apply" || evs[0].Text != "version 2 applied by uid 1000" {
+		t.Errorf("events: %+v", evs)
+	}
 }

@@ -63,6 +63,13 @@ func usage() {
                                         how a request would be handled
   bareproxy why [--config FILE] [--json] ID
                                         what happened to a request (memory first, then the trace log)
+  bareproxy tail [--config FILE] [--json] [FILTER]...
+                                        records as they happen (times are UTC). Filters, all ANDed:
+                                        'status>=500' status=404 pool=api site= host= outcome= method= path=/prefix
+  bareproxy status [--config FILE] [--json]
+                                        listeners, sites, backends, certificates, recent error rates
+  bareproxy events [--config FILE] [--json]
+                                        recent changes: backends up and down, certificates, reloads
   bareproxy version
 FILE defaults to $BAREPROXY_CONFIG, then /etc/bareproxy/bareproxy.conf.
 `)

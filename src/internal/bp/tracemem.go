@@ -5,6 +5,7 @@ package bp
 
 import (
 	"errors"
+	"fmt"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -24,6 +25,7 @@ type TraceMem struct {
 	start   int
 	bytes   int64
 	limit   int64
+	evicted int64 // records pushed out so far
 	events  []Event
 	subs    map[*Tail]bool
 	started time.Time
@@ -100,6 +102,7 @@ func (m *TraceMem) Add(rec *Record, js []byte, limit int64) {
 		m.bytes -= int64(len(m.recs[m.start].js))
 		m.recs[m.start] = memRec{}
 		m.start++
+		m.evicted++
 	}
 	if m.start >= 4096 && m.start*2 >= len(m.recs) {
 		n := copy(m.recs, m.recs[m.start:])
@@ -164,13 +167,14 @@ type Window struct {
 }
 
 // Recent counts the requests, 5xx responses and proxy errors in the ring
-// from the last d.
-func (m *TraceMem) Recent(d time.Duration) Window {
-	var w Window
+// from the last d. complete is false when the ring has already pushed out
+// records from inside that time, so the counts are a lower bound.
+func (m *TraceMem) Recent(d time.Duration) (w Window, complete bool) {
 	cut := time.Now().Add(-d).UnixNano()
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	for i := len(m.recs) - 1; i >= m.start && m.recs[i].at >= cut; i-- {
+	i := len(m.recs) - 1
+	for ; i >= m.start && m.recs[i].at >= cut; i-- {
 		e := &m.recs[i]
 		w.Requests++
 		if e.status >= 500 {
@@ -180,7 +184,7 @@ func (m *TraceMem) Recent(d time.Duration) Window {
 			w.ProxyErrors++
 		}
 	}
-	return w
+	return w, m.evicted == 0 || i >= m.start
 }
 
 // Subscribe starts a live feed of records. Records that arrive while the
@@ -221,9 +225,28 @@ func (m *TraceMem) Event(kind, text string) {
 func (m *TraceMem) Events() []Event {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	return append([]Event(nil), m.events...)
+	return append([]Event{}, m.events...)
 }
+
+// Started is when this process began keeping the ring, which is when it started.
+func (m *TraceMem) Started() time.Time { return m.started }
 
 // Event records a change in BareProxy's own state, such as an apply, a
 // reload or a backend going down, for the events command.
 func (s *Server) Event(kind, text string) { s.Current().Mem.Event(kind, text) }
+
+// logEvent logs a line and records it as an event too.
+func (s *Server) logEvent(kind, f string, a ...any) {
+	s.logf(f, a...)
+	s.Event(kind, fmt.Sprintf(f, a...))
+}
+
+// firstError is the first error among a config's problems, for an event.
+func firstError(probs []Problem) string {
+	for _, p := range probs {
+		if !p.Warn {
+			return p.String()
+		}
+	}
+	return "no details"
+}
