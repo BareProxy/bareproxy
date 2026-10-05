@@ -16,9 +16,9 @@ swap     replaces the only backend of a pool with another one          10   2400
 What they show
   newpool, health and swap: the apply swaps in the new config before the first health check of its new backends has finished. A backend
   that is new to its pool (a new pool, a pool whose health line changed, which counts as new backends, or a replaced backend) is
-  'unknown' until that check passes and takes no requests, so a route with no other backend gets 503 for as long as the check takes,
-  the first check, which here (a backend on the same machine) took about a millisecond or two: 1 to 2.5 failed requests per apply at
-  1,000 requests per second (computed from the counts). With a backend farther away the check takes longer and so does the window.
+  'unknown' until that check passes and takes no requests, so a route with no other backend gets 503 until then. Here (a backend on
+  the same machine) that took about a millisecond or two: 1 to 2.5 failed requests per apply at 1,000 requests per second (computed
+  from the counts). With a backend farther away the first check takes longer and so does the window.
   Nothing in the output of `plan` or `apply` says so (see run/exp-*/ap.out in a run's folder). The two-step version has no failures.
   drain: a WebSocket connection is a tunnel, and when the pool's drain time ends BareProxy closes the connections of the removed backend,
   in use or not. That is what the README says about drain (connections close after the drain time, 30 seconds by default), and it
