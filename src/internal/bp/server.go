@@ -228,6 +228,7 @@ func (s *Server) startAdmin(path string) error {
 		add(s, mux)
 	}
 	srv := &http.Server{Handler: mux, ReadHeaderTimeout: 5 * time.Second, ConnContext: peerContext}
+	s.setAdmin(srv)
 	go srv.Serve(ln)
 	return nil
 }

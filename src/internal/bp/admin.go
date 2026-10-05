@@ -60,7 +60,7 @@ func reply(w http.ResponseWriter, r *http.Request, code int, v any, text string)
 }
 
 func replyErr(w http.ResponseWriter, r *http.Request, err error) {
-	code := http.StatusInternalServerError
+	code := http.StatusBadRequest
 	var ce *ConfigError
 	var pe *PlanChangedError
 	switch {

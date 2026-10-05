@@ -27,6 +27,17 @@ type changeState struct {
 	text     string              // the running config text
 	mismatch string              // why the file doesn't hold the running config, if it doesn't
 	conns    map[string]*connSet // the running version's backend connections, by pool
+	admin    *http.Server        // the admin socket's server, if it runs
+}
+
+// Stop stops serving: listeners close once their requests in flight finish
+// (30 s at most), and the admin socket goes away.
+func (s *Server) Stop() { s.shutdown() }
+
+func (s *Server) setAdmin(srv *http.Server) {
+	s.mu.Lock()
+	s.cs.admin = srv
+	s.mu.Unlock()
 }
 
 type listener struct {
@@ -144,7 +155,10 @@ func (s *Server) Reload() {
 		_, err = s.Apply(Change{Text: string(data), How: "reload", User: userName(os.Getuid())})
 	}
 	if err != nil {
-		s.logf("reload: %v; version %d keeps running", err, s.Current().Version)
+		s.mu.Lock()
+		s.cs.mismatch = fmt.Sprintf("%s can't go live (%v), so version %d keeps running", s.file, err, s.Current().Version)
+		s.logf("reload: %s", s.cs.mismatch)
+		s.mu.Unlock()
 	}
 }
 
@@ -381,9 +395,12 @@ func shutdownServer(srv *http.Server, grace time.Duration) {
 // closeListeners stops every listener, letting requests in flight finish.
 func (s *Server) closeListeners() {
 	s.mu.Lock()
-	lns := s.cs.lns
-	s.cs.lns = map[int]*listener{}
+	lns, admin := s.cs.lns, s.cs.admin
+	s.cs.lns, s.cs.admin = map[int]*listener{}, nil
 	s.mu.Unlock()
+	if admin != nil {
+		admin.Close()
+	}
 	var wg sync.WaitGroup
 	for _, l := range lns {
 		wg.Add(1)
