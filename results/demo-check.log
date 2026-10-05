@@ -1,7 +1,7 @@
 BareProxy browser demo check
-Run: Mon Oct 05 2026 09:47:06 GMT+0300 (Israel Daylight Time)
+Run: Mon Oct 05 2026 09:50:18 GMT+0300 (Israel Daylight Time)
 Demo folder: /home/claude/out/demo-dist
-bareproxy.wasm: 11290968 bytes raw, 2976043 bytes gzipped (gzip -9)
+bareproxy.wasm: 11502780 bytes raw, 3027740 bytes gzipped (gzip -9)
 
 == What differs between the demo and the native program, and why
   1. The first line names bareproxy.conf, the demo's config name. The native program prints the file's path.
@@ -16,11 +16,11 @@ bareproxy.wasm: 11290968 bytes raw, 2976043 bytes gzipped (gzip -9)
      the rule table lines up. The native build is from the same source tree as the wasm build.
 
 == Setup
-fixture folder: /tmp/bpdc-mdrHZr
+fixture folder: /tmp/bpdc-NQzFTz
 PASS  native bareproxy builds
 PASS  native planref builds
 native: bareproxy 0.1.0-dev (first cut), built with go1.27.1
-serving /home/claude/out/demo-dist at http://127.0.0.1:40143
+serving /home/claude/out/demo-dist at http://127.0.0.1:46319
 browser: Chromium 141.0.7390.37 (headless, Playwright)
 
 == Loading
@@ -30,7 +30,7 @@ PASS  page becomes ready after the delayed load
 PASS  page still starts when the host sends .wasm with the wrong content type
 PASS  a missing wasm file shows an error, not a blank page
 PASS  and the output panels say the core is not running
-status line: "Ready. BareProxy 0.1.0-dev (first cut), loaded in 0.3 s." (page load to ready, wall clock 0.5 s, local server)
+status line: "Ready. BareProxy 0.1.0-dev (first cut), loaded in 0.2 s." (page load to ready, wall clock 0.4 s, local server)
 core version string: 0.1.0-dev (first cut)
 PASS  the core version equals the native one
 
@@ -243,18 +243,31 @@ PASS  GET http://narrow.test/other: output has "No rule matches"
 PASS  GET http://narrow.test/other: output has "Action: 404 (no_route)"
 
 == Plan
-        No changes.
+        Plan e87c092418f9: 2 routing changes, 2 other changes
+        Routing
+          example.com (port 443), any method, /api/v2 and below
+              pool api, strip /api  ->  pool api-v2, strip /api/v2
+          example.com (port 443), any method, every other path (not /api and below, /healthz)
+              files /var/www/example/public  ->  files /var/www/example/releases/2026-10-05
+        Other changes
+          pool api: backend 10.0.0.14:8080 added (line 18)
+          pool api-v2 added (line 21), 2 backends
 PASS  the page shows exactly what the core returned
 PASS  plan text is identical to MakePlan run natively on the same pair (same parse options)
-PASS  plan text is identical to MakePlan on configs read from real folders and certificates
-NOTE  plan printed "No changes." for a pair that changes things: bp.MakePlan is still the stub on this branch (merge main to get the real one)
+PASS  plan text is identical to MakePlan on configs read from real folders and certificates (plan ID masked: it hashes the text, which has other paths)
+PASS  plan ID is the first 12 hex digits of sha256(old config, NUL, new config), worked out here with node
+PASS  plan lists the four changes between the two example configs (new API rule, new folder, new backend, new pool)
+PASS  plan output: the heading, both section names and both change lines are highlighted
+PASS  plan with a shadowed rule: same text as MakePlan run natively
+PASS  plan with a shadowed rule: says the rule never matches
+PASS  plan with a shadowed rule: the warning row is highlighted in the page
 PASS  plan of a config against itself says no changes
 PASS  plan with a broken new config lists its problems
 
 == Speed (measured in this browser)
-  check    median 0.20 ms, slowest 25.50 ms
-  explain  median 0.20 ms, slowest 2.60 ms
-  plan     median 0.20 ms, slowest 4.70 ms
+  check    median 0.10 ms, slowest 19.20 ms
+  explain  median 0.20 ms, slowest 6.40 ms
+  plan     median 0.60 ms, slowest 1.00 ms
 PASS  every call is under 100 ms in the median
 
 == Layout and screenshots
@@ -269,7 +282,7 @@ PASS  320 px: every button, chip and field is at least 32 px tall
 NOTE  320 px: fields below 16 px font (iOS zooms into those on focus): cfg-a:13px, headers:13px, cfg-b:13px
 screenshot: /home/claude/out/demo-shots/demo-320.png
 PASS  760 px iframe: no horizontal scroll inside the frame
-screenshot: /home/claude/out/demo-shots/demo-iframe-760.png (frame content 2281 px tall)
+screenshot: /home/claude/out/demo-shots/demo-iframe-760.png (frame content 2459 px tall)
 
 == Network: nothing is sent anywhere
   requests the local server saw: 36, methods: GET
@@ -281,4 +294,4 @@ PASS  no request failed except the ones this check forced
 PASS  no console errors or warnings (apart from the forced wrong-content-type case)
 
 == Summary
-99 passed, 0 failed, in 16 s
+105 passed, 0 failed, in 13 s

@@ -224,6 +224,8 @@ textarea.plain:focus, input[type="text"]:focus, select:focus {
 .out .act { font-weight: 700; color: var(--brand); background: #E9EEF5; margin-top: 4px; }
 .out .gap { color: var(--warn); background: var(--warn-soft); }
 .out .bad { color: var(--err); }
+.out .sec { font-weight: 700; color: var(--ink); margin-top: 4px; }
+.out .chg { background: var(--accent-soft); color: var(--accent-strong); font-weight: 600; box-shadow: inset 3px 0 0 var(--accent); }
 
 /* Footer */
 

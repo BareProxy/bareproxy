@@ -108,7 +108,10 @@ on localhost, and drives the page in headless Chromium like a visitor. Then it c
   certificate. Everything up to the action line must be identical, character for character. For
   files rules the native result must be one of the outcomes the demo lists.
 - **Plan.** The page's output is compared with `planref` on the same two configs, once read the
-  way the demo reads them and once read from real folders and certificates.
+  way the demo reads them and once read from real folders and certificates. The plan ID hashes the
+  config text, which has other paths in the second case, so it is masked there and the ID rule
+  (first 12 hex digits of sha256 of old, a NUL byte, new) is checked on its own. A second pair with
+  a rule that can never match checks the Warnings section.
 - **Speed.** Median time of each call in the browser, measured.
 - **Layout.** No sideways page scroll at 1280, 760 (in an iframe), 375 and 320 px, and every
   button and field at least 32 px tall. Screenshots go to `--shots` (default
@@ -122,17 +125,25 @@ that says "No changes." for the two example configs counts as a failure.
 
 ## Sizes
 
-All measured on the build in this tree (Go 1.27.1, `-trimpath -ldflags="-s -w"`):
+All measured on the build in this tree (Go 1.27.1, `-trimpath -ldflags="-s -w"`), with the real
+`plan` merged in:
 
 | File | Bytes |
 | --- | --- |
-| `bareproxy.wasm` | 11,290,968 raw, 2,976,043 gzipped (`gzip -9`) |
+| `bareproxy.wasm` | 11,502,780 raw, 3,027,740 gzipped (`gzip -9`) |
 | `index.html` | 7,495 |
-| `demo.css` | 10,095 |
-| `demo.js` | 12,314 |
+| `demo.css` | 10,297 |
+| `demo.js` | 13,066 |
 | `wasm_exec.js` | 16,992 |
 
-For scale, an empty Go program that only imports `syscall/js`, built the same way, is 1,966,166
-bytes raw and 575,344 gzipped. The rest of the wasm is BareProxy and the standard library it uses.
-A smaller build is possible work for later and hasn't been tried. The numbers above are for the
-first build of this folder and change with the code, so run `build.sh` for current ones.
+The four small files add up to 47,850 bytes (computed). For scale, an empty Go program that only
+imports `syscall/js`, built the same way, is 1,966,166 bytes raw and 575,344 gzipped. The rest of
+the wasm is BareProxy and the standard library it uses. A smaller build is possible work for later
+and hasn't been tried. These numbers change with the code, so `build.sh` prints the current ones.
+
+## Licence
+
+BareProxy and this demo are under the Apache License 2.0, Copyright 2026 BareProxy.com.
+`wasm_exec.js`, and the Go runtime and standard library inside `bareproxy.wasm`, come from the Go
+distribution and stay under the Go project's own BSD-style license (https://go.dev/LICENSE). The
+header in `wasm_exec.js` stays as it is.

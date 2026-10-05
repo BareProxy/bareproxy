@@ -92,11 +92,26 @@
     return '';
   }
 
-  function showText(pre, text) {
+  // The same for plan output: the heading, the section names, each change (old
+  // and new on one line), and the warnings. A fresh one is made for each print
+  // because it remembers which section it is in.
+  function planClassifier() {
+    let section = '';
+    return (line) => {
+      if (/^Plan [0-9a-f]{12}:/.test(line)) return 'act';
+      if (/^(Routing|Other changes|Warnings)$/.test(line)) { section = line; return 'sec'; }
+      if (section === 'Routing' && /^ {4,}\S.* {2}-> {2}/.test(line)) return 'chg';
+      if (section === 'Warnings' && /^ {2}\S/.test(line)) return 'gap';
+      if (/^The .*config.* has errors|^bareproxy: |: error: /.test(line)) return 'bad';
+      return '';
+    };
+  }
+
+  function showText(pre, text, classifier = classify) {
     const frag = document.createDocumentFragment();
     for (const line of String(text).replace(/\n+$/, '').split('\n')) {
       const row = document.createElement('span');
-      row.className = 'ln ' + classify(line);
+      row.className = 'ln ' + classifier(line);
       row.textContent = line === '' ? ' ' : line;
       frag.appendChild(row);
     }
@@ -196,7 +211,7 @@
     edB.mark(markMap(res.problems || []));
     const out = safely('Plan', () => window.bareproxyPlan(el.cfgA.value, el.cfgB.value),
       (msg) => 'bareproxy: ' + msg);
-    showText(el.planOut, out);
+    showText(el.planOut, out, planClassifier());
     if (!res.ok) setChip(el.planChip, 'err', 'new config has errors');
     else if ((res.problems || []).length) setChip(el.planChip, 'warn', 'new config: ' + plural(res.problems.length, 'warning'));
     else setChip(el.planChip, 'none', '');

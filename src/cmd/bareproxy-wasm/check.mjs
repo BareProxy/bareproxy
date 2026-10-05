@@ -26,6 +26,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import http from 'node:http';
+import crypto from 'node:crypto';
 import { createRequire } from 'node:module';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
@@ -560,15 +561,48 @@ async function main() {
       ok('the page shows exactly what the core returned', shown === raw.replace(/\n+$/, '').split('\n').map((l) => l.trimEnd()).join('\n'));
       const nd = native.plan(confA, confB, true);
       ok('plan text is identical to MakePlan run natively on the same pair (same parse options)', nd.code === 0 && raw === nd.stdout, 'demo:\n' + raw + '\nnative:\n' + nd.stdout + nd.stderr);
+      // The plan ID is a hash of the two config texts, and the folder variant has real paths in its text,
+      // so its ID is different. Everything else must be identical.
       const nr = native.plan(confA, confB, false);
-      ok('plan text is identical to MakePlan on configs read from real folders and certificates', nr.code === 0 && raw === nr.stdout, 'demo:\n' + raw + '\nnative (folders):\n' + nr.stdout + nr.stderr);
+      const maskId = (t) => t.replace(/^Plan [0-9a-f]{12}:/m, 'Plan ID:');
+      ok('plan text is identical to MakePlan on configs read from real folders and certificates (plan ID masked: it hashes the text, which has other paths)', nr.code === 0 && maskId(raw) === maskId(nr.stdout), 'demo:\n' + raw + '\nnative (folders):\n' + nr.stdout + nr.stderr);
+      const planId = (raw.match(/^Plan ([0-9a-f]{12}):/m) || [])[1];
+      if (planId) {
+        const wantId = crypto.createHash('sha256').update(confA + '\0' + confB).digest('hex').slice(0, 12);
+        ok('plan ID is the first 12 hex digits of sha256(old config, NUL, new config), worked out here with node', planId === wantId, `demo ${planId}, node ${wantId}`);
+      }
       const stub = raw.trim() === 'No changes.';
       if (stub) {
         if (ALLOW_PLAN_STUB) note('plan printed "No changes." for a pair that changes things: bp.MakePlan is still the stub on this branch (merge main to get the real one)');
         else ok('plan finds the changes between the two example configs', false, 'plan printed "No changes."; is bp.MakePlan still the stub?');
       } else {
-        ok('plan finds the changes between the two example configs', /api-v2/.test(raw) && /2026-10-05/.test(raw), raw);
+        const wantPlan = [
+          'pool api, strip /api  ->  pool api-v2, strip /api/v2',
+          'files /var/www/example/public  ->  files /var/www/example/releases/2026-10-05',
+          'pool api: backend 10.0.0.14:8080 added',
+          'pool api-v2 added',
+        ];
+        const missing = wantPlan.filter((w) => !raw.includes(w));
+        ok('plan lists the four changes between the two example configs (new API rule, new folder, new backend, new pool)', missing.length === 0, 'missing: ' + missing.join(' | ') + '\n' + raw);
       }
+      const cls = await page.$$eval('#plan-out .ln', (ls) => ls.map((l) => l.className.replace(/^ln\s*/, '')));
+      const count = (k) => cls.filter((c) => c === k).length;
+      ok('plan output: the heading, both section names and both change lines are highlighted', count('act') === 1 && count('sec') === 2 && count('chg') === 2, JSON.stringify(cls));
+
+      // a second pair: a rule that can never match, so plan prints a warning
+      const shadowed = confB.replace('  route /api/* -> api strip\n', '  route /api/* -> api strip\n  route /api/v1/* -> api strip\n');
+      await page.fill('#cfg-b', shadowed);
+      await page.click('#plan-btn');
+      await sleep(350);
+      const rawW = await page.evaluate(([a, b]) => window.bareproxyPlan(a, b), [confA, shadowed]);
+      const nW = native.plan(confA, shadowed, true);
+      ok('plan with a shadowed rule: same text as MakePlan run natively', nW.code === 0 && rawW === nW.stdout, 'demo:\n' + rawW + '\nnative:\n' + nW.stdout + nW.stderr);
+      ok('plan with a shadowed rule: says the rule never matches', /Warnings\n.*never matches/.test(rawW), rawW);
+      const warnRows = await page.$$eval('#plan-out .gap', (ls) => ls.map((l) => l.textContent));
+      ok('plan with a shadowed rule: the warning row is highlighted in the page', warnRows.length >= 1 && /never matches/.test(warnRows[0]), JSON.stringify(warnRows));
+      await page.click('#reset-b');
+      await sleep(350);
+
       const same = await page.evaluate(([a]) => window.bareproxyPlan(a, a), [confA]);
       ok('plan of a config against itself says no changes', same.trim() === 'No changes.', same);
       const bad = await page.evaluate(([a]) => window.bareproxyPlan(a, 'site x\n  nonsense\n'), [confA]);
