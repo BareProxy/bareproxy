@@ -66,24 +66,40 @@ func TestPlanGolden(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	type group struct {
+		name   string
+		srcs   []string
+		strict bool // every config must parse
+	}
+	groups := []group{{"extra", goldenExtra, true}}
 	for _, d := range file.Decls {
 		fn, ok := d.(*ast.FuncDecl)
 		if !ok || !strings.HasPrefix(fn.Name.Name, "TestPlan") {
 			continue
 		}
-		var cfgs []*Config
+		g := group{name: fn.Name.Name}
 		ast.Inspect(fn, func(n ast.Node) bool {
-			lit, ok := n.(*ast.BasicLit)
-			if !ok || lit.Kind != gotoken.STRING || !strings.HasPrefix(lit.Value, "`") {
-				return true
-			}
-			src, _ := strconv.Unquote(lit.Value)
-			if c, probs := Parse(filepath.Join(dir, "bareproxy.conf"), src); !HasErrors(probs) {
-				t.Cleanup(c.Close)
-				cfgs = append(cfgs, c)
+			if lit, ok := n.(*ast.BasicLit); ok && lit.Kind == gotoken.STRING && strings.HasPrefix(lit.Value, "`") {
+				src, _ := strconv.Unquote(lit.Value)
+				g.srcs = append(g.srcs, src)
 			}
 			return true
 		})
+		groups = append(groups, g)
+	}
+	for _, g := range groups {
+		var cfgs []*Config
+		for _, src := range g.srcs {
+			c, probs := Parse(filepath.Join(dir, "bareproxy.conf"), src)
+			if HasErrors(probs) {
+				if g.strict {
+					t.Fatalf("%s: %v\n%s", g.name, probs, src)
+				}
+				continue
+			}
+			t.Cleanup(c.Close)
+			cfgs = append(cfgs, c)
+		}
 		if len(cfgs) == 0 {
 			continue
 		}
@@ -103,7 +119,7 @@ func TestPlanGolden(t *testing.T) {
 			MaxPlanClasses = max
 			for i, oc := range cfgs {
 				for j, nc := range cfgs {
-					p := plan(fmt.Sprintf("%s %d->%d", fn.Name.Name, i, j), oc, nc)
+					p := plan(fmt.Sprintf("%s %d->%d", g.name, i, j), oc, nc)
 					for _, port := range ports {
 						var ks []string
 						for _, q := range reqs {
@@ -254,3 +270,56 @@ func TestPlanTiming(t *testing.T) {
 	}
 	t.Logf("plan for one changed rule of 300: best of 5 runs %v", best)
 }
+
+// goldenExtra holds configs that change settings outside routing: globals,
+// site settings, pool settings and backends.
+var goldenExtra = []string{`global
+  admin off
+  trace-log off
+
+site http://example.com
+  body-limit 10MB
+  encoded-slashes keep
+  error 404 /404.html
+  route /api/* -> api strip
+  route /* -> respond 200 "x"
+
+pool api
+  backend 10.0.0.1:80
+  host-header api.internal
+  connect-timeout 2s
+  response-timeout 30s
+  retries 1
+  health /healthz every 5s timeout 1s expect 200-399
+`, `global
+  trace-log stdout
+
+site http://example.com
+  body-limit 1KB
+  route /api/* -> api strip
+  route /* -> respond 200 "x"
+
+pool api
+  backend 10.0.0.1:80
+  backend 10.0.0.3:80
+  connect-timeout 3s
+  retries 2
+`, `site http://example.com http://www.example.com
+  encoded-slashes reject
+  body-limit 1GB
+  route GET /api/* header X-V=2 -> api
+  route /* -> files f1
+
+pool api
+  backend 10.0.0.1:80
+  host-header other
+  health /up
+`, `site http://www.example.com
+  body-limit 5000
+  encoded-slashes keep
+  route /api/* -> other
+  route /* -> files f2
+
+pool other
+  backend 10.0.0.9:80
+`}

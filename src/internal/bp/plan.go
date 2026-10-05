@@ -44,18 +44,11 @@ type PlanLine struct {
 // MakePlan compares two compiled configs. Neither is changed. A nil config
 // counts as one with no listeners, sites or pools.
 func MakePlan(old, new *Config) *PlanResult {
-	res := &PlanResult{ID: PlanID(old, new), Changes: []PlanLine{}, Settings: []string{}, Warnings: []string{}}
-	if old == nil {
-		old = &Config{Pools: map[string]*PoolSpec{}, Ports: map[int]*Port{}}
-	}
-	if new == nil {
-		new = &Config{Pools: map[string]*PoolSpec{}, Ports: map[int]*Port{}}
-	}
-	pl := newPlanner(old, new)
-	res.pl = pl
+	pl := newPlanner(cmp.Or(old, &Config{}), cmp.Or(new, &Config{}))
+	res := &PlanResult{ID: PlanID(old, new), Changes: []PlanLine{}, Settings: []string{}, Warnings: []string{}, pl: pl}
 	pl.routing(res)
 	res.Settings = append(res.Settings, pl.settings()...)
-	res.Warnings = append(res.Warnings, planWarnings(new)...)
+	res.Warnings = append(res.Warnings, planWarnings(pl.new)...)
 	return res
 }
 
@@ -496,9 +489,7 @@ func (pl *planner) analyze(g *hostGroup, gi int, lines []*lineAcc) []*lineAcc {
 			}
 		}
 	}
-	if g.class == nil {
-		g.class = map[[2]int]int{}
-	}
+	g.class = map[[2]int]int{}
 	for _, k := range order {
 		m := groups[k]
 		id := len(lines)
@@ -646,12 +637,7 @@ type pnode struct {
 }
 
 func newSpace(a, b *Site) *space {
-	var routes []*Route
-	for _, s := range []*Site{a, b} {
-		if s != nil {
-			routes = append(routes, s.Routes...)
-		}
-	}
+	routes := slices.Concat(routesOf(a), routesOf(b))
 	pats := map[string]bool{}
 	methods := map[string]bool{}
 	hv := map[string]map[string]bool{}
@@ -1039,13 +1025,7 @@ func joinAnd(xs []string) string {
 // ruleDiff lists the rule lines that differ between a group's two sites,
 // for plans with too many classes to work through.
 func ruleDiff(g *hostGroup) []PlanLine {
-	text := func(s *Site) []*Route {
-		if s == nil {
-			return nil
-		}
-		return s.Routes
-	}
-	a, b := text(g.oldS), text(g.newS)
+	a, b := routesOf(g.oldS), routesOf(g.newS)
 	// longest common subsequence of rule texts
 	n, m := len(a), len(b)
 	lcs := make([][]int, n+1)
@@ -1168,6 +1148,13 @@ func (sp *space) each(s *Site, f func(rules *Site, method, path string, h http.H
 	}
 }
 
+func routesOf(s *Site) []*Route {
+	if s == nil {
+		return nil
+	}
+	return s.Routes
+}
+
 // pathSite is a site cut down to its rules for one path, or nil.
 func pathSite(s *Site, path string) *Site {
 	if s == nil {
@@ -1179,20 +1166,15 @@ func pathSite(s *Site, path string) *Site {
 // settings lists the changes outside routing, one line each.
 func (pl *planner) settings() []string {
 	var out []string
-	scheme := func(p *Port) string {
-		if p.TLS {
-			return "https"
-		}
-		return "http"
-	}
+	scheme := map[bool]string{false: "http", true: "https"}
 	for _, pp := range pl.ports {
 		switch {
 		case pp.oldP == nil:
-			out = append(out, fmt.Sprintf("port %d (%s) added (line %d)", pp.num, scheme(pp.newP), pp.newP.Line))
+			out = append(out, fmt.Sprintf("port %d (%s) added (line %d)", pp.num, scheme[pp.newP.TLS], pp.newP.Line))
 		case pp.newP == nil:
-			out = append(out, fmt.Sprintf("port %d (%s) removed (was line %d)", pp.num, scheme(pp.oldP), pp.oldP.Line))
+			out = append(out, fmt.Sprintf("port %d (%s) removed (was line %d)", pp.num, scheme[pp.oldP.TLS], pp.oldP.Line))
 		case pp.oldP.TLS != pp.newP.TLS:
-			out = append(out, fmt.Sprintf("port %d switched from %s to %s (line %d)", pp.num, scheme(pp.oldP), scheme(pp.newP), pp.newP.Line))
+			out = append(out, fmt.Sprintf("port %d switched from %s to %s (line %d)", pp.num, scheme[pp.oldP.TLS], scheme[pp.newP.TLS], pp.newP.Line))
 		}
 	}
 	out = append(out, globalChanges(pl.old, pl.new)...)
@@ -1289,38 +1271,35 @@ func (pl *planner) siteChanges() []string {
 			if siteLabel(a) != siteLabel(b) {
 				name += " (was site " + siteLabel(a) + ")"
 			}
-			tls := func(s *Site) string {
-				switch {
-				case s.TLSAuto:
-					return "auto"
-				case s.CertFile != "":
-					return s.CertFile + " " + s.KeyFile
+			// set adds a line when a setting differs. The line numbers
+			// are those that set it in each site's block, unless given.
+			set := func(key, from, to string, lines ...int) {
+				if from == to {
+					return
 				}
-				return "none"
-			}
-			if tls(a) != tls(b) {
-				out = append(out, fmt.Sprintf("%s: tls %s  ->  %s%s", name, tls(a), tls(b), lineRef(b.TLSLine, a.TLSLine)))
-			}
-			if a.Err404 != b.Err404 {
-				out = append(out, fmt.Sprintf("%s: error 404 page %s  ->  %s%s", name, orNone(a.Err404), orNone(b.Err404), lineRef(b.Err404Line, a.Err404Line)))
-			}
-			if a.BodyLimit != b.BodyLimit {
-				out = append(out, fmt.Sprintf("%s: body-limit %s  ->  %s%s", name, sizeText(a.BodyLimit), sizeText(b.BodyLimit),
-					lineRef(settingLine(pl.new, b.Line, "body-limit"), settingLine(pl.old, a.Line, "body-limit"))))
-			}
-			if a.KeepEncodedSlash != b.KeepEncodedSlash {
-				es := func(s *Site) string {
-					if s.KeepEncodedSlash {
-						return "keep"
-					}
-					return "reject"
+				if lines == nil {
+					lines = []int{settingLine(pl.new, b.Line, key), settingLine(pl.old, a.Line, key)}
 				}
-				out = append(out, fmt.Sprintf("%s: encoded-slashes %s  ->  %s%s", name, es(a), es(b),
-					lineRef(settingLine(pl.new, b.Line, "encoded-slashes"), settingLine(pl.old, a.Line, "encoded-slashes"))))
+				out = append(out, fmt.Sprintf("%s: %s %s  ->  %s%s", name, key, from, to, lineRef(lines[0], lines[1])))
 			}
+			set("tls", tlsText(a), tlsText(b), b.TLSLine, a.TLSLine)
+			set("error 404 page", orNone(a.Err404), orNone(b.Err404), b.Err404Line, a.Err404Line)
+			set("body-limit", sizeText(a.BodyLimit), sizeText(b.BodyLimit))
+			slashes := map[bool]string{false: "reject", true: "keep"}
+			set("encoded-slashes", slashes[a.KeepEncodedSlash], slashes[b.KeepEncodedSlash])
 		}
 	}
 	return out
+}
+
+func tlsText(s *Site) string {
+	switch {
+	case s.TLSAuto:
+		return "auto"
+	case s.CertFile != "":
+		return s.CertFile + " " + s.KeyFile
+	}
+	return "none"
 }
 
 // siteLabel names a site by its first address as written, so sites with
@@ -1369,23 +1348,16 @@ func poolChanges(old, new *Config) []string {
 			}
 			return x.Addr
 		}
-		inA, inB := map[string]bool{}, map[string]bool{}
-		for _, x := range a.Backends {
-			inA[key(x)] = true
-		}
-		for _, x := range b.Backends {
-			inB[key(x)] = true
-		}
-		for _, x := range a.Backends {
-			if !inB[key(x)] {
-				out = append(out, fmt.Sprintf("pool %s: backend %s removed (was line %d)", name, key(x), x.Line))
+		// missing lists the backends of xs that ys lacks.
+		missing := func(xs, ys []BackendSpec, format string) {
+			for _, x := range xs {
+				if !slices.ContainsFunc(ys, func(y BackendSpec) bool { return key(y) == key(x) }) {
+					out = append(out, fmt.Sprintf(format, name, key(x), x.Line))
+				}
 			}
 		}
-		for _, x := range b.Backends {
-			if !inA[key(x)] {
-				out = append(out, fmt.Sprintf("pool %s: backend %s added (line %d)", name, key(x), x.Line))
-			}
-		}
+		missing(a.Backends, b.Backends, "pool %s: backend %s removed (was line %d)")
+		missing(b.Backends, a.Backends, "pool %s: backend %s added (line %d)")
 		set := func(what, from, to string) {
 			if from != to {
 				out = append(out, fmt.Sprintf("pool %s: %s %s  ->  %s%s", name, what, from, to,
