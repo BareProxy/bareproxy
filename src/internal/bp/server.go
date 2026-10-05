@@ -407,7 +407,7 @@ func (s *Server) serve(w *respWriter, r *http.Request, rt *Runtime, port int, re
 	a := route.Act
 	if a.Kind == "https" && site.TLSAuto && rt.acme != nil && strings.HasPrefix(norm, "/.well-known/acme-challenge/") {
 		rec.Outcome, rec.Rule = "local", "ACME challenge (HTTP-01)"
-		rt.acme.HTTPHandler(nil).ServeHTTP(w, r)
+		rt.acme.http01.ServeHTTP(w, r)
 		return
 	}
 	switch a.Kind {

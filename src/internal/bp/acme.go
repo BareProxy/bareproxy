@@ -31,10 +31,11 @@ var acmeHTTPClient *http.Client
 // keeps the account, the cache and any challenge in flight.
 type acmeState struct {
 	*autocert.Manager
-	key   string
-	cfg   atomic.Pointer[Config] // the running config: its https names are the host policy
-	mem   *TraceMem
-	fails sync.Map // host name -> last error text, so each failure is noted once
+	http01 http.Handler // answers HTTP-01 challenges; making it turns HTTP-01 on
+	key    string
+	cfg    atomic.Pointer[Config] // the running config: its https names are the host policy
+	mem    *TraceMem
+	fails  sync.Map // host name -> last error text, so each failure is noted once
 }
 
 func acmeCA(c *Config) string { return cmp.Or(c.ACMECA, acme.LetsEncryptURL) }
@@ -69,6 +70,7 @@ func newACME(c *Config, old *acmeState, mem *TraceMem) *acmeState {
 				}
 				return nil
 			}}
+		a.http01 = a.HTTPHandler(nil)
 	}
 	a.cfg.Store(c)
 	return a
