@@ -626,6 +626,14 @@ func TestTraceEventsFromHealthChecks(t *testing.T) {
 	}
 }
 
+func TestTraceEventsStayOnOneLine(t *testing.T) {
+	m := newTraceMem()
+	m.Event("reload", " reload failed (the config has errors\nline 2: error: no pool named x), so version 1 keeps running\n")
+	if got := m.Events()[0].Text; got != "reload failed (the config has errors; line 2: error: no pool named x), so version 1 keeps running" {
+		t.Errorf("event text %q", got)
+	}
+}
+
 func TestTraceEventRingKeepsTheLast1000(t *testing.T) {
 	m := newTraceMem()
 	for i := 1; i <= 1005; i++ {
@@ -1101,8 +1109,8 @@ func TestTraceReloadEvents(t *testing.T) {
 	defer s.Current().Stop()
 	evs := s.Current().Mem.Events()
 	if len(evs) != 2 || evs[0].Kind != "reload" || evs[1].Kind != "reload" ||
-		!strings.Contains(evs[0].Text, "reload failed (line 2: error: no pool named nopool), so version 1 keeps running") ||
-		!strings.HasPrefix(evs[1].Text, "version 2 running: 1 site") {
+		!strings.Contains(evs[0].Text, "no pool named nopool") || !strings.Contains(evs[0].Text, "version 1 keeps running") ||
+		!strings.Contains(evs[1].Text, "version 2 running") || !strings.Contains(evs[1].Text, "1 site") {
 		t.Errorf("events: %+v", evs)
 	}
 }

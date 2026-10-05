@@ -222,6 +222,7 @@ func (m *TraceMem) Event(kind, text string) {
 	if m == nil {
 		return
 	}
+	text = strings.ReplaceAll(strings.TrimSpace(text), "\n", "; ") // one line each
 	ev := Event{Time: time.Now().UTC().Format("2006-01-02T15:04:05.000Z"), Kind: kind, Text: text}
 	m.mu.Lock()
 	defer m.mu.Unlock()
