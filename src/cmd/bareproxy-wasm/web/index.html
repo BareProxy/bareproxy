@@ -1,0 +1,159 @@
+<!doctype html>
+<!-- Copyright 2026 BareProxy.com -->
+<!-- SPDX-License-Identifier: Apache-2.0 -->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>BareProxy live demo</title>
+<meta name="description" content="The real BareProxy code, compiled to WebAssembly and running in your browser. Check a config, explain a request, plan a change. Nothing is sent anywhere.">
+<link rel="stylesheet" href="demo.css">
+</head>
+<body>
+<div class="demo">
+
+  <header class="top">
+    <h1>BareProxy live demo</h1>
+    <p class="intro">The real BareProxy code, compiled to WebAssembly, running in your browser. Nothing is sent anywhere.</p>
+    <div class="status" id="status" data-state="loading" role="status" aria-live="polite">
+      <span class="dot" aria-hidden="true"></span>
+      <span id="status-text">Loading the BareProxy core...</span>
+      <span class="bar" aria-hidden="true"><span></span></span>
+    </div>
+  </header>
+
+  <section class="panel" aria-labelledby="h-config">
+    <h2 id="h-config"><span class="num">1</span> Config</h2>
+    <p class="help">This is the config a server would run. Edit it and the results below follow as you type, or press Check. It is read by the same parser as <code>bareproxy check</code>.</p>
+
+    <label class="sr" for="cfg-a">Config</label>
+    <div class="editor" id="ed-a">
+      <div class="gutter" id="gut-a" aria-hidden="true"></div>
+      <textarea id="cfg-a" class="code" spellcheck="false" autocomplete="off" autocapitalize="off" autocorrect="off" wrap="off">
+# A site served from a folder, with an API behind it and a www redirect.
+site example.com
+  tls /etc/bareproxy/example.com.crt /etc/bareproxy/example.com.key
+  error 404 /404.html
+  route /healthz -> respond 200 "ok"
+  route /api/* -> api strip
+  route /* -> files /var/www/example/public
+
+site www.example.com
+  tls /etc/bareproxy/example.com.crt /etc/bareproxy/example.com.key
+  route /* -> redirect 301 https://example.com
+
+pool api
+  backend 10.0.0.11:8080
+  backend 10.0.0.12:8080
+  backend 10.0.0.13:8080
+  health /healthz</textarea>
+    </div>
+
+    <div class="bar-row">
+      <button type="button" class="btn primary" id="check-btn" disabled>Check</button>
+      <button type="button" class="btn quiet" id="reset-a">Reset example</button>
+      <span class="chip-result" id="check-chip" data-kind="none"></span>
+    </div>
+
+    <div class="result" id="check-result" aria-live="polite">
+      <p class="cmd" id="check-cmd">$ bareproxy check bareproxy.conf</p>
+      <p class="summary" id="check-summary"></p>
+      <ul class="problems" id="check-list"></ul>
+    </div>
+  </section>
+
+  <section class="panel" aria-labelledby="h-explain">
+    <h2 id="h-explain"><span class="num">2</span> Explain a request</h2>
+    <p class="help">Pick a request, or type your own. BareProxy reads the rules from the top and says which one wins and what it does, using the config above.</p>
+
+    <div class="presets" id="presets" role="group" aria-label="Example requests">
+      <button type="button" class="chip" data-method="GET" data-url="https://example.com/about/">GET https://example.com/about/</button>
+      <button type="button" class="chip" data-method="GET" data-url="https://example.com/api/orders">GET https://example.com/api/orders</button>
+      <button type="button" class="chip" data-method="GET" data-url="https://example.com/old-page/">GET https://example.com/old-page/</button>
+      <button type="button" class="chip" data-method="GET" data-url="http://example.com/">GET http://example.com/</button>
+      <button type="button" class="chip" data-method="GET" data-url="https://www.example.com/x">GET https://www.example.com/x</button>
+    </div>
+
+    <form class="request" id="request" autocomplete="off">
+      <label class="sr" for="method">Method</label>
+      <select id="method" name="method">
+        <option>GET</option><option>HEAD</option><option>POST</option><option>PUT</option>
+        <option>PATCH</option><option>DELETE</option><option>OPTIONS</option>
+      </select>
+      <label class="sr" for="url">URL</label>
+      <input id="url" name="url" type="text" inputmode="url" spellcheck="false" autocapitalize="off" autocorrect="off" value="https://example.com/about/" placeholder="https://example.com/about/">
+      <button type="submit" class="btn primary" id="explain-btn" disabled>Explain</button>
+    </form>
+
+    <details class="headers">
+      <summary>Request headers (optional)</summary>
+      <label class="sr" for="headers">Request headers, one per line</label>
+      <textarea id="headers" class="plain" rows="3" spellcheck="false" autocomplete="off" autocapitalize="off" autocorrect="off" placeholder="One per line, such as&#10;X-Beta: 1&#10;Accept-Encoding: gzip"></textarea>
+    </details>
+
+    <div class="result out-wrap">
+      <p class="cmd" id="explain-cmd"></p>
+      <pre class="out" id="explain-out" tabindex="0" aria-live="polite" aria-label="Explain output">Waiting for the core to load...</pre>
+    </div>
+    <p class="note" id="explain-note">A browser has no folders or certificate files, so the demo doesn't read them. For a files rule it names the file it would look at and says it can't tell if the file exists. On a server, explain looks, and says so.</p>
+  </section>
+
+  <section class="panel" aria-labelledby="h-plan">
+    <h2 id="h-plan"><span class="num">3</span> Plan a change</h2>
+    <p class="help">Plan compares the config in section 1 (the running one) with the new config below, and lists what would change before anything goes live. Here a new API version gets its own pool, the site moves to a new release folder, and a backend is added.</p>
+
+    <label class="sr" for="cfg-b">New config</label>
+    <div class="editor" id="ed-b">
+      <div class="gutter" id="gut-b" aria-hidden="true"></div>
+      <textarea id="cfg-b" class="code" spellcheck="false" autocomplete="off" autocapitalize="off" autocorrect="off" wrap="off">
+# The same site after a release.
+site example.com
+  tls /etc/bareproxy/example.com.crt /etc/bareproxy/example.com.key
+  error 404 /404.html
+  route /healthz -> respond 200 "ok"
+  route /api/v2/* -> api-v2 strip
+  route /api/* -> api strip
+  route /* -> files /var/www/example/releases/2026-10-05
+
+site www.example.com
+  tls /etc/bareproxy/example.com.crt /etc/bareproxy/example.com.key
+  route /* -> redirect 301 https://example.com
+
+pool api
+  backend 10.0.0.11:8080
+  backend 10.0.0.12:8080
+  backend 10.0.0.13:8080
+  backend 10.0.0.14:8080
+  health /healthz
+
+pool api-v2
+  backend 10.0.1.11:8080
+  backend 10.0.1.12:8080
+  health /healthz</textarea>
+    </div>
+
+    <div class="bar-row">
+      <button type="button" class="btn primary" id="plan-btn" disabled>Plan</button>
+      <button type="button" class="btn quiet" id="reset-b">Reset example</button>
+      <span class="chip-result" id="plan-chip" data-kind="none"></span>
+    </div>
+
+    <div class="result out-wrap">
+      <pre class="out" id="plan-out" tabindex="0" aria-live="polite" aria-label="Plan output">Waiting for the core to load...</pre>
+    </div>
+  </section>
+
+  <footer class="foot">
+    <span id="version">BareProxy</span>
+    <span class="sep" aria-hidden="true">/</span>
+    <a href="https://bareproxy.com/" target="_blank" rel="noopener">bareproxy.com</a>
+    <span class="sep" aria-hidden="true">/</span>
+    <span>Apache License 2.0</span>
+  </footer>
+
+</div>
+
+<script src="wasm_exec.js"></script>
+<script src="demo.js"></script>
+</body>
+</html>

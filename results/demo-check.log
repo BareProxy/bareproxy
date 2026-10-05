@@ -1,0 +1,313 @@
+BareProxy browser demo check
+Run: Mon Oct 05 2026 09:59:17 GMT+0300 (Israel Daylight Time)
+Demo folder: /home/claude/out/demo-dist
+bareproxy.wasm: 11521637 bytes raw, 3032933 bytes gzipped (gzip -9)
+
+== What differs between the demo and the native program, and why
+  1. The first line names bareproxy.conf, the demo's config name. The native program prints the file's path.
+  2. A browser has no disk. Folders are not opened and certificate files are not read. So:
+     - Check does not report "can't open folder" or "can't load the certificate". Everything else in Check is the same.
+     - For a files rule, Explain prints "Would check:" (the same file the server would look at) and "Not looked up:"
+       where the native program prints "Checked:", "Exists:" and a plain action. The demo's action line lists what each
+       outcome would be, and the native result must be one of them. This check tests that it is.
+  3. Everything else, the site, every rule checked, the winner, the path, redirects, respond, pool and strip, must be
+     identical, byte for byte, after the config path and folder names are mapped back.
+  4. The native side gets real temp folders and a self-signed certificate, with a folder name as long as the demo's so
+     the rule table lines up. The native build is from the same source tree as the wasm build.
+
+== Setup
+fixture folder: /tmp/bpdc-tSFPl6
+PASS  native bareproxy builds
+PASS  native planref builds
+native: bareproxy 0.1.0-dev (first cut), built with go1.27.1
+serving /home/claude/out/demo-dist at http://127.0.0.1:39365
+browser: Chromium 141.0.7390.37 (headless, Playwright)
+
+== Loading
+PASS  loading indicator shows while the core loads
+PASS  buttons are disabled while loading
+PASS  page becomes ready after the delayed load
+PASS  page still starts when the host sends .wasm with the wrong content type
+PASS  a missing wasm file shows an error, not a blank page
+PASS  and the output panels say the core is not running
+PASS  opened from disk the page says so and says to use a web server
+status line: "Ready. BareProxy 0.1.0-dev (first cut), loaded in 0.4 s." (page load to ready, wall clock 0.6 s, local server)
+core version string: 0.1.0-dev (first cut)
+PASS  the core version equals the native one
+
+== Check
+demo:   bareproxy.conf: ok, 2 sites, 1 pool, 4 rules; listening on :80 (http), :443 (https)
+native: bareproxy.conf: ok, 2 sites, 1 pool, 4 rules; listening on :80 (http), :443 (https)
+PASS  prefilled config: demo summary equals native bareproxy check
+PASS  prefilled config: result chip says ok, no problems
+PASS  plan editor config: summary equals native
+demo problems:
+        line 3: error: no pool named nopool
+        line 4: error: respond takes a status and an optional text
+        line 5: error: unknown site setting "bogus"
+        line 7: error: automatic certificates aren't built yet in this version: add tls CERT KEY, or use http:// addresses
+        line 7: error: example.com on port 443 already belongs to the site on line 1
+        line 10: error: pool api has no backends
+        line 10: warning: pool api isn't used by any route
+        line 11: error: a backend address is host:port, such as 10.0.0.11:8080
+PASS  broken config: the problem list equals native, line numbers included
+PASS  broken config: summary says it has errors
+PASS  broken config: the editor gutter marks every error line
+PASS  broken config: result chip counts the errors
+PASS  clicking "line N" selects that line in the editor
+PASS  Reset example restores the prefilled config and a clean check
+PASS  no disk: the demo reports ok for a missing folder and certificate
+PASS  no disk: the native program reports both (the expected difference)
+PASS  automatic certificates: the demo gives the same error the server gives
+
+== Check: the page when the core throws or returns something unexpected
+PASS  core throws: the page shows an error and not "ok"
+PASS  core returns text (as the panic guard does): the page shows an error and not "ok"
+PASS  core returns nothing: the page shows an error and not "ok"
+
+== Explain: the presets
+PASS  there are five presets
+PASS  the presets are the ones listed in the task
+
+$ GET https://example.com/about/
+        Config bareproxy.conf, read from the file (no running server, so backend states are unknown)
+        Site example.com (line 2): exact host match
+          line 5    route /healthz -> respond 200 "ok"          no: path is not /healthz
+          line 6    route /api/* -> api strip                   no: path is not /api or below
+          line 7    route /* -> files /var/www/example/public   match
+        Path: /about/
+        Would check: /var/www/example/public/about/index.html
+        Not looked up: the browser demo doesn't read the disk, so it can't tell if that exists
+        Error page: /404.html (line 4), from /var/www/example/public/404.html if that file exists
+        Action: serve 200 (text/html; charset=utf-8) if the file exists, otherwise 404
+PASS  GET https://example.com/about/: command line shown is "bareproxy explain --offline --config bareproxy.conf ..."
+PASS  GET https://example.com/about/: the page shows exactly what the core returned
+PASS  GET https://example.com/about/: matches native (files)
+PASS  GET https://example.com/about/: exactly one rule row is highlighted as the match
+PASS  GET https://example.com/about/: the preset chip is marked as selected
+
+$ GET https://example.com/api/orders
+        Config bareproxy.conf, read from the file (no running server, so backend states are unknown)
+        Site example.com (line 2): exact host match
+          line 5    route /healthz -> respond 200 "ok"   no: path is not /healthz
+          line 6    route /api/* -> api strip            match
+        Path: /api/orders
+        Sent upstream as GET /orders with Host: example.com
+        Pool api (line 13): 3 backends, states unknown without a running server
+          10.0.0.11:8080
+          10.0.0.12:8080
+          10.0.0.13:8080
+PASS  GET https://example.com/api/orders: command line shown is "bareproxy explain --offline --config bareproxy.conf ..."
+PASS  GET https://example.com/api/orders: the page shows exactly what the core returned
+PASS  GET https://example.com/api/orders: matches native (identical)
+PASS  GET https://example.com/api/orders: exactly one rule row is highlighted as the match
+PASS  GET https://example.com/api/orders: the preset chip is marked as selected
+
+$ GET https://example.com/old-page/
+        Config bareproxy.conf, read from the file (no running server, so backend states are unknown)
+        Site example.com (line 2): exact host match
+          line 5    route /healthz -> respond 200 "ok"          no: path is not /healthz
+          line 6    route /api/* -> api strip                   no: path is not /api or below
+          line 7    route /* -> files /var/www/example/public   match
+        Path: /old-page/
+        Would check: /var/www/example/public/old-page/index.html
+        Not looked up: the browser demo doesn't read the disk, so it can't tell if that exists
+        Error page: /404.html (line 4), from /var/www/example/public/404.html if that file exists
+        Action: serve 200 (text/html; charset=utf-8) if the file exists, otherwise 404
+PASS  GET https://example.com/old-page/: command line shown is "bareproxy explain --offline --config bareproxy.conf ..."
+PASS  GET https://example.com/old-page/: the page shows exactly what the core returned
+PASS  GET https://example.com/old-page/: matches native (files)
+PASS  GET https://example.com/old-page/: exactly one rule row is highlighted as the match
+PASS  GET https://example.com/old-page/: the preset chip is marked as selected
+
+$ GET http://example.com/
+        Config bareproxy.conf, read from the file (no running server, so backend states are unknown)
+        Site example.com (line 2) is HTTPS, so plain HTTP on port 80 is redirected
+          line 2    plain HTTP goes to https://   match
+        Path: /
+        Action: redirect 301 to https://example.com/
+PASS  GET http://example.com/: command line shown is "bareproxy explain --offline --config bareproxy.conf ..."
+PASS  GET http://example.com/: the page shows exactly what the core returned
+PASS  GET http://example.com/: matches native (identical)
+PASS  GET http://example.com/: exactly one rule row is highlighted as the match
+PASS  GET http://example.com/: the preset chip is marked as selected
+
+$ GET https://www.example.com/x
+        Config bareproxy.conf, read from the file (no running server, so backend states are unknown)
+        Site www.example.com (line 9): exact host match
+          line 11   route /* -> redirect 301 https://example.com   match
+        Path: /x
+        Action: redirect 301 to https://example.com/x
+PASS  GET https://www.example.com/x: command line shown is "bareproxy explain --offline --config bareproxy.conf ..."
+PASS  GET https://www.example.com/x: the page shows exactly what the core returned
+PASS  GET https://www.example.com/x: matches native (identical)
+PASS  GET https://www.example.com/x: exactly one rule row is highlighted as the match
+PASS  GET https://www.example.com/x: the preset chip is marked as selected
+
+== Explain: typed requests, headers and methods through the form
+PASS  the headers box is closed until the visitor opens it
+PASS  form: command line includes the -H headers
+PASS  form: POST to a files rule is a 405, as natively
+PASS  form: no preset chip is marked while the request is custom
+
+== Explain: 32 more requests on a config with methods, header conditions, wildcard, catch-all, http and other ports
+PASS  matrix config checks ok in the demo
+PASS  matrix config checks ok natively, same summary
+  GET     https://example.com/static/app.js
+          Action: serve 200 (text/javascript; charset=utf-8) if it's a file, redirect 301 to /static/app.js/ if it's a folder, otherwise 404
+  HEAD    https://example.com/static/
+          Action: serve 200 (text/html; charset=utf-8) if the file exists, otherwise 404
+  POST    https://example.com/static/x
+          Action: 405, files answer only GET and HEAD
+  POST    https://example.com/submit
+          Sent upstream as POST /submit with Host: example.com
+  GET     https://example.com/submit
+          Action: serve 200 (application/octet-stream) if it's a file, redirect 301 to /submit/ if it's a folder, otherwise 404
+  GET     https://example.com/beta/x  [X-Beta: 1]
+          Sent upstream as GET /x with Host: beta.internal
+  GET     https://example.com/beta/x  [X-Beta: 2]
+          Action: BareProxy answers 202 itself with "beta, other value"
+  GET     https://example.com/beta/x
+          Action: serve 200 (application/octet-stream) if it's a file, redirect 301 to /beta/x/ if it's a folder, otherwise 404
+  GET     https://example.com/beta  [x-beta: 1]
+          Sent upstream as GET / with Host: beta.internal
+  GET     https://example.com/old
+          Action: redirect 308 to https://example.com/new
+  GET     https://example.com/a/b
+          Action: BareProxy answers 204 itself
+  GET     https://example.com/a/b/
+          Action: serve 200 (text/html; charset=utf-8) if the file exists, otherwise 404
+  GET     https://example.com/a/../b
+          Action: serve 200 (application/octet-stream) if it's a file, redirect 301 to /b/ if it's a folder, otherwise 404
+  GET     https://example.com/a//b/./c
+          Action: serve 200 (application/octet-stream) if it's a file, redirect 301 to /a/b/c/ if it's a folder, otherwise 404
+  GET     https://example.com/a%2Fb
+          Action: 400 (bad_request)
+  GET     https://example.com/%2e%2e/etc/passwd
+          Action: 400 (bad_request)
+  GET     https://foo.example.com/x
+          Action: redirect 302 to https://example.com/wild
+  GET     https://a.b.example.com/x
+          Action: 421 (no_site)
+  GET     http://plain.test/
+          Action: BareProxy answers 200 itself with "plain"
+  GET     https://other.test:8443/x
+          Sent upstream as GET /x with Host: other.test:8443
+  GET     https://example.com:8443/
+          Action: 421 (no_site)
+  GET     http://example.com:8080/
+          Nothing listens on port 8080, so the connection is refused
+  GET     https://example.com/?q=1
+          Action: serve 200 (text/html; charset=utf-8) if the file exists, otherwise 404
+  GET     http://example.com/old?x=1
+          Action: redirect 301 to https://example.com/old?x=1
+  OPTIONS https://example.com/submit
+          Action: 405, files answer only GET and HEAD
+  GET     https://EXAMPLE.com/About/
+          Action: serve 200 (text/html; charset=utf-8) if the file exists, otherwise 404
+  GET     https://example.com/style.css
+          Action: serve 200 (text/css; charset=utf-8) if it's a file, redirect 301 to /style.css/ if it's a folder, otherwise 404
+  GET     https://example.com/about
+          Action: serve 200 (application/octet-stream) if it's a file, redirect 301 to /about/ if it's a folder, otherwise 404
+  GET     https://nosuch.test/
+          Action: 421 (no_site)
+  GET     https://example.com/missing-thing
+          Action: serve 200 (application/octet-stream) if it's a file, redirect 301 to /missing-thing/ if it's a folder, otherwise 404
+  GET     http://narrow.test/only
+          Action: BareProxy answers 200 itself with "x"
+  GET     http://narrow.test/other
+          Action: 404 (no_route)
+PASS  32 requests: demo and native agree (20 identical, 12 files rules with the allowed difference)
+PASS  bad request "example.com/x": same error as native
+PASS  bad request "ftp://example.com/x": same error as native
+PASS  bad request "https://example.com:abc/": same error as native
+PASS  explain with a broken config says so and lists the problems
+
+== Explain: behaviour the design note describes
+PASS  GET https://example.com/api/orders: output has "Sent upstream as GET /orders with Host: example.com"
+PASS  GET https://example.com/api: output has "Pool api (line 13)"
+PASS  GET https://example.com/api/: output has "Pool api (line 13)"
+PASS  GET https://example.com/apiv2: output has "Would check: /var/www/example/public/apiv2"
+PASS  GET https://example.com/healthz: output has "Action: BareProxy answers 200 itself with "ok""
+PASS  GET https://www.example.com/x?y=1: output has "Action: redirect 301 to https://example.com/x?y=1"
+PASS  GET http://www.example.com/x?y=1: output has "Action: redirect 301 to https://www.example.com/x?y=1"
+PASS  GET https://nosuch.test/: output has "Action: 421 (no_site)"
+PASS  GET https://example.com/a/../healthz: output has "Normalized path: /healthz"
+PASS  HEAD https://example.com/about/: output has "Would check: /var/www/example/public/about/index.html"
+PASS  DELETE https://example.com/about/: output has "Action: 405, files answer only GET and HEAD"
+PASS  GET https://example.com:8443/: output has "Nothing listens on port 8443, so the connection is refused"
+PASS  GET http://example.com:443/: output has "Port 443 expects HTTPS, so a plain HTTP request fails there"
+PASS  GET https://example.com/beta/x [X-Beta: 1]: output has "Sent upstream as GET /x with Host: beta.internal"
+PASS  GET https://example.com/beta/x [x-beta: 1]: output has "Sent upstream as GET /x with Host: beta.internal"
+PASS  GET https://example.com/beta/x [X-Beta: 2]: output has "Action: BareProxy answers 202 itself"
+PASS  GET https://example.com/beta/x: output has "Would check: /var/www/example/public/beta/x"
+PASS  POST https://example.com/submit: output has "Sent upstream as POST /submit with Host: example.com"
+PASS  GET https://example.com/submit: output has "Would check: /var/www/example/public/submit"
+PASS  GET https://foo.example.com/x: output has "Action: redirect 302 to https://example.com/wild"
+PASS  GET https://a.b.example.com/x: output has "Action: 421 (no_site)"
+PASS  GET http://narrow.test/other: output has "No rule matches"
+PASS  GET http://narrow.test/other: output has "Action: 404 (no_route)"
+
+== Plan
+        Plan e87c092418f9: 2 routing changes, 2 other changes
+        Routing
+          example.com (port 443), any method, /api/v2 and below
+              pool api, strip /api  ->  pool api-v2, strip /api/v2
+          example.com (port 443), any method, every other path (not /api and below, /healthz)
+              files /var/www/example/public  ->  files /var/www/example/releases/2026-10-05
+        Other changes
+          pool api: backend 10.0.0.14:8080 added (line 18)
+          pool api-v2 added (line 21), 2 backends
+PASS  the page shows exactly what the core returned
+PASS  plan text is identical to MakePlan run natively on the same pair (same parse options)
+PASS  plan text is identical to MakePlan on configs read from real folders and certificates (plan ID masked: it hashes the text, which has other paths)
+PASS  plan ID is the first 12 hex digits of sha256(old config, NUL, new config), worked out here with node
+PASS  plan lists the four changes between the two example configs (new API rule, new folder, new backend, new pool)
+PASS  plan output: the heading, both section names and both change lines are highlighted
+PASS  plan with a shadowed rule: same text as MakePlan run natively
+PASS  plan with a shadowed rule: says the rule never matches
+PASS  plan with a shadowed rule: the warning row is highlighted in the page
+PASS  plan of a config against itself says no changes
+PASS  plan with a broken new config lists its problems
+
+== Speed (measured in this browser)
+  check    median 0.10 ms, slowest 25.60 ms
+  explain  median 0.20 ms, slowest 8.60 ms
+  plan     median 0.50 ms, slowest 4.90 ms
+PASS  every call is under 100 ms in the median
+
+== Layout and screenshots
+PASS  1280 px: no horizontal page scroll
+screenshot: /home/claude/out/demo-shots/demo-1280.png
+PASS  375 px: no horizontal page scroll
+PASS  375 px: every button, chip and field is at least 32 px tall
+NOTE  375 px: fields below 16 px font (iOS zooms into those on focus): cfg-a:13px, headers:13px, cfg-b:13px
+screenshot: /home/claude/out/demo-shots/demo-375.png
+PASS  320 px: no horizontal page scroll
+PASS  320 px: every button, chip and field is at least 32 px tall
+NOTE  320 px: fields below 16 px font (iOS zooms into those on focus): cfg-a:13px, headers:13px, cfg-b:13px
+screenshot: /home/claude/out/demo-shots/demo-320.png
+PASS  the demo loads inside an iframe whose src is /live-demo/ (the way the site embeds it)
+PASS  760 px iframe: no horizontal scroll inside the frame
+screenshot: /home/claude/out/demo-shots/demo-iframe-760-h1100.png (the frame as the site embeds it: 760 x 1100 px, page scrolls inside)
+  the demo is 2463 px tall at 760 px wide, so a 1100 px frame scrolls inside
+  at 760 px wide the three panels end 779, 1433, 2398 px from the top, so a frame about 1449 px tall shows the config and the whole explain panel without scrolling inside
+screenshot: /home/claude/out/demo-shots/demo-iframe-760.png (frame content 2463 px tall)
+
+== Served under /live-demo/ (the path the site uses)
+PASS  https://.../live-demo/ opens the page and the core starts (relative links work from that folder)
+PASS  and explain answers there
+  requests under /live-demo/: /live-demo/ 200, /live-demo/demo.css 200, /live-demo/wasm_exec.js 200, /live-demo/demo.js 200, /live-demo/bareproxy.wasm 200
+PASS  every file under /live-demo/ was found
+
+== Network: nothing is sent anywhere
+  requests the local server saw: 46, methods: GET
+  paths: /index.html x7, /demo.css x7, /wasm_exec.js x7, /demo.js x7, /bareproxy.wasm x7, /_frame.html x1, /live-demo/ x2, /live-demo/demo.css x2, /live-demo/wasm_exec.js x2, /live-demo/demo.js x2, /live-demo/bareproxy.wasm x2
+PASS  the page only makes GET requests
+PASS  every request goes to the local server (none to any other host)
+PASS  the only files requested are the five that were built (plus the check's own frame page)
+PASS  no request failed except the ones this check forced
+PASS  no console errors or warnings (apart from the forced wrong-content-type case)
+
+== Summary
+113 passed, 0 failed, in 17 s

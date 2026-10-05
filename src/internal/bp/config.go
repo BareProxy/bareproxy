@@ -249,6 +249,7 @@ func joinTokens(toks []token) string {
 type parser struct {
 	c     *Config
 	dir   string
+	opt   ParseOptions
 	probs []Problem
 }
 
@@ -260,9 +261,23 @@ func (p *parser) warnf(line int, f string, a ...any) {
 	p.probs = append(p.probs, Problem{Line: line, Msg: fmt.Sprintf(f, a...), Warn: true})
 }
 
+// ParseOptions changes how a config is compiled.
+type ParseOptions struct {
+	// NoDisk skips everything that needs a disk: folders are not opened and
+	// certificates are not loaded, so a config can be checked where there is
+	// no disk, such as the browser demo. Files rules get no Root, and explain
+	// says so instead of looking.
+	NoDisk bool
+}
+
 // Parse compiles config source. It returns the config even when there are
 // problems; callers check HasErrors before using it.
 func Parse(file, src string) (*Config, []Problem) {
+	return ParseWith(file, src, ParseOptions{})
+}
+
+// ParseWith is Parse with options.
+func ParseWith(file, src string, o ParseOptions) (*Config, []Problem) {
 	c := &Config{
 		File:     file,
 		Admin:    "/run/bareproxy/admin.sock",
@@ -272,7 +287,7 @@ func Parse(file, src string) (*Config, []Problem) {
 		Pools:    map[string]*PoolSpec{},
 		Ports:    map[int]*Port{},
 	}
-	p := &parser{c: c, dir: filepath.Dir(file)}
+	p := &parser{c: c, dir: filepath.Dir(file), opt: o}
 	src = strings.ReplaceAll(src, "\r\n", "\n")
 	c.Lines = strings.Split(src, "\n")
 	block := ""
@@ -754,6 +769,9 @@ func (p *parser) compile() {
 				}
 				ps.used = true
 			case "files":
+				if p.opt.NoDisk {
+					continue
+				}
 				root := roots[r.Act.Dir]
 				if root == nil {
 					var err error
@@ -777,6 +795,8 @@ func (p *parser) compile() {
 		switch {
 		case https && (s.TLSAuto || s.CertFile == ""):
 			p.errf(s.Line, "automatic certificates aren't built yet in this version: add tls CERT KEY, or use http:// addresses")
+		case https && p.opt.NoDisk:
+			// the certificate files are not read, so they are not checked
 		case https:
 			cert, err := tls.LoadX509KeyPair(s.CertFile, s.KeyFile)
 			if err != nil {

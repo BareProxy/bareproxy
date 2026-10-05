@@ -135,6 +135,10 @@ func explainFiles(b *strings.Builder, site *Site, route *Route, norm, method str
 		return
 	}
 	fr := LookupFile(a.Root, norm)
+	if a.Root == nil && fr.Status == 0 {
+		explainFilesNoDisk(b, site, a, fr, norm)
+		return
+	}
 	switch fr.Status {
 	case 301:
 		fmt.Fprintf(b, "Checked: %s\nIt's a folder\nAction: redirect 301 to %s\n", inFolder(a.Dir, fr.Checked[0]), fr.Location)
@@ -161,6 +165,21 @@ func explainFiles(b *strings.Builder, site *Site, route *Route, norm, method str
 	}
 }
 
+// explainFilesNoDisk is the files branch where no folder is open, as in the
+// browser demo. The file is worked out the same way as on a server, but
+// nothing is looked up, so it says what each outcome would be.
+func explainFilesNoDisk(b *strings.Builder, site *Site, a Action, fr FileResult, norm string) {
+	name := fr.Checked[0]
+	fmt.Fprintf(b, "Would check: %s\n", inFolder(a.Dir, name))
+	b.WriteString("Not looked up: the browser demo doesn't read the disk, so it can't tell if that exists\n")
+	explainErrorPage(b, site)
+	if strings.HasSuffix(norm, "/") {
+		fmt.Fprintf(b, "Action: serve 200 (%s) if the file exists, otherwise 404\n", ContentType(name))
+		return
+	}
+	fmt.Fprintf(b, "Action: serve 200 (%s) if it's a file, redirect 301 to %s/ if it's a folder, otherwise 404\n", ContentType(name), norm)
+}
+
 func explainErrorPage(b *strings.Builder, site *Site) {
 	if site.Err404 == "" {
 		return
@@ -173,6 +192,8 @@ func explainErrorPage(b *strings.Builder, site *Site) {
 		fmt.Fprintf(b, "Error page: %s (line %d) matches no rule, so a plain 404 is sent\n", site.Err404, site.Err404Line)
 	case rt.Act.Kind != "files":
 		fmt.Fprintf(b, "Error page: %s (line %d) goes to rule line %d, which doesn't serve files, so a plain 404 is sent\n", site.Err404, site.Err404Line, rt.Line)
+	case rt.Act.Root == nil && len(fr.Checked) > 0:
+		fmt.Fprintf(b, "Error page: %s (line %d), from %s if that file exists\n", site.Err404, site.Err404Line, inFolder(rt.Act.Dir, fr.Checked[0]))
 	default:
 		fmt.Fprintf(b, "Error page: %s (line %d) isn't in %s, so a plain 404 is sent\n", site.Err404, site.Err404Line, rt.Act.Dir)
 	}
