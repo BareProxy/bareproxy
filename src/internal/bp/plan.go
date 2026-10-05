@@ -53,7 +53,7 @@ func MakePlan(old, new *Config) *PlanResult {
 		res.groups[n] = hostGroups(n, res.old.Ports[n], res.new.Ports[n])
 		all = append(all, res.groups[n]...)
 	}
-	res.TooMany = slices.ContainsFunc(all, func(g *hostGroup) bool { return g.sp.count() > MaxPlanClasses })
+	res.TooMany = slices.ContainsFunc(all, func(g *hostGroup) bool { return g.sp.size > MaxPlanClasses })
 	for _, g := range all {
 		if res.TooMany {
 			res.Changes = append(res.Changes, ruleDiff(g)...)
@@ -64,7 +64,7 @@ func MakePlan(old, new *Config) *PlanResult {
 			res.Changes = append(res.Changes, l.line)
 		}
 	}
-	res.Settings, res.Warnings = settings(res.old, res.new, all), planWarnings(res.new)
+	res.Settings, res.Warnings = settings(res.old, res.new), planWarnings(res.new)
 	return res
 }
 
@@ -80,17 +80,21 @@ func (p *PlanResult) Empty() bool { return len(p.Changes) == 0 && len(p.Settings
 
 // Text renders the plan for a terminal.
 func (p *PlanResult) Text() string {
-	kind := "routing change"
-	if p.TooMany {
-		kind = "changed rule"
+	kind := map[bool]string{false: "routing change", true: "changed rule"}[p.TooMany]
+	// The heading counts what the plan holds and leaves out what it has none of.
+	var counts []string
+	for _, c := range []string{plural(len(p.Changes), kind), plural(len(p.Settings), "other change"), plural(len(p.Warnings), "warning")} {
+		if !strings.HasPrefix(c, "0 ") {
+			counts = append(counts, c)
+		}
 	}
-	head := fmt.Sprintf("Plan %s: %s, %s\n", p.ID, plural(len(p.Changes), kind), plural(len(p.Settings), "other change"))
+	head := "Plan " + p.ID + ": " + strings.Join(counts, ", ") + "\n"
 	if p.Empty() {
 		head = "No changes.\n"
 	}
 	var routing []string
 	if p.TooMany && len(p.Changes) > 0 {
-		routing = append(routing, fmt.Sprintf("(more than %d request classes in a site, so this lists changed rules instead)", MaxPlanClasses))
+		routing = append(routing, "(a site has too many request classes to list, so this lists changed rules instead)")
 	}
 	for _, l := range p.Changes {
 		routing = append(routing, fmt.Sprintf("%s, %s\n      %s  ->  %s", l.Where, l.What, cmp.Or(l.Old, "(none)"), cmp.Or(l.New, "(none)")))
@@ -145,12 +149,11 @@ func (p *PlanResult) Covers(port int, host, method, path string, h http.Header) 
 // uses: the port, the host's site and the first matching rule decide it.
 // The path must be in normal form.
 func RequestEffect(c *Config, port int, host, method, path string, h http.Header) string {
-	p := c.Ports[port]
-	if p == nil {
+	s := siteFor(c.Ports[port], host)
+	switch {
+	case c.Ports[port] == nil:
 		return noListener(port)
-	}
-	s, _ := p.Find(host)
-	if s == nil {
+	case s == nil:
 		return "421, no site"
 	}
 	r, _ := s.MatchRoute(method, path, h)
@@ -179,12 +182,14 @@ func routeEffect(s *Site, r *Route) string {
 	case "files":
 		return "files " + a.Dir
 	case "redirect":
-		return fmt.Sprintf("redirect %d %s", a.Code, a.URL)
-	case "respond":
-		if a.Body != "" {
-			return fmt.Sprintf("respond %d %s", a.Status, strconv.Quote(a.Body))
+		// A URL with no path keeps the request's path and query.
+		if redirectTarget(a.URL, "/", "") != a.URL {
+			return fmt.Sprintf("redirect %d to %s, keeping path and query", a.Code, a.URL)
 		}
-		return fmt.Sprintf("respond %d", a.Status)
+		return fmt.Sprintf("redirect %d to %s", a.Code, a.URL)
+	case "respond":
+		// An empty body is left out.
+		return strings.TrimSuffix(fmt.Sprintf("respond %d %q", a.Status, a.Body), ` ""`)
 	case "https":
 		return "plain HTTP redirected to https://"
 	}
@@ -205,17 +210,8 @@ func effect(num int, p, other *Port, s *Site, rules []*Route, method, path strin
 	case s == nil:
 		return prefix + "421, no site"
 	}
-	return prefix + routeEffect(s, firstMatch(rules, method, path, h))
-}
-
-// firstMatch is the rule the matcher picks from a list, or nil.
-func firstMatch(rules []*Route, method, path string, h http.Header) *Route {
-	for _, r := range rules {
-		if ok, _ := r.matches(method, path, h); ok {
-			return r
-		}
-	}
-	return nil
+	r, _ := (&Site{Routes: rules}).MatchRoute(method, path, h)
+	return prefix + routeEffect(s, r)
 }
 
 // rulesFor lists a site's rules whose path pattern takes a path (the path
@@ -336,24 +332,16 @@ func (g *hostGroup) analyze() []*lineAcc {
 		for _, prod := range factor(classes) {
 			what := []string{sp.methodPhrase(prod[1])}
 			for k := range sp.names {
-				if s := sp.headerPhrase(k, prod[k+2]); s != "" {
-					what = append(what, s)
-				}
+				what = append(what, sp.headerPhrase(k, prod[k+2]))
 			}
-			in := map[int]bool{}
-			for _, pi := range prod[0] {
-				in[pi] = true
-			}
-			what = append(what, strings.Join(describe(sp.nodes[""], in), "; "))
+			in := func(pi int) bool { _, ok := slices.BinarySearch(prod[0], pi); return ok }
+			what = slices.DeleteFunc(append(what, strings.Join(describe(sp.nodes[""], in), "; ")), func(s string) bool { return s == "" })
 			g.lines = append(g.lines, &lineAcc{prod: prod, line: PlanLine{g.where(), strings.Join(what, ", "), e.old, e.new}})
 		}
 	}
-	// Lines go in the order of their first paths (patterns sorted, then
-	// all other paths).
-	slices.SortFunc(g.lines, func(a, b *lineAcc) int {
-		return cmp.Or(a.prod[0][0]-b.prod[0][0], strings.Compare(a.line.What, b.line.What),
-			strings.Compare(a.line.Old, b.line.Old), strings.Compare(a.line.New, b.line.New))
-	})
+	// Lines go in the order of their products, which never overlap: by
+	// their first paths (patterns sorted, then all other paths), and so on.
+	slices.SortFunc(g.lines, func(a, b *lineAcc) int { return slices.CompareFunc(a.prod, b.prod, slices.Compare) })
 	return g.lines
 }
 
@@ -366,19 +354,14 @@ func factor(ts [][]int) [][][]int {
 	for _, t := range ts {
 		rest[t[0]] = append(rest[t[0]], t[1:])
 	}
-	var keys []string
-	parts := map[string][]int{}
+	parts := map[string][]int{} // the order of the products doesn't matter
 	for _, v := range keysOf(rest) {
 		slices.SortFunc(rest[v], slices.Compare)
 		k := fmt.Sprint(rest[v])
-		if parts[k] == nil {
-			keys = append(keys, k)
-		}
 		parts[k] = append(parts[k], v)
 	}
 	var out [][][]int
-	for _, k := range keys {
-		vals := parts[k]
+	for _, vals := range parts {
 		if len(ts[0]) == 1 {
 			out = append(out, [][]int{vals})
 			continue
@@ -400,6 +383,7 @@ type space struct {
 	methods []string          // named methods, HEAD when GET is named, then "" for all others
 	names   []string          // header names in conditions, canonical
 	vals    [][]string        // named values per header name
+	size    int               // the number of classes, or more than MaxPlanClasses
 }
 
 // pnode is a path pattern in the tree of patterns. The root has path "".
@@ -456,21 +440,15 @@ func newSpace(a, b *Site) *space {
 	}
 	sp.methods = append(keysOf(methods), "")
 	sp.names = keysOf(hv)
+	sp.size = len(sp.paths) * len(sp.methods)
 	for _, name := range sp.names {
-		sp.vals = append(sp.vals, slices.Compact(slices.Sorted(slices.Values(hv[name]))))
-	}
-	return sp
-}
-
-// count is the number of classes, or MaxPlanClasses+1 when there are more.
-func (sp *space) count() int {
-	n := len(sp.paths) * len(sp.methods)
-	for _, vs := range sp.vals {
-		if n <= MaxPlanClasses {
-			n *= 1 + 1<<min(len(vs), 30) // past 30 values n is far too big anyway
+		vs := slices.Compact(slices.Sorted(slices.Values(hv[name])))
+		sp.vals = append(sp.vals, vs)
+		if sp.size <= MaxPlanClasses {
+			sp.size *= 1 + 1<<min(len(vs), 30) // past 30 values it is far too big anyway
 		}
 	}
-	return min(n, MaxPlanClasses+1)
+	return sp
 }
 
 // each calls f with a request of every class, leaving out the paths skip
@@ -491,12 +469,11 @@ func (sp *space) each(skip []bool, f func(pi int, method string, h http.Header))
 		hs = next
 	}
 	for pi := range sp.paths {
-		if skip != nil && skip[pi] {
-			continue
-		}
 		for _, m := range sp.methods {
 			for _, h := range hs {
-				f(pi, m, h)
+				if skip == nil || !skip[pi] {
+					f(pi, m, h)
+				}
 			}
 		}
 	}
@@ -572,16 +549,16 @@ func (sp *space) methodPhrase(set []int) string {
 // headerPhrase describes a set of states of header k, or returns "" when
 // the set holds every state.
 func (sp *space) headerPhrase(k int, set []int) string {
-	name, ns := sp.names[k], 1+1<<len(sp.vals[k])
+	name, ns := "header "+sp.names[k], 1+1<<len(sp.vals[k])
 	if len(set) == ns {
 		return ""
 	}
 	// One condition may hold in exactly the set's states, or in none of
 	// them: having the header at all (j = -1), or having one named value.
 	for j := -1; j < len(sp.vals[k]); j++ {
-		agree, cond := 0, name
+		agree, cond, anyValue := 0, name, " (any value)"
 		if j >= 0 {
-			cond += ": " + sp.vals[k][j]
+			cond, anyValue = name+": "+sp.vals[k][j], ""
 		}
 		for st := 0; st < ns; st++ {
 			if holds := st > 0 && (j < 0 || (st-1)&(1<<j) != 0); holds == slices.Contains(set, st) {
@@ -590,20 +567,17 @@ func (sp *space) headerPhrase(k int, set []int) string {
 		}
 		switch agree {
 		case ns:
-			return "with " + cond
+			return "with " + cond + anyValue
 		case 0:
 			return "without " + cond
 		}
 	}
 	var parts []string
 	for _, st := range set {
-		switch {
-		case st == 0:
+		if st == 0 {
 			parts = append(parts, "without "+name)
-		case st == 1:
-			parts = append(parts, "with "+name+" other than "+strings.Join(sp.vals[k], ", "))
-		default:
-			parts = append(parts, "with "+name+": "+strings.Join(sp.valsIn(k, st-1), " and "))
+		} else {
+			parts = append(parts, "with "+name+": "+cmp.Or(strings.Join(sp.valsIn(k, st-1), " and "), "none of "+strings.Join(sp.vals[k], ", ")))
 		}
 	}
 	return strings.Join(parts, " or ")
@@ -612,8 +586,8 @@ func (sp *space) headerPhrase(k int, set []int) string {
 // whole reports whether every representative at and below n (leaving out
 // n's own path unless self is set) is in the set (want true) or out of it
 // (want false).
-func whole(n *pnode, in map[int]bool, want, self bool) bool {
-	if self && n.self >= 0 && in[n.self] != want || n.below >= 0 && in[n.below] != want {
+func whole(n *pnode, in func(int) bool, want, self bool) bool {
+	if self && n.self >= 0 && in(n.self) != want || n.below >= 0 && in(n.below) != want {
 		return false
 	}
 	for _, k := range n.kids {
@@ -636,14 +610,14 @@ func subtreeText(n *pnode) string {
 
 // describe phrases the paths at and below a node whose representatives
 // are in the set.
-func describe(n *pnode, in map[int]bool) []string {
+func describe(n *pnode, in func(int) bool) []string {
 	switch {
 	case whole(n, in, false, true):
 		return nil
 	case whole(n, in, true, true):
 		return []string{subtreeText(n)}
 	}
-	selfIn, belowIn := n.self >= 0 && in[n.self], n.below >= 0 && in[n.below]
+	selfIn, belowIn := n.self >= 0 && in(n.self), n.below >= 0 && in(n.below)
 	if !belowIn {
 		var out []string
 		if selfIn {
@@ -660,7 +634,7 @@ func describe(n *pnode, in map[int]bool) []string {
 	for _, k := range n.kids {
 		switch {
 		case whole(k, in, true, true):
-		case !in[k.self] && whole(k, in, true, false):
+		case !in(k.self) && whole(k, in, true, false):
 			not = append(not, k.path)
 		default:
 			not = append(not, subtreeText(k))
@@ -669,15 +643,14 @@ func describe(n *pnode, in map[int]bool) []string {
 	}
 	s := "below " + n.path
 	switch {
-	case n.self < 0 && len(not) > 0:
-		s = "every other path"
 	case n.self < 0:
 		s = "every path"
 	case selfIn:
 		s = n.path + " and below"
 	}
-	if len(not) > 0 {
-		s += " (not " + strings.Join(not, ", ") + ")"
+	if len(not) > 0 { // single paths first, so "and below" ends the list
+		slices.SortStableFunc(not, func(a, b string) int { return strings.Count(a, " and below") - strings.Count(b, " and below") })
+		s += " except " + joinAnd(not)
 	}
 	return append([]string{s}, later...)
 }
@@ -691,7 +664,8 @@ func joinAnd(xs []string) string {
 
 // ruleDiff lists the rules that differ between a group's two sites, for
 // plans with too many classes to work through. Rules on the longest
-// common subsequence of the two lists count as unchanged.
+// common subsequence of the two lists count as unchanged; a rule removed
+// where another is added counts as one changed rule.
 func ruleDiff(g *hostGroup) []PlanLine {
 	a, b := cmp.Or(g.oldS, &Site{}).Routes, cmp.Or(g.newS, &Site{}).Routes
 	lcs := make([][]int, len(a)+1)
@@ -712,6 +686,9 @@ func ruleDiff(g *hostGroup) []PlanLine {
 		switch {
 		case i < len(a) && j < len(b) && a[i].Text == b[j].Text:
 			i, j = i+1, j+1
+		case i < len(a) && j < len(b) && lcs[i][j] == lcs[i+1][j+1]: // both off the subsequence: one rule changed
+			out = append(out, PlanLine{g.where(), "rule changed", fmt.Sprintf("line %d: %s", a[i].Line, a[i].Text), fmt.Sprintf("line %d: %s", b[j].Line, b[j].Text)})
+			i, j = i+1, j+1
 		case j == len(b) || i < len(a) && lcs[i+1][j] >= lcs[i][j+1]:
 			out = append(out, PlanLine{g.where(), "rule removed", fmt.Sprintf("line %d: %s", a[i].Line, a[i].Text), ""})
 			i++
@@ -726,19 +703,15 @@ func ruleDiff(g *hostGroup) []PlanLine {
 // planWarnings checks a config for rules that win no class and pools that
 // no rule able to match uses.
 func planWarnings(c *Config) []string {
-	type warn struct {
-		line int
-		msg  string
-	}
-	var ws []warn
+	ws := map[int]string{} // by line: one rule, site or pool per line
 	used := map[string]bool{}
 	for _, s := range c.Sites {
 		if s.Synthetic {
 			continue
 		}
 		sp := newSpace(s, nil)
-		if sp.count() > MaxPlanClasses {
-			ws = append(ws, warn{s.Line, fmt.Sprintf("line %d: site %s has too many request classes to check for rules that never match", s.Line, s.Name)})
+		if sp.size > MaxPlanClasses {
+			ws[s.Line] = fmt.Sprintf("line %d: site %s has too many request classes to check for rules that never match", s.Line, s.Name)
 			for _, r := range s.Routes {
 				used[r.Act.Pool] = true
 			}
@@ -772,30 +745,28 @@ func planWarnings(c *Config) []string {
 			for _, l := range keysOf(wins[r]) {
 				ls = append(ls, strconv.Itoa(l))
 			}
-			msg := fmt.Sprintf("line %d: %s never matches: line %s takes every request it would get", r.Line, r.Text, joinAnd(ls))
+			ws[r.Line] = fmt.Sprintf("line %d: %s never matches: line %s takes every request it would get", r.Line, r.Text, joinAnd(ls))
 			if len(ls) > 1 {
-				msg = fmt.Sprintf("line %d: %s never matches: lines %s take every request it would get", r.Line, r.Text, joinAnd(ls))
+				ws[r.Line] = fmt.Sprintf("line %d: %s never matches: lines %s take every request it would get", r.Line, r.Text, joinAnd(ls))
 			}
-			ws = append(ws, warn{r.Line, msg})
 		}
 	}
 	for _, name := range c.PoolOrder {
 		if ps := c.Pools[name]; !used[name] {
-			ws = append(ws, warn{ps.Line, fmt.Sprintf("line %d: pool %s isn't used by any rule that can match", ps.Line, name)})
+			ws[ps.Line] = fmt.Sprintf("line %d: pool %s isn't used by any rule that can match", ps.Line, name)
 		}
 	}
-	slices.SortStableFunc(ws, func(a, b warn) int { return a.line - b.line })
 	out := []string{}
-	for _, w := range ws {
-		out = append(out, w.msg)
+	for _, l := range keysOf(ws) {
+		out = append(out, ws[l])
 	}
 	return out
 }
 
 // settings lists the changes outside routing, one line each: listeners,
-// global settings, the settings of sites that serve the same hosts, and
-// pools.
-func settings(old, new *Config, groups []*hostGroup) []string {
+// then the setting lines of each block (see blocks) that were added,
+// removed or changed.
+func settings(old, new *Config) []string {
 	out := []string{}
 	for _, n := range keysOf(old.Ports, new.Ports) {
 		switch o, p := old.Ports[n], new.Ports[n]; {
@@ -807,30 +778,27 @@ func settings(old, new *Config, groups []*hostGroup) []string {
 			out = append(out, fmt.Sprintf("port %d switched from %s to %s (line %d)", n, schemeName(o.TLS), schemeName(p.TLS), p.Line))
 		}
 	}
-	out = diffSettings(out, "global ", blockSettings(old, 0), blockSettings(new, 0))
-	done := map[[2]*Site]bool{}
-	for _, g := range groups {
-		a, b := g.oldS, g.newS
-		if a == nil || b == nil || a.Synthetic || b.Synthetic || done[[2]*Site{a, b}] {
-			continue
+	ob, nb := blocks(old), blocks(new)
+	for _, name := range keysOf(ob, nb) {
+		o, n := ob[name], nb[name]
+		switch {
+		case o == nil:
+			out = append(out, fmt.Sprintf("%s added (line %d)", name, n[""].line))
+		case n == nil:
+			out = append(out, fmt.Sprintf("%s removed (was line %d)", name, o[""].line))
 		}
-		done[[2]*Site{a, b}] = true
-		// Sites are named by their first address as written, so sites with
-		// the same host on different ports stay apart.
-		name := "site " + b.Addrs[0].Text
-		if a.Addrs[0].Text != b.Addrs[0].Text {
-			name += " (was site " + a.Addrs[0].Text + ")"
-		}
-		out = diffSettings(out, name+": ", blockSettings(old, a.Line), blockSettings(new, b.Line))
-	}
-	for _, name := range keysOf(old.Pools, new.Pools) {
-		switch a, b := old.Pools[name], new.Pools[name]; {
-		case a == nil:
-			out = append(out, fmt.Sprintf("pool %s added (line %d), %s", name, b.Line, plural(len(b.Backends), "backend")))
-		case b == nil:
-			out = append(out, fmt.Sprintf("pool %s removed (was line %d)", name, a.Line))
-		default:
-			out = diffSettings(out, "pool "+name+": ", blockSettings(old, a.Line), blockSettings(new, b.Line))
+		for _, k := range keysOf(o, n) {
+			a, inOld := o[k]
+			b, inNew := n[k]
+			switch {
+			case k == "" || o == nil || n == nil:
+			case !inOld:
+				out = append(out, fmt.Sprintf("%s: %s added (line %d)", name, b.text, b.line))
+			case !inNew:
+				out = append(out, fmt.Sprintf("%s: %s removed (was line %d)", name, a.text, a.line))
+			case a.text != b.text:
+				out = append(out, fmt.Sprintf("%s: %s  ->  %s (line %d)", name, a.text, strings.TrimPrefix(b.text, k+" "), b.line))
+			}
 		}
 	}
 	return out
@@ -841,12 +809,13 @@ type cfgLine struct {
 	line int
 }
 
-// blockSettings returns the setting lines of the block that starts on line
-// start, or of every global block when start is 0. Backends are keyed by
-// their whole text, other settings by name; rules are left out.
-func blockSettings(c *Config, start int) map[string]cfgLine {
-	out := map[string]cfgLine{}
-	in := false
+// blocks returns the setting lines of each block in a config, by block:
+// "global" (all global blocks), "site" and its first address as written,
+// or "pool" and its name. Under "" is the block's first line. Backends are
+// keyed by their whole text, other settings by name; rules are left out.
+func blocks(c *Config) map[string]map[string]cfgLine {
+	out := map[string]map[string]cfgLine{}
+	var cur map[string]cfgLine
 	for i, raw := range c.Lines {
 		toks, err := splitLine(raw)
 		if err != nil || len(toks) == 0 {
@@ -855,28 +824,15 @@ func blockSettings(c *Config, start int) map[string]cfgLine {
 		key, text := toks[0].s, joinTokens(toks)
 		switch {
 		case raw[0] != ' ' && raw[0] != '\t':
-			in = i+1 == start || start == 0 && key == "global"
-		case in && key == "backend":
-			out[text] = cfgLine{text, i + 1}
-		case in && key != "route":
-			out[key] = cfgLine{text, i + 1}
-		}
-	}
-	return out
-}
-
-// diffSettings adds a line for each setting that is new, gone or changed.
-func diffSettings(out []string, label string, o, n map[string]cfgLine) []string {
-	for _, k := range keysOf(o, n) {
-		a, inOld := o[k]
-		b, inNew := n[k]
-		switch {
-		case !inOld:
-			out = append(out, fmt.Sprintf("%s%s added (line %d)", label, b.text, b.line))
-		case !inNew:
-			out = append(out, fmt.Sprintf("%s%s removed (was line %d)", label, a.text, a.line))
-		case a.text != b.text:
-			out = append(out, fmt.Sprintf("%s%s  ->  %s (line %d)", label, a.text, strings.TrimPrefix(b.text, k+" "), b.line))
+			name := strings.Join(strings.Fields(text)[:min(2, len(toks))], " ")
+			if out[name] == nil {
+				out[name] = map[string]cfgLine{"": {text, i + 1}}
+			}
+			cur = out[name]
+		case key == "backend":
+			cur[text] = cfgLine{text, i + 1}
+		case key != "route":
+			cur[key] = cfgLine{text, i + 1}
 		}
 	}
 	return out

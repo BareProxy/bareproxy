@@ -153,7 +153,7 @@ pool api-v2
 	if len(p.Changes) != 1 {
 		t.Errorf("want 1 change, got:\n%s", p.Text())
 	}
-	wantText(t, p.Settings, "pool api-v2 added (line 9), 2 backends")
+	wantText(t, p.Settings, "pool api-v2 added (line 9)")
 	if !p.Covers(80, "example.com", "GET", "/api/v2/users", nil) || p.Covers(80, "example.com", "GET", "/api/v1", nil) ||
 		!p.Covers(80, "EXAMPLE.com.", "DELETE", "/api/v2", nil) || p.Covers(80, "example.com", "GET", "/api/v2x", nil) {
 		t.Errorf("Covers places requests wrongly")
@@ -192,7 +192,7 @@ func TestPlanHeaderCondition(t *testing.T) {
   route /app/* -> respond 200 "app"
 `
 	p := planOf(t, dir, old, new)
-	wantLine(t, p, "example.com (port 80)", "any method, with X-Beta: 1, /app and below", `respond 200 "app"`, `respond 200 "beta"`)
+	wantLine(t, p, "example.com (port 80)", "any method, with header X-Beta: 1, /app and below", `respond 200 "app"`, `respond 200 "beta"`)
 	if len(p.Changes) != 1 {
 		t.Errorf("want 1 change, got:\n%s", p.Text())
 	}
@@ -211,7 +211,7 @@ func TestPlanHeaderCondition(t *testing.T) {
   route /app/* -> respond 200 "app"
 `
 	p = planOf(t, dir, old, pres)
-	wantLine(t, p, "example.com (port 80)", "any method, with X-Beta, /app and below", `respond 200 "app"`, `respond 200 "beta"`)
+	wantLine(t, p, "example.com (port 80)", "any method, with header X-Beta (any value), /app and below", `respond 200 "app"`, `respond 200 "beta"`)
 }
 
 func TestPlanFilesFolderChange(t *testing.T) {
@@ -264,7 +264,7 @@ site http://www.example.com
   route /* -> redirect 301 http://example.com
 `
 	p := planOf(t, dir, old, new)
-	wantLine(t, p, "www.example.com (port 80)", "any method, every path", `respond 200 "main"`, "redirect 301 http://example.com")
+	wantLine(t, p, "www.example.com (port 80)", "any method, every path", `respond 200 "main"`, "redirect 301 to http://example.com, keeping path and query")
 	if len(p.Changes) != 1 {
 		t.Errorf("want 1 change, got:\n%s", p.Text())
 	}
@@ -408,9 +408,9 @@ func TestPlanTooMany(t *testing.T) {
 	if !p.TooMany {
 		t.Fatalf("want TooMany, got:\n%s", p.Text())
 	}
-	wantLine(t, p, "example.com (port 80)", "rule removed", `line 3: route /b -> respond 200 "b"`, "")
-	wantLine(t, p, "example.com (port 80)", "rule added", "", `line 3: route GET /c -> respond 200 "c"`)
-	if len(p.Changes) != 2 || !strings.Contains(p.Text(), "lists changed rules instead") {
+	// A rule removed where another is added is one changed rule.
+	wantLine(t, p, "example.com (port 80)", "rule changed", `line 3: route /b -> respond 200 "b"`, `line 3: route GET /c -> respond 200 "c"`)
+	if len(p.Changes) != 1 || !strings.Contains(p.Text(), "lists changed rules instead") {
 		t.Errorf("TooMany text:\n%s", p.Text())
 	}
 }
@@ -444,9 +444,9 @@ pool api-v2
 	p := planOf(t, dir, old, new)
 	where := "example.com, www.example.com (port 443)"
 	wantLine(t, p, where, "any method, /api/v2 and below", "pool api, strip /api", "pool api-v2, strip /api/v2")
-	wantLine(t, p, where, "GET and HEAD, every other path (not /api and below)",
+	wantLine(t, p, where, "GET and HEAD, every path except /api and below",
 		"files "+filepath.Join(dir, "release-41"), "files "+filepath.Join(dir, "release-42"))
-	wantLine(t, p, where, "any method except GET and HEAD, every other path (not /api and below)",
+	wantLine(t, p, where, "any method except GET and HEAD, every path except /api and below",
 		"files "+filepath.Join(dir, "release-41"), "404, no rule, error page /404.html from "+filepath.Join(dir, "release-42"))
 	if len(p.Changes) != 3 {
 		t.Errorf("want 3 changes, got:\n%s", p.Text())
@@ -788,7 +788,7 @@ site example.com:8443
 	p := planOf(t, dir, old, new)
 	// A new HTTPS site on 443 also gets port 80 redirected to it.
 	wantLine(t, p, "www.example.com (port 80)", "any method, every path", "421, no site", "plain HTTP redirected to https://")
-	wantLine(t, p, "www.example.com (port 443)", "any method, every path", "421, no site", "redirect 301 https://example.com")
+	wantLine(t, p, "www.example.com (port 443)", "any method, every path", "421, no site", "redirect 301 to https://example.com, keeping path and query")
 	// Every request on a port that switches between http and https changes.
 	wantLine(t, p, "example.com (port 8443)", "any method, every path", `http: respond 200 "plain"`, `https: respond 200 "plain"`)
 	wantLine(t, p, "any other host (port 8443)", "any method, every path", "http: 421, no site", "https: 421, no site")
@@ -796,7 +796,9 @@ site example.com:8443
 		t.Errorf("want 4 changes, got:\n%s", p.Text())
 	}
 	wantText(t, p.Settings, "port 8443 switched from http to https (line 9)")
-	wantText(t, p.Settings, "site example.com:8443 (was site http://example.com:8443): tls cert.pem key.pem added (line 10)")
+	// The site's first address changed, so it counts as another block.
+	wantText(t, p.Settings, "site http://example.com:8443 removed (was line 5)")
+	wantText(t, p.Settings, "site example.com:8443 added (line 9)")
 }
 
 // TestPlanEffectsMatchServer checks plan's effect model against the
