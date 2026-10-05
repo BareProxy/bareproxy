@@ -11,9 +11,11 @@ import (
 	"crypto/x509/pkix"
 	"encoding/json"
 	"encoding/pem"
+	"fmt"
 	"math/big"
 	mrand "math/rand/v2"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -225,6 +227,29 @@ func TestPlanFilesFolderChange(t *testing.T) {
 	if len(p.Changes) != 1 {
 		t.Errorf("want 1 change, got:\n%s", p.Text())
 	}
+	// The 404 page for requests no rule takes comes from the folder that
+	// serves its path, so it moves with the release too.
+	old = `site http://example.com
+  error 404 /404.html
+  route GET /* -> files release-41
+`
+	new = `site http://example.com
+  error 404 /404.html
+  route GET /* -> files release-42
+`
+	p = planOf(t, dir, old, new)
+	wantLine(t, p, "example.com (port 80)", "any method except GET and HEAD, every path",
+		"404, no rule, error page /404.html from "+filepath.Join(dir, "release-41"), "404, no rule, error page /404.html from "+filepath.Join(dir, "release-42"))
+	// An error page no files rule serves is a plain 404, so setting one
+	// changes no response.
+	plain := `site http://example.com
+  route GET /* -> respond 200 "x"
+`
+	p = planOf(t, dir, plain, strings.Replace(plain, "\n", "\n  error 404 /404.html\n", 1))
+	if len(p.Changes) != 0 {
+		t.Errorf("want no routing change, got:\n%s", p.Text())
+	}
+	wantText(t, p.Settings, "site http://example.com: error 404 page (none)  ->  /404.html (line 2)")
 }
 
 func TestPlanHostMovesToAnotherSite(t *testing.T) {
@@ -770,4 +795,78 @@ site example.com:8443
 	}
 	wantText(t, p.Settings, "port 8443 switched from http to https (line 9)")
 	wantText(t, p.Settings, "site example.com:8443 (was site http://example.com:8443): tls none  ->  ")
+}
+
+// TestPlanEffectsMatchServer checks plan's effect model against the
+// server itself: whenever plan says a request is handled the same under
+// two generated configs, the server sends the same response under both.
+// (The other direction can't hold in general: a files rule pointed at
+// another folder is a change even when both folders hold the same file.)
+func TestPlanEffectsMatchServer(t *testing.T) {
+	dir := planDir(t, "f1", "f2")
+	for _, f := range []string{"f1", "f2"} {
+		for _, name := range []string{"404.html", "index.html", "a", "api"} {
+			writeFile(t, filepath.Join(dir, f, name), f+" "+name)
+		}
+	}
+	backend := func(name string) string {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			fmt.Fprintf(w, "%s %s %s x-t=%q", name, r.Method, r.URL.RequestURI(), r.Header.Values("X-T"))
+		}))
+		t.Cleanup(srv.Close)
+		return srv.Listener.Addr().String()
+	}
+	b1, b2 := backend("p1"), backend("p2")
+	pairs, perPair := 200, 60
+	if testing.Short() {
+		pairs = 30
+	}
+	r := mrand.New(mrand.NewPCG(7, 5))
+	start := func(src string) (*Config, http.Handler) {
+		src = "global\n  admin off\n  trace-log off\n\n" + src
+		src = strings.NewReplacer("10.0.0.1:80", b1, "10.0.0.2:80", b2).Replace(src)
+		c := mustParse(t, dir, src)
+		rt, err := NewRuntime(c, nil, 1, func(string, ...any) {}, false)
+		if err != nil {
+			t.Fatal(err)
+		}
+		rt.Trace, _ = OpenTraceLog("off")
+		t.Cleanup(rt.Stop)
+		return c, NewServer(filepath.Join(dir, "bareproxy.conf"), rt).Handler(80, false)
+	}
+	serve := func(h http.Handler, q genReq) string {
+		req := httptest.NewRequest(q.method, q.path, nil)
+		req.Host = q.host
+		for k, vs := range q.h {
+			req.Header[k] = vs
+		}
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, req)
+		var body []string
+		for _, l := range strings.Split(w.Body.String(), "\n") {
+			if !strings.HasPrefix(l, "Request ID: ") {
+				body = append(body, l)
+			}
+		}
+		return fmt.Sprintf("%d %s %q", w.Code, w.Header().Get("Location"), strings.Join(body, "\n"))
+	}
+	same := 0
+	for i := 0; i < pairs; i++ {
+		oldSites := genConfig(r)
+		newSites := mutate(r, oldSites)
+		oc, oh := start(renderSites(oldSites))
+		nc, nh := start(renderSites(newSites))
+		for j := 0; j < perPair; j++ {
+			q := genReq{pick(r, reqHosts), pick(r, reqMethods), pick(r, reqPaths), genHeader(r)}
+			if RequestEffect(oc, 80, q.host, q.method, q.path, q.h) != RequestEffect(nc, 80, q.host, q.method, q.path, q.h) {
+				continue
+			}
+			same++
+			if a, b := serve(oh, q), serve(nh, q); a != b {
+				t.Fatalf("pair %d: %s %s%s %v has the same effect %q under both configs, but the server sends\n%s\nand\n%s\nold:\n%s\nnew:\n%s",
+					i, q.method, q.host, q.path, q.h, RequestEffect(oc, 80, q.host, q.method, q.path, q.h), a, b, renderSites(oldSites), renderSites(newSites))
+			}
+		}
+	}
+	t.Logf("%d config pairs, %d requests with the same effect served the same", pairs, same)
 }
