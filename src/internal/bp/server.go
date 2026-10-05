@@ -116,7 +116,7 @@ type Server struct {
 	file      string
 	rt        atomic.Pointer[Runtime]
 	mu        sync.Mutex
-	servers   []*http.Server
+	cs        changeState // listeners, history and the running text (apply.go)
 	adminPath string
 	logger    *log.Logger
 }
@@ -135,42 +135,11 @@ func (s *Server) Current() *Runtime { return s.rt.Load() }
 
 // Run starts BareProxy with a config file and serves until stopped.
 func Run(file string) error {
-	s := &Server{file: file, logger: log.New(os.Stderr, "bareproxy: ", log.LstdFlags)}
-	c, probs := Load(file)
-	for _, p := range probs {
-		s.logf("%s", p)
-	}
-	if c == nil || HasErrors(probs) {
-		return errors.New("the config has errors, so BareProxy didn't start")
-	}
-	rt, err := NewRuntime(c, nil, 1, s.logf, true)
+	s, err := Start(file)
 	if err != nil {
 		return err
 	}
-	s.rt.Store(rt)
-	for _, p := range sortedPorts(c) {
-		ln, err := net.Listen("tcp", fmt.Sprintf(":%d", p.Num))
-		if err != nil {
-			s.shutdown()
-			return err
-		}
-		srv := &http.Server{
-			Handler:           s.Handler(p.Num, p.TLS),
-			ReadHeaderTimeout: 10 * time.Second,
-			IdleTimeout:       120 * time.Second,
-			MaxHeaderBytes:    32 << 10,
-			ErrorLog:          log.New(io.Discard, "", 0),
-		}
-		s.servers = append(s.servers, srv)
-		if p.TLS {
-			srv.TLSConfig = &tls.Config{MinVersion: tls.VersionTLS12, GetCertificate: s.certFor(p.Num)}
-			go srv.ServeTLS(ln, "", "")
-		} else {
-			go srv.Serve(ln)
-		}
-	}
-	s.logf("version 1 running: %s", Summary(c))
-	if err := s.startAdmin(c.Admin); err != nil {
+	if err := s.startAdmin(s.Current().Cfg.Admin); err != nil {
 		s.logf("no admin socket (%v), so explain reads the file instead", err)
 	}
 	sig := make(chan os.Signal, 1)
@@ -188,11 +157,7 @@ func Run(file string) error {
 }
 
 func (s *Server) shutdown() {
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-	for _, srv := range s.servers {
-		srv.Shutdown(ctx)
-	}
+	s.closeListeners()
 	if s.adminPath != "" {
 		os.Remove(s.adminPath)
 	}
@@ -223,48 +188,6 @@ func (s *Server) certFor(port int) func(*tls.ClientHelloInfo) (*tls.Certificate,
 		}
 		return nil, errors.New("no certificate")
 	}
-}
-
-// Reload reads the config file again. A config with errors never replaces
-// the running one; requests in flight finish on the version they started on.
-func (s *Server) Reload() {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	old := s.rt.Load()
-	c, probs := Load(s.file)
-	for _, p := range probs {
-		s.logf("reload: %s", p)
-	}
-	if c == nil || HasErrors(probs) {
-		s.logf("reload failed, so version %d keeps running", old.Version)
-		return
-	}
-	if !sameListeners(old.Cfg, c) {
-		c.Close()
-		s.logf("reload refused: adding or removing listeners needs a restart in this build, so version %d keeps running", old.Version)
-		return
-	}
-	rt, err := NewRuntime(c, old, old.Version+1, s.logf, true)
-	if err != nil {
-		c.Close()
-		s.logf("reload failed (%v), so version %d keeps running", err, old.Version)
-		return
-	}
-	s.rt.Store(rt)
-	retire(old, rt)
-	s.logf("version %d running: %s", rt.Version, Summary(c))
-}
-
-func sameListeners(a, b *Config) bool {
-	if len(a.Ports) != len(b.Ports) {
-		return false
-	}
-	for n, p := range a.Ports {
-		if q := b.Ports[n]; q == nil || q.TLS != p.TLS {
-			return false
-		}
-	}
-	return true
 }
 
 // adminHandlers add endpoints to the admin socket. Each file registers its
@@ -304,7 +227,7 @@ func (s *Server) startAdmin(path string) error {
 	for _, add := range adminHandlers {
 		add(s, mux)
 	}
-	srv := &http.Server{Handler: mux, ReadHeaderTimeout: 5 * time.Second}
+	srv := &http.Server{Handler: mux, ReadHeaderTimeout: 5 * time.Second, ConnContext: peerContext}
 	go srv.Serve(ln)
 	return nil
 }

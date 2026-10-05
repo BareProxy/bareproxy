@@ -52,6 +52,7 @@ type Config struct {
 	File       string
 	Lines      []string
 	Admin      string
+	State      string // state dir; empty means /var/lib/bareproxy
 	TraceLog   string
 	TraceQuery bool
 	IDHeader   bool
@@ -139,6 +140,7 @@ type PoolSpec struct {
 	ConnectTimeout  time.Duration
 	ResponseTimeout time.Duration
 	Retries         int
+	Drain           time.Duration // how long removed backends drain; 0 means 30 s
 	used            bool
 }
 
@@ -397,6 +399,10 @@ func (p *parser) global(ln int, w []string) {
 		if len(w) == 4 {
 			p.warnf(ln, "trace-log rotation isn't built yet, so the file grows without limit")
 		}
+	case "state":
+		if one() {
+			c.State = p.path(w[1])
+		}
 	case "trace-query":
 		if one() {
 			c.TraceQuery = p.onOff(ln, w[1])
@@ -405,7 +411,7 @@ func (p *parser) global(ln int, w []string) {
 		if one() {
 			c.IDHeader = p.onOff(ln, w[1])
 		}
-	case "state", "acme-email", "acme-ca", "trust", "trace-memory",
+	case "acme-email", "acme-ca", "trust", "trace-memory",
 		"client-header-timeout", "client-body-timeout", "client-idle-timeout", "shutdown-timeout":
 		p.warnf(ln, "%s isn't built yet in this version, so it's ignored", w[0])
 	default:
@@ -694,7 +700,9 @@ func (p *parser) poolSetting(ps *PoolSpec, ln int, w []string) {
 		}
 		ps.Retries = int(w[1][0] - '0')
 	case "drain":
-		p.warnf(ln, "drain isn't built yet in this version, so it's ignored")
+		if d, ok := dur(); ok {
+			ps.Drain = d
+		}
 	default:
 		p.errf(ln, "unknown pool setting %q", w[0])
 	}
