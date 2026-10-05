@@ -43,6 +43,10 @@ the two things that need one:
 
 Backend states are unknown, as they are for `explain --offline` on any machine.
 
+The option is `ParseOptions` and `ParseWith` in `internal/bp/config.go`. `Parse` is unchanged and
+still opens folders and loads certificates. The handling of a files rule with no folder is in
+`files.go` and `explain.go`, and `internal/bp/nodisk_test.go` tests all three.
+
 The example config has `tls CERT KEY` lines that the Design Note's example doesn't. The Design
 Note uses automatic certificates, and this version doesn't build those yet. Check says so, exactly
 as the server does, so the demo's example uses certificate files. The paths are not read.
@@ -78,8 +82,8 @@ five files: `index.html`, `demo.css`, `demo.js`, `wasm_exec.js`, `bareproxy.wasm
 Put the five files in one folder of any static web server. The links are relative, so the folder
 can sit at any path (the plan is `https://bareproxy.com/live-demo/`). Two things help:
 
-- Send `.wasm` as `application/wasm`. If a host doesn't, the page falls back to a slower way of
-  starting and still works. The check tests this.
+- Send `.wasm` as `application/wasm`. If a host doesn't, the page still works: it waits for the
+  whole file to download before it compiles it. The check tests this.
 - Compress `.wasm` (gzip or brotli). It is the one big file.
 
 To try it on your own machine: `cd DIST && python3 -m http.server 8000`, then open
@@ -101,7 +105,8 @@ on localhost, and drives the page in headless Chromium like a visitor. Then it c
 - **Check.** The prefilled config gives the same summary as `bareproxy check`. A broken config
   gives the same problems with the same line numbers, the gutter marks the lines, and the "line N"
   links select them. A missing folder and certificate pass in the demo and fail natively, which is
-  the expected difference.
+  the expected difference. If the core throws or returns something unexpected, the page shows an
+  error and never a clean check.
 - **Explain.** All five presets, a typed request with headers, 32 more requests on a second config
   (methods, header conditions, a wildcard site, a catch-all, plain http, another port, odd paths,
   bad URLs), and 23 behaviours the Design Note describes. Each result is compared with
@@ -121,8 +126,8 @@ on localhost, and drives the page in headless Chromium like a visitor. Then it c
   files. None goes anywhere else.
 
 The log is written to `results/demo-check.log` (change it with `--log`). The exit code is 1 when
-anything fails. Until `bp.MakePlan` is the real one, pass `--allow-plan-stub`, otherwise a plan
-that says "No changes." for the two example configs counts as a failure.
+anything fails. On a tree where `bp.MakePlan` is still the stub, pass `--allow-plan-stub`,
+otherwise a plan that says "No changes." for the two example configs counts as a failure.
 
 ## Sizes
 
