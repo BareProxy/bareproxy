@@ -156,7 +156,7 @@ func (s *Server) Reload() {
 	}
 	if err != nil {
 		s.mu.Lock()
-		s.cs.mismatch = fmt.Sprintf("%s can't go live (%v), so version %d keeps running", s.file, err, s.Current().Version)
+		s.cs.mismatch = fmt.Sprintf("%s can't go live (%s), so version %d keeps running", s.file, strings.ReplaceAll(err.Error(), "\n  ", "; "), s.Current().Version)
 		s.logEvent("reload", "reload: %s", s.cs.mismatch)
 		s.mu.Unlock()
 	}

@@ -2,3 +2,8 @@
 # SPDX-License-Identifier: Apache-2.0
 bin/
 dist/
+live/certs/
+live/public/
+live/run/
+live/live.conf
+live/live.conf.good

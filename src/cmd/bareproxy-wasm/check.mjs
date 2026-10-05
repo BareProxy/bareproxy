@@ -325,7 +325,13 @@ async function main() {
   out('native: ' + run(bin, ['version']).stdout.trim());
   const confFile = path.join(fx.tmp, 'bareproxy.conf');
   const native = {
-    check: (text) => { fs.writeFileSync(confFile, fx.toNative(text)); const x = run(bin, ['check', confFile]); return { ...x, stdout: fx.fromNative(x.stdout), stderr: fx.fromNative(x.stderr) }; },
+    check: (text) => {
+      fs.writeFileSync(confFile, fx.toNative(text));
+      const x = run(bin, ['check', confFile]);
+      // check prints its problems on stderr as "FILE: line N: ...": compare them without the file name.
+      const problems = x.stderr.split('\n').map((l) => (l.startsWith(confFile + ': ') ? l.slice(confFile.length + 2) : l)).join('\n');
+      return { ...x, stdout: fx.fromNative(x.stdout + problems), stderr: fx.fromNative(x.stderr) };
+    },
     explain: (text, method, url, hs = []) => {
       fs.writeFileSync(confFile, fx.toNative(text));
       const x = run(bin, ['explain', '--offline', '--config', confFile, ...hs.flatMap((h) => ['-H', h]), method, url]);

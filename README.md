@@ -133,45 +133,46 @@ pool api
 
 ### Change a running config
 
-Edit the file, then look at the plan before anything goes live. This is a real run, with a second pool added for `/api/v2`:
+Edit the file, then look at the plan before anything goes live. This is a real run, with a second pool added for `/api/v2` (the folder it ran in is shown as /srv/example):
 
 ```
 $ bareproxy plan site.conf
 Compared with running version 1:
-Plan 1caa15bccdf8: 1 routing change, 1 other change
+Plan c78b089a8272: 1 routing change, 1 other change
 Routing
   example.com (port 8088), any method, /api/v2 and below
       pool api, strip /api  ->  pool api2, strip /api/v2
 Other changes
-  pool api2 added (line 14), 1 backend
+  pool api2 added (line 15): backend 127.0.0.1:19082
 
 $ bareproxy apply site.conf
 Compared with running version 1:
-Plan 1caa15bccdf8: 1 routing change, 1 other change
+Plan c78b089a8272: 1 routing change, 1 other change
 Routing
   example.com (port 8088), any method, /api/v2 and below
       pool api, strip /api  ->  pool api2, strip /api/v2
 Other changes
-  pool api2 added (line 14), 1 backend
+  pool api2 added (line 15): backend 127.0.0.1:19082
 Apply? [y/N] y
 Version 2 is running (it was 1).
 
-$ bareproxy history --config site.conf
+$ bareproxy history -c site.conf
 Version  Time (UTC)           How       User        Plan
-      1  2026-10-05 07:55:25  startup   root
-      2  2026-10-05 07:55:26  apply     root        1caa15bccdf8 (running)
+      1  2026-10-05 10:52:52  startup   root
+      2  2026-10-05 10:52:53  apply     root        c78b089a8272 (running)
 
-$ bareproxy rollback --config site.conf
-Plan 19b44ba3e7c3: 1 routing change, 1 other change
+$ bareproxy rollback -c site.conf
+Plan a241a09c11fa: 1 routing change, 1 other change
 Routing
   example.com (port 8088), any method, /api/v2 and below
       pool api2, strip /api/v2  ->  pool api, strip /api
 Other changes
-  pool api2 removed (was line 14)
+  pool api2 removed (was line 15)
 Version 3 is running (it was 2).
+/srv/example/site.conf now holds version 3.
 ```
 
-The rollback is a new version (3) that holds the text of version 1, and the config file holds that text again.
+The rollback is a new version (3) that holds the text of version 1, and the config file holds that text again; the reply says so whenever an apply or a rollback rewrites the file.
 
 ## Live test
 
