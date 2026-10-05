@@ -121,30 +121,27 @@ func (s *Server) adminPlan(w http.ResponseWriter, r *http.Request) {
 	for _, pr := range probs {
 		out.Warnings = append(out.Warnings, pr.String())
 	}
-	var b strings.Builder
-	fmt.Fprintf(&b, "Compared with running version %d:\n", rt.Version)
+	changes := out.Text
 	if unchanged {
-		b.WriteString("No changes: the text is the running config.\n")
-	} else {
-		b.WriteString(out.Text)
+		changes = "No changes: the text is the running config.\n"
 	}
-	for _, wn := range out.Warnings {
-		b.WriteString(wn + "\n")
+	reply(w, r, http.StatusOK, out, fmt.Sprintf("Compared with running version %d:\n%s%s", rt.Version, changes, asLines(out.Warnings)))
+}
+
+// asLines joins texts as lines, each ending in a newline.
+func asLines(texts []string) string {
+	var b strings.Builder
+	for _, t := range texts {
+		b.WriteString(t + "\n")
 	}
-	reply(w, r, http.StatusOK, out, b.String())
+	return b.String()
 }
 
 func appliedText(a *Applied) string {
-	var b strings.Builder
-	for _, wn := range a.Warnings {
-		b.WriteString(wn + "\n")
-	}
 	if a.Unchanged {
-		fmt.Fprintf(&b, "No changes: version %d keeps running.\n", a.Version)
-	} else {
-		fmt.Fprintf(&b, "Version %d is running (it was %d).\n", a.Version, a.Previous)
+		return asLines(a.Warnings) + fmt.Sprintf("No changes: version %d keeps running.\n", a.Version)
 	}
-	return b.String()
+	return asLines(a.Warnings) + fmt.Sprintf("Version %d is running (it was %d).\n", a.Version, a.Previous)
 }
 
 func (s *Server) adminApply(w http.ResponseWriter, r *http.Request) {

@@ -11,6 +11,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 )
 
@@ -78,23 +79,20 @@ func (h *history) last() int {
 
 // text returns the config text of version n.
 func (h *history) text(n int) (string, error) {
-	for _, e := range h.entries {
-		if e.Version == n {
-			b, err := os.ReadFile(h.path(n))
-			return string(b), err
-		}
+	if !slices.ContainsFunc(h.entries, func(e Entry) bool { return e.Version == n }) {
+		return "", fmt.Errorf("version %d isn't in the history (it keeps the last %d)", n, keepVersions)
 	}
-	return "", fmt.Errorf("version %d isn't in the history (it keeps the last %d)", n, keepVersions)
+	b, err := os.ReadFile(h.path(n))
+	return string(b), err
 }
 
 // before returns the version that went live before version n, or 0.
 func (h *history) before(n int) int {
-	for i, e := range h.entries {
-		if e.Version == n && i > 0 {
-			return h.entries[i-1].Version
-		}
+	i := slices.IndexFunc(h.entries, func(e Entry) bool { return e.Version == n })
+	if i < 1 {
+		return 0
 	}
-	return 0
+	return h.entries[i-1].Version
 }
 
 // save stores a new version and drops the oldest past the last 100.
@@ -122,7 +120,6 @@ func writeFileAtomic(path string, data []byte, perm fs.FileMode) error {
 	if err != nil {
 		return err
 	}
-	tmp := f.Name()
 	_, err = f.Write(data)
 	if err == nil {
 		err = f.Sync()
@@ -134,10 +131,10 @@ func writeFileAtomic(path string, data []byte, perm fs.FileMode) error {
 		err = cerr
 	}
 	if err == nil {
-		err = os.Rename(tmp, path)
+		err = os.Rename(f.Name(), path)
 	}
 	if err != nil {
-		os.Remove(tmp)
+		os.Remove(f.Name())
 	}
 	return err
 }

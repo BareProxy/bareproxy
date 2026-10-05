@@ -119,10 +119,10 @@ func Start(file string) (*Server, error) {
 		}
 		return s, nil
 	}
-	if s.cs.hist.last() == 0 {
+	n := s.cs.hist.last()
+	if n == 0 {
 		return nil, errors.New("the config has errors, so BareProxy didn't start")
 	}
-	n := s.cs.hist.last()
 	text, err := s.cs.hist.text(n)
 	if err == nil {
 		_, err = s.Apply(Change{Text: text, How: "startup", User: user, keepFile: true, version: n})
@@ -285,10 +285,7 @@ func (s *Server) apply(ch Change) (*Applied, error) {
 	if ch.User != "" {
 		how += " by " + ch.User
 	}
-	kind := ch.How
-	if kind == "startup" {
-		kind = "start"
-	}
+	kind := strings.Replace(ch.How, "startup", "start", 1) // the event kind
 	if unchanged {
 		s.logEvent(kind, "version %d reloaded, config unchanged (%s)", res.Version, how)
 	} else {
