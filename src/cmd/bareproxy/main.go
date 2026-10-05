@@ -18,6 +18,7 @@ import (
 	"runtime"
 	"slices"
 	"strings"
+	"syscall"
 	"time"
 
 	"bareproxy/internal/bp"
@@ -116,6 +117,9 @@ type options struct {
 	headers            []string // every -H
 	pos                []string // the arguments that aren't options
 }
+
+// arg is the one argument that a command with at most one takes, or "".
+func (o options) arg() string { return cmp.Or(o.pos...) }
 
 // parse reads the options in names (with the spelling the user types, such
 // as "--config" and "-c") from args, in any position. Other arguments go to
@@ -292,4 +296,17 @@ func get(sock, target string) (int, string, error) {
 		return 0, "", errors.New("the config has no admin socket")
 	}
 	return adminCall(sock, "GET", target, "", 5*time.Second)
+}
+
+// callAdmin sends one request to the admin socket. When nothing answers it
+// says why in plain words.
+func callAdmin(sock, method, path string, q url.Values, body string) (int, string, error) {
+	code, out, err := adminCall(sock, method, path+"?"+q.Encode(), body, time.Minute)
+	switch {
+	case errors.Is(err, syscall.ENOENT), errors.Is(err, syscall.ECONNREFUSED):
+		err = fmt.Errorf("no BareProxy is running with the admin socket %s", sock)
+	case errors.Is(err, syscall.EACCES):
+		err = fmt.Errorf("no permission to use %s: run as root or as a member of its group", sock)
+	}
+	return code, out, err
 }

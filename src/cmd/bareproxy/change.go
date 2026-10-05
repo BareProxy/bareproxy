@@ -5,16 +5,12 @@ package main
 
 import (
 	"bufio"
-	"cmp"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
 	"os"
 	"strings"
-	"syscall"
-	"time"
 
 	"bareproxy/internal/bp"
 )
@@ -29,8 +25,6 @@ func parseChangeFlags(args []string) (o options, ok bool) {
 	return o, ok && len(o.pos) <= 1
 }
 
-func (o options) arg() string { return cmp.Or(o.pos...) }
-
 // adminSocket finds the admin socket a config file names.
 func adminSocket(file string) (string, error) {
 	sock := "/run/bareproxy/admin.sock"
@@ -42,19 +36,6 @@ func adminSocket(file string) (string, error) {
 		return "", fmt.Errorf("%s turns the admin socket off, so there is no running server to ask", file)
 	}
 	return sock, nil
-}
-
-// callAdmin sends one request to the admin socket. When nothing answers it
-// says why in plain words.
-func callAdmin(sock, method, path string, q url.Values, body string) (int, string, error) {
-	code, out, err := adminCall(sock, method, path+"?"+q.Encode(), body, time.Minute)
-	switch {
-	case errors.Is(err, syscall.ENOENT), errors.Is(err, syscall.ECONNREFUSED):
-		err = fmt.Errorf("no BareProxy is running with the admin socket %s", sock)
-	case errors.Is(err, syscall.EACCES):
-		err = fmt.Errorf("no permission to use %s: run as root or as a member of its group", sock)
-	}
-	return code, out, err
 }
 
 // callServer sends a request to the server that a config file names.
