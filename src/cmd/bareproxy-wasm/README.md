@@ -83,8 +83,8 @@ can sit at any path (the plan is `https://bareproxy.com/live-demo/`). Two things
 - Compress `.wasm` (gzip or brotli). It is the one big file.
 
 To try it on your own machine: `cd DIST && python3 -m http.server 8000`, then open
-http://localhost:8000/. Opening `index.html` from disk does not work, because browsers refuse to
-load wasm from `file:` pages.
+http://localhost:8000/. Opening `index.html` straight from disk does not work in Chromium (tested),
+and the page then says to use a web server.
 
 ## Check it
 
@@ -96,7 +96,8 @@ It builds the native `bareproxy` and `planref` from the same source tree, serves
 on localhost, and drives the page in headless Chromium like a visitor. Then it compares:
 
 - **Loading.** The indicator shows and the buttons are off while the wasm loads. A wrong content
-  type still works. A missing wasm file shows an error, not a blank page.
+  type still works. A missing wasm file shows an error, not a blank page. Opened from disk, the
+  page says to use a web server.
 - **Check.** The prefilled config gives the same summary as `bareproxy check`. A broken config
   gives the same problems with the same line numbers, the gutter marks the lines, and the "line N"
   links select them. A missing folder and certificate pass in the demo and fail natively, which is

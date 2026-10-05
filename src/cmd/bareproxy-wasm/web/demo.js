@@ -312,7 +312,11 @@
     try {
       result = await instantiate(go);
     } catch (e) {
-      fail('Could not load the core: ' + (e && e.message ? e.message : e));
+      if (location.protocol === 'file:') {
+        fail('This page was opened from disk, and browsers do not load WebAssembly that way. Serve the folder with a web server, for example python3 -m http.server, and open it from there.');
+      } else {
+        fail('Could not load the core: ' + (e && e.message ? e.message : e));
+      }
       return;
     }
     go.run(result.instance).then(() => {

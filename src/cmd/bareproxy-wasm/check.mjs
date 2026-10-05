@@ -408,6 +408,17 @@ async function main() {
       await ctx.close();
     }
 
+    {
+      // opened from disk: browsers refuse to load wasm from file: pages, and the page should say what to do
+      const ctx = await browser.newContext();
+      const page = await ctx.newPage();
+      await page.goto('file://' + path.join(DIST, 'index.html'));
+      let state = '';
+      try { await page.waitForSelector('#status[data-state="error"]', { timeout: 20000 }); state = await page.textContent('#status-text'); } catch { state = 'no error state'; }
+      ok('opened from disk the page says so and says to use a web server', /opened from disk/.test(state) && /web server/.test(state), state);
+      await ctx.close();
+    }
+
     // ---- the real page ---------------------------------------------------------
     const ctx = await browser.newContext({ viewport: { width: 1280, height: 900 } });
     hookRequests(ctx);
