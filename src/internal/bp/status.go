@@ -6,7 +6,8 @@ package bp
 import (
 	"crypto/x509"
 	"fmt"
-	"sort"
+	"maps"
+	"slices"
 	"time"
 )
 
@@ -114,12 +115,7 @@ func portSites(p *Port) []string {
 	if p.Any != nil {
 		seen[p.Any.Name] = true
 	}
-	names := []string{}
-	for n := range seen {
-		names = append(names, n)
-	}
-	sort.Strings(names)
-	return names
+	return slices.Sorted(maps.Keys(seen))
 }
 
 func poolChecksText(h *HealthSpec) string {
@@ -135,7 +131,7 @@ func (s *Server) Status() *Status {
 	c := rt.Cfg
 	st := &Status{Version: Version, ConfigFile: c.File, ConfigVersion: rt.Version,
 		Listeners: []ListenerStatus{}, Sites: []SiteStatus{}, Pools: []PoolStatus{}, Certificates: []CertStatus{}}
-	started := rt.Mem.Started()
+	started := rt.Mem.started
 	st.Started, st.UptimeSeconds = stamp(started), time.Since(started).Seconds()
 	for _, p := range sortedPorts(c) {
 		st.Listeners = append(st.Listeners, ListenerStatus{Port: p.Num, TLS: p.TLS, Sites: portSites(p)})

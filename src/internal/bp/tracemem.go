@@ -6,6 +6,7 @@ package bp
 import (
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -71,16 +72,13 @@ func (rt *Runtime) record(rec *Record) {
 	}
 }
 
-func newTraceMem() *TraceMem { return &TraceMem{started: time.Now()} }
+func newTraceMem() *TraceMem { return &TraceMem{started: time.Now(), subs: map[*Tail]bool{}} }
 
 // isProxyError reports outcomes where BareProxy, not the application,
 // failed to deliver.
 func isProxyError(outcome string) bool {
-	switch outcome {
-	case "no_backend", "connect_failed", "bad_response", "timeout":
-		return true
-	}
-	return false
+	return outcome == "no_backend" || outcome == "connect_failed" ||
+		outcome == "bad_response" || outcome == "timeout"
 }
 
 // Add stores a finished record, given with its JSON. The oldest records go
@@ -111,9 +109,7 @@ func (m *TraceMem) Add(rec *Record, js []byte, limit int64) {
 		m.evicted++
 	}
 	if m.start >= 4096 && m.start*2 >= len(m.recs) {
-		n := copy(m.recs, m.recs[m.start:])
-		clear(m.recs[n:])
-		m.recs, m.start = m.recs[:n], 0
+		m.recs, m.start = slices.Delete(m.recs, 0, m.start), 0
 	}
 }
 
@@ -198,9 +194,6 @@ func (m *TraceMem) Recent(d time.Duration) (w Window, complete bool) {
 func (m *TraceMem) Subscribe() *Tail {
 	t := &Tail{C: make(chan tailItem, 256)}
 	m.mu.Lock()
-	if m.subs == nil {
-		m.subs = map[*Tail]bool{}
-	}
 	m.subs[t] = true
 	m.tailers.Add(1)
 	m.mu.Unlock()
@@ -238,9 +231,6 @@ func (m *TraceMem) Events() []Event {
 	defer m.mu.Unlock()
 	return append([]Event{}, m.events...)
 }
-
-// Started is when this process began keeping the ring, which is when it started.
-func (m *TraceMem) Started() time.Time { return m.started }
 
 // Event records a change in BareProxy's own state, such as an apply, a
 // reload or a backend going down, for the events command.

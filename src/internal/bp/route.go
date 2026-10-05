@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"slices"
+	"strconv"
 	"strings"
 )
 
@@ -22,18 +24,6 @@ func isUnreserved(b byte) bool {
 
 func isPathChar(b byte) bool {
 	return isUnreserved(b) || strings.IndexByte("!$&'()*+,;=:@", b) >= 0
-}
-
-func unhex(c byte) (byte, bool) {
-	switch {
-	case '0' <= c && c <= '9':
-		return c - '0', true
-	case 'a' <= c && c <= 'f':
-		return c - 'a' + 10, true
-	case 'A' <= c && c <= 'F':
-		return c - 'A' + 10, true
-	}
-	return 0, false
 }
 
 // NormalizePath turns a raw request path into the one form BareProxy routes
@@ -53,12 +43,11 @@ func NormalizePath(raw string, keepSlash bool) (string, error) {
 			if i+2 >= len(raw) {
 				return "", &PathError{"broken % escape"}
 			}
-			hi, ok1 := unhex(raw[i+1])
-			lo, ok2 := unhex(raw[i+2])
-			if !ok1 || !ok2 {
+			n, err := strconv.ParseUint(raw[i+1:i+3], 16, 8)
+			if err != nil {
 				return "", &PathError{"broken % escape"}
 			}
-			v := hi<<4 | lo
+			v := byte(n)
 			i += 2
 			switch {
 			case isUnreserved(v):
@@ -85,8 +74,7 @@ func NormalizePath(raw string, keepSlash bool) (string, error) {
 	}
 	segs := strings.Split(b.String()[1:], "/")
 	out := make([]string, 0, len(segs))
-	trailing := false
-	for i, s := range segs {
+	for _, s := range segs {
 		switch s {
 		case "", ".":
 		case "..":
@@ -97,15 +85,12 @@ func NormalizePath(raw string, keepSlash bool) (string, error) {
 		default:
 			out = append(out, s)
 		}
-		if i == len(segs)-1 && (s == "" || s == "." || s == "..") {
-			trailing = true
-		}
 	}
 	if len(out) == 0 {
 		return "/", nil
 	}
 	p := "/" + strings.Join(out, "/")
-	if trailing {
+	if last := segs[len(segs)-1]; last == "" || last == "." || last == ".." {
 		p += "/"
 	}
 	return p, nil
@@ -154,52 +139,30 @@ func (r *Route) matches(method, path string, h http.Header) (bool, string) {
 		if len(vals) == 0 {
 			return false, "no " + c.Name + " header"
 		}
-		if c.HasValue {
-			found := false
-			for _, v := range vals {
-				if v == c.Value {
-					found = true
-				}
-			}
-			if !found {
-				return false, c.Name + " is not " + c.Value
-			}
+		if c.HasValue && !slices.Contains(vals, c.Value) {
+			return false, c.Name + " is not " + c.Value
 		}
 	}
 	return true, "match"
 }
 
 func methodAllowed(ms []string, m string) bool {
-	for _, x := range ms {
-		if x == m || (x == "GET" && m == http.MethodHead) {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(ms, m) || (m == http.MethodHead && slices.Contains(ms, http.MethodGet))
 }
 
 // stripPrefix removes a route's prefix from a path, keeping a leading slash.
 func stripPrefix(path, prefix string) string {
-	if prefix == "" {
-		return path
+	if rest := strings.TrimPrefix(path, prefix); rest != "" {
+		return rest
 	}
-	rest := strings.TrimPrefix(path, prefix)
-	if rest == "" {
-		return "/"
-	}
-	return rest
+	return "/"
 }
 
 // redirectTarget builds a redirect's Location. A bare origin keeps the
 // request's path and query; a URL with a path is used exactly.
 func redirectTarget(base, norm, query string) string {
-	u, err := url.Parse(base)
-	if err != nil || u.Path != "" {
+	if u, err := url.Parse(base); err != nil || u.Path != "" {
 		return base
 	}
-	t := base + norm
-	if query != "" {
-		t += "?" + query
-	}
-	return t
+	return withQuery(base+norm, query)
 }

@@ -169,11 +169,7 @@ func (t *TraceLog) WriteLine(js []byte) {
 func (t *TraceLog) rotate() {
 	t.f.Close()
 	for i := t.keep; i >= 1; i-- {
-		from := t.Spec
-		if i > 1 {
-			from = fmt.Sprintf("%s.%d", t.Spec, i-1)
-		}
-		os.Rename(from, fmt.Sprintf("%s.%d", t.Spec, i))
+		os.Rename(rotated(t.Spec, i-1), rotated(t.Spec, i))
 	}
 	f, err := os.OpenFile(t.Spec, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o640)
 	if err != nil {
@@ -197,6 +193,15 @@ func (t *TraceLog) Close() {
 	}
 }
 
+// rotated names a trace log file: i is 0 for the log itself and 1 for the
+// newest rotated file (file.1).
+func rotated(file string, i int) string {
+	if i == 0 {
+		return file
+	}
+	return fmt.Sprintf("%s.%d", file, i)
+}
+
 // FindRecord finds the record whose ID starts with prefix in a trace log
 // file and the rotated files beside it (file.1, file.2 and so on).
 func FindRecord(file, prefix string) (*Record, error) {
@@ -210,11 +215,7 @@ func FindRecord(file, prefix string) (*Record, error) {
 	var firstErr error
 	opened := false
 	for i := 0; ; i++ {
-		name := file
-		if i > 0 {
-			name = fmt.Sprintf("%s.%d", file, i)
-		}
-		f, err := os.Open(name)
+		f, err := os.Open(rotated(file, i))
 		if err != nil {
 			if i == 0 {
 				firstErr = err
@@ -257,6 +258,11 @@ func FindRecord(file, prefix string) (*Record, error) {
 // RenderWhy tells the story of one request from its record.
 func RenderWhy(rec *Record) string {
 	var b strings.Builder
+	note := func(format, value string) {
+		if value != "" {
+			fmt.Fprintf(&b, format, value)
+		}
+	}
 	when := rec.Time
 	if t, err := time.Parse(time.RFC3339Nano, rec.Time); err == nil {
 		when = t.UTC().Format("2 Jan 2006 15:04:05.000 UTC")
@@ -266,21 +272,14 @@ func RenderWhy(rec *Record) string {
 	if rec.TLS != "" {
 		conn = "TLS " + rec.TLS + ", " + rec.Proto
 	}
-	target := rec.Scheme + "://" + rec.Host + rec.Path
-	if rec.Query != "" {
-		target += "?" + rec.Query
-	}
+	target := withQuery(rec.Scheme+"://"+rec.Host+rec.Path, rec.Query)
 	fmt.Fprintf(&b, "%s %s from %s, %s\n", rec.Method, target, rec.Client, conn)
-	if rec.TraceID != "" {
-		fmt.Fprintf(&b, "W3C trace ID %s\n", rec.TraceID)
-	}
+	note("W3C trace ID %s\n", rec.TraceID)
 	b.WriteString("\n")
 	if rec.Site != "" {
 		fmt.Fprintf(&b, "Site %s (line %d)\n", rec.Site, rec.SiteLine)
 	}
-	if rec.NormPath != "" {
-		fmt.Fprintf(&b, "Normalized path: %s\n", rec.NormPath)
-	}
+	note("Normalized path: %s\n", rec.NormPath)
 	if rec.Rule != "" {
 		fmt.Fprintf(&b, "Rule line %d: %s\n", rec.Line, rec.Rule)
 	}
@@ -319,15 +318,9 @@ func RenderWhy(rec *Record) string {
 			fmt.Fprintf(&b, "Checked: %s\n", inFolder(rec.Folder, rec.Checked[0]))
 		}
 	}
-	if rec.Location != "" {
-		fmt.Fprintf(&b, "Redirected to %s\n", rec.Location)
-	}
-	if rec.Reason != "" {
-		fmt.Fprintf(&b, "Reason: %s\n", rec.Reason)
-	}
-	if rec.ErrorPage != "" {
-		fmt.Fprintf(&b, "Error page: %s\n", rec.ErrorPage)
-	}
+	note("Redirected to %s\n", rec.Location)
+	note("Reason: %s\n", rec.Reason)
+	note("Error page: %s\n", rec.ErrorPage)
 	fmt.Fprintf(&b, "Response %d, %s, %s in total (outcome %s)\n", rec.Status, fmtBytes(rec.BytesOut), fmtMS(rec.MS), rec.Outcome)
 	return b.String()
 }
@@ -360,11 +353,9 @@ func lowerHex(s string) bool {
 // header, or empty strings unless there is exactly one and it is valid.
 func requestTrace(h http.Header) (traceID, flags string) {
 	if vs := h.Values("Traceparent"); len(vs) == 1 {
-		if id, fl, ok := parseTraceparent(vs[0]); ok {
-			return id, fl
-		}
+		traceID, flags, _ = parseTraceparent(vs[0])
 	}
-	return "", ""
+	return traceID, flags
 }
 
 // setTraceparent puts the request ID in as the new parent ID of the
