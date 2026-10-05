@@ -5,7 +5,6 @@ package bp
 
 import (
 	"fmt"
-	"io"
 	"net/http"
 	"strconv"
 	"strings"
@@ -154,8 +153,7 @@ func (s *Server) adminTail(w http.ResponseWriter, r *http.Request) {
 			return
 		case it := <-t.C:
 			if MatchAll(fs, it.rec) {
-				w.Write(it.js)
-				io.WriteString(w, "\n")
+				fmt.Fprintf(w, "%s\n", it.js)
 			}
 		}
 		if n := t.Dropped.Swap(0); n > 0 {

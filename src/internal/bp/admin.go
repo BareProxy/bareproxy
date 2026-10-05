@@ -156,13 +156,11 @@ func (s *Server) adminApply(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) adminRollback(w http.ResponseWriter, r *http.Request) {
-	n := 0
-	if v := r.URL.Query().Get("version"); v != "" {
-		var err error
-		if n, err = strconv.Atoi(v); err != nil || n < 1 {
-			replyErr(w, r, fmt.Errorf("bad version %q: give a version number from the history", v))
-			return
-		}
+	v := r.URL.Query().Get("version")
+	n, err := strconv.Atoi(v) // no version gives 0: the one before the running version
+	if v != "" && (err != nil || n < 1) {
+		replyErr(w, r, fmt.Errorf("bad version %q: give a version number from the history", v))
+		return
 	}
 	a, err := s.Rollback(n, peerUser(r))
 	if err != nil {
