@@ -101,6 +101,7 @@ code { font-family: var(--mono); font-size: 0.92em; background: var(--soft); pad
   font-size: 0.85rem; font-weight: 700; flex: none;
 }
 .help { margin: 0 0 12px; color: var(--muted); font-size: 0.94rem; }
+.help code { white-space: nowrap; }
 .note { margin: 10px 0 0; color: var(--muted); font-size: 0.86rem; }
 
 /* Editors with line numbers */
