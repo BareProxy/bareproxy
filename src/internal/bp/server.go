@@ -267,6 +267,10 @@ func sameListeners(a, b *Config) bool {
 	return true
 }
 
+// adminHandlers add endpoints to the admin socket. Each file registers its
+// own in an init function, so files don't collide.
+var adminHandlers []func(s *Server, mux *http.ServeMux)
+
 // startAdmin serves explain for the live config on a Unix socket.
 func (s *Server) startAdmin(path string) error {
 	if path == "" || path == "off" {
@@ -297,6 +301,9 @@ func (s *Server) startAdmin(path string) error {
 		}
 		io.WriteString(w, out)
 	})
+	for _, add := range adminHandlers {
+		add(s, mux)
+	}
 	srv := &http.Server{Handler: mux, ReadHeaderTimeout: 5 * time.Second}
 	go srv.Serve(ln)
 	return nil

@@ -22,6 +22,10 @@ import (
 
 const defaultConfig = "/etc/bareproxy/bareproxy.conf"
 
+// extraCommands are commands defined in other files of this package. Each
+// file registers its own in an init function, so files don't collide.
+var extraCommands = map[string]func(args []string) int{}
+
 func main() {
 	if len(os.Args) < 2 {
 		usage()
@@ -42,6 +46,9 @@ func main() {
 	case "help", "-h", "--help":
 		usage()
 	default:
+		if f, ok := extraCommands[cmd]; ok {
+			os.Exit(f(args))
+		}
 		fmt.Fprintf(os.Stderr, "bareproxy: unknown command %q\n", cmd)
 		usage()
 		os.Exit(2)
