@@ -216,6 +216,10 @@ func (s *Server) apply(ch Change) (*Applied, error) {
 	for _, p := range probs {
 		res.Warnings = append(res.Warnings, p.String())
 	}
+	if old != nil && (c.Admin != old.Cfg.Admin || c.State != old.Cfg.State) {
+		c.Close()
+		return nil, errors.New("admin and state can't change while BareProxy runs, so nothing changed: change them in the file and restart")
+	}
 	if old != nil {
 		res.Previous = old.Version
 		res.Plan = MakePlan(old.Cfg, c)

@@ -232,6 +232,13 @@ func TestBrokenConfigNeverGoesLive(t *testing.T) {
 	}
 	l.expect(t, 1, "v1")
 	l.expectFile(t, v1)
+	// The admin socket and the state folder only change with a restart.
+	moved := strings.Replace(l.text("v2"), "admin.sock", "other.sock", 1)
+	if _, err := l.s.Apply(Change{Text: moved, How: "apply"}); err == nil || !strings.Contains(err.Error(), "restart") {
+		t.Fatalf("apply that moves the admin socket: %v", err)
+	}
+	l.expect(t, 1, "v1")
+	l.expectFile(t, v1)
 	// SIGHUP with a broken file keeps the running version and flags that
 	// the file doesn't hold it.
 	writeFile(t, l.conf, broken)
