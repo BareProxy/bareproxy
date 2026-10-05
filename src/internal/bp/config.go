@@ -6,14 +6,17 @@
 package bp
 
 import (
+	"cmp"
 	"crypto/tls"
+	"errors"
 	"fmt"
+	"maps"
 	"net"
 	"net/http"
 	"net/url"
 	"os"
 	"path/filepath"
-	"sort"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -354,17 +357,20 @@ func ParseWith(file, src string, o ParseOptions) (*Config, []Problem) {
 		}
 		switch block {
 		case "global":
-			p.global(ln, w)
+			err = p.global(ln, w)
 		case "site":
-			p.siteSetting(site, ln, toks, w)
+			err = p.siteSetting(site, ln, toks, w)
 		case "pool":
-			p.poolSetting(pool, ln, w)
+			err = p.poolSetting(pool, ln, w)
 		default:
-			p.errf(ln, "indented line outside a global, site or pool block")
+			err = errors.New("indented line outside a global, site or pool block")
+		}
+		if err != nil {
+			p.errf(ln, "%v", err)
 		}
 	}
 	p.compile()
-	sort.SliceStable(p.probs, func(i, j int) bool { return p.probs[i].Line < p.probs[j].Line })
+	slices.SortStableFunc(p.probs, func(a, b Problem) int { return a.Line - b.Line })
 	return c, p.probs
 }
 
@@ -375,98 +381,82 @@ func (p *parser) path(s string) string {
 	return filepath.Join(p.dir, s)
 }
 
-func (p *parser) onOff(ln int, s string) bool {
+func onOff(s string) (bool, error) {
 	switch s {
 	case "on":
-		return true
+		return true, nil
 	case "off":
-		return false
+		return false, nil
 	}
-	p.errf(ln, "expected on or off, got %q", s)
-	return false
+	return false, fmt.Errorf("expected on or off, got %q", s)
 }
 
-func (p *parser) global(ln int, w []string) {
+func (p *parser) global(ln int, w []string) error {
 	c := p.c
-	one := func() bool {
-		if len(w) != 2 {
-			p.errf(ln, "%s takes one value", w[0])
-			return false
-		}
-		return true
+	if len(w) != 2 && slices.Contains([]string{"admin", "state", "trace-memory", "trace-query", "id-header"}, w[0]) {
+		return fmt.Errorf("%s takes one value", w[0])
 	}
+	var err error
 	switch w[0] {
 	case "admin":
-		if one() {
-			if w[1] == "off" {
-				c.Admin = "off"
-			} else {
-				c.Admin = p.path(w[1])
-			}
+		c.Admin = "off"
+		if w[1] != "off" {
+			c.Admin = p.path(w[1])
+		}
+	case "state":
+		c.State = p.path(w[1])
+	case "trace-query":
+		c.TraceQuery, err = onOff(w[1])
+	case "id-header":
+		c.IDHeader, err = onOff(w[1])
+	case "trace-memory":
+		if w[1] == "off" {
+			c.TraceMem = 0
+		} else if n, e := parseSize(w[1]); e != nil {
+			err = e
+		} else {
+			c.TraceMem = n
 		}
 	case "trace-log":
 		if len(w) != 2 && len(w) != 4 {
-			p.errf(ln, "trace-log takes stdout, off, or a file with an optional size and count")
-			return
+			return errors.New("trace-log takes stdout, off, or a file with an optional size and count")
 		}
-		switch w[1] {
-		case "stdout", "off":
-			c.TraceLog = w[1]
-		default:
+		file := w[1] != "stdout" && w[1] != "off"
+		c.TraceLog = w[1]
+		if file {
 			c.TraceLog = p.path(w[1])
 		}
 		c.TraceSize, c.TraceCount = 0, 0
 		if len(w) == 4 {
-			size, err := parseSize(w[2])
+			size, err1 := parseSize(w[2])
 			count, err2 := strconv.Atoi(w[3])
 			switch {
-			case c.TraceLog == "stdout" || c.TraceLog == "off":
-				p.errf(ln, "only a trace log file can rotate, not %s", w[1])
-			case err != nil || size == 0:
-				p.errf(ln, "the size to rotate at must be more than zero, such as 10MB")
+			case !file:
+				return fmt.Errorf("only a trace log file can rotate, not %s", w[1])
+			case err1 != nil || size == 0:
+				return errors.New("the size to rotate at must be more than zero, such as 10MB")
 			case err2 != nil || count < 1:
-				p.errf(ln, "the number of old files to keep must be 1 or more")
-			default:
-				c.TraceSize, c.TraceCount = size, count
+				return errors.New("the number of old files to keep must be 1 or more")
 			}
-		}
-	case "trace-memory":
-		if !one() {
-			return
-		}
-		if w[1] == "off" {
-			c.TraceMem = 0
-		} else if n, err := parseSize(w[1]); err != nil {
-			p.errf(ln, "%v", err)
-		} else {
-			c.TraceMem = n
-		}
-	case "state":
-		if one() {
-			c.State = p.path(w[1])
-		}
-	case "trace-query":
-		if one() {
-			c.TraceQuery = p.onOff(ln, w[1])
-		}
-	case "id-header":
-		if one() {
-			c.IDHeader = p.onOff(ln, w[1])
+			c.TraceSize, c.TraceCount = size, count
 		}
 	case "acme-email", "acme-ca", "trust",
 		"client-header-timeout", "client-body-timeout", "client-idle-timeout", "shutdown-timeout":
 		p.warnf(ln, "%s isn't built yet in this version, so it's ignored", w[0])
 	default:
-		p.errf(ln, "unknown global setting %q", w[0])
+		return fmt.Errorf("unknown global setting %q", w[0])
 	}
+	return err
 }
 
-func (p *parser) siteSetting(s *Site, ln int, toks []token, w []string) {
+func (p *parser) siteSetting(s *Site, ln int, toks []token, w []string) error {
 	switch w[0] {
 	case "route":
-		if r := p.route(ln, toks); r != nil {
-			s.Routes = append(s.Routes, r)
+		r, err := p.route(ln, toks)
+		if err != nil {
+			return err
 		}
+		s.Routes = append(s.Routes, r)
 	case "tls":
 		switch {
 		case len(w) == 2 && w[1] == "auto":
@@ -474,147 +464,110 @@ func (p *parser) siteSetting(s *Site, ln int, toks []token, w []string) {
 		case len(w) == 3:
 			s.CertFile, s.KeyFile, s.TLSLine = p.path(w[1]), p.path(w[2]), ln
 		default:
-			p.errf(ln, "tls takes auto, or a certificate file and a key file")
+			return errors.New("tls takes auto, or a certificate file and a key file")
 		}
 	case "error":
-		if len(w) != 3 {
-			p.errf(ln, "error takes a status and a path, such as error 404 /404.html")
-			return
-		}
-		if w[1] != "404" {
-			p.errf(ln, "only error 404 is supported")
-			return
-		}
-		if !isNormalPath(w[2]) || strings.HasSuffix(w[2], "/") {
-			p.errf(ln, "the error page must be a plain file path such as /404.html")
-			return
+		switch {
+		case len(w) != 3:
+			return errors.New("error takes a status and a path, such as error 404 /404.html")
+		case w[1] != "404":
+			return errors.New("only error 404 is supported")
+		case !isNormalPath(w[2]) || strings.HasSuffix(w[2], "/"):
+			return errors.New("the error page must be a plain file path such as /404.html")
 		}
 		s.Err404, s.Err404Line = w[2], ln
 	case "encoded-slashes":
-		if len(w) == 2 && (w[1] == "reject" || w[1] == "keep") {
-			s.KeepEncodedSlash = w[1] == "keep"
-		} else {
-			p.errf(ln, "encoded-slashes takes reject or keep")
+		if len(w) != 2 || (w[1] != "reject" && w[1] != "keep") {
+			return errors.New("encoded-slashes takes reject or keep")
 		}
+		s.KeepEncodedSlash = w[1] == "keep"
 	case "body-limit":
 		if len(w) != 2 {
-			p.errf(ln, "body-limit takes one size, such as 10MB")
-			return
+			return errors.New("body-limit takes one size, such as 10MB")
 		}
 		n, err := parseSize(w[1])
 		if err != nil {
-			p.errf(ln, "%v", err)
-			return
+			return err
 		}
 		s.BodyLimit = n
 	case "set-response-header", "remove-response-header":
 		p.warnf(ln, "%s isn't built yet in this version, so it's ignored", w[0])
 	default:
-		p.errf(ln, "unknown site setting %q", w[0])
+		return fmt.Errorf("unknown site setting %q", w[0])
 	}
+	return nil
 }
 
-func (p *parser) route(ln int, toks []token) *Route {
+func (p *parser) route(ln int, toks []token) (*Route, error) {
 	r := &Route{Line: ln, Text: joinTokens(toks)}
-	arrow := -1
-	for i, t := range toks {
-		if t.s == "->" && !t.quoted {
-			arrow = i
-			break
-		}
-	}
+	arrow := slices.IndexFunc(toks, func(t token) bool { return t.s == "->" && !t.quoted })
 	if arrow < 0 {
-		p.errf(ln, "route needs -> before its action")
-		return nil
+		return nil, errors.New("route needs -> before its action")
 	}
 	left, right := toks[1:arrow], toks[arrow+1:]
 	if len(left) == 0 {
-		p.errf(ln, "route needs a path, such as /api/*")
-		return nil
+		return nil, errors.New("route needs a path, such as /api/*")
 	}
 	i := 0
 	if !strings.HasPrefix(left[0].s, "/") {
 		for _, m := range strings.Split(left[0].s, ",") {
 			if !validMethod(m) {
-				p.errf(ln, "%q isn't a method; write methods in capitals, such as GET,HEAD", m)
-				return nil
+				return nil, fmt.Errorf("%q isn't a method; write methods in capitals, such as GET,HEAD", m)
 			}
 			r.Methods = append(r.Methods, m)
 		}
 		i = 1
 	}
 	if i >= len(left) {
-		p.errf(ln, "route needs a path after the methods")
-		return nil
+		return nil, errors.New("route needs a path after the methods")
 	}
 	ps := left[i].s
 	i++
-	switch {
-	case ps == "/*":
-		r.Prefix = true
-	case strings.HasSuffix(ps, "/*"):
-		r.Prefix, r.Path = true, strings.TrimSuffix(ps, "/*")
-	default:
-		r.Path = ps
-	}
-	check := r.Path
-	if check == "" {
-		check = "/"
-	}
+	r.Path, r.Prefix = strings.CutSuffix(ps, "/*")
+	check := cmp.Or(r.Path, "/")
 	if strings.Contains(check, "*") || !isNormalPath(check) || (r.Prefix && strings.HasSuffix(r.Path, "/")) {
-		p.errf(ln, "path %q isn't in normal form: no * except a final /*, no //, no . or .. parts, and escapes only where needed", ps)
-		return nil
+		return nil, fmt.Errorf("path %q isn't in normal form: no * except a final /*, no //, no . or .. parts, and escapes only where needed", ps)
 	}
-	for i < len(left) {
+	for ; i < len(left); i += 2 {
 		if left[i].s != "header" || i+1 >= len(left) {
-			p.errf(ln, "unexpected %q: after the path a route takes only header NAME or header NAME=VALUE", left[i].s)
-			return nil
+			return nil, fmt.Errorf("unexpected %q: after the path a route takes only header NAME or header NAME=VALUE", left[i].s)
 		}
 		name, val, has := strings.Cut(left[i+1].s, "=")
 		if !validHeaderName(name) {
-			p.errf(ln, "%q isn't a header name", name)
-			return nil
+			return nil, fmt.Errorf("%q isn't a header name", name)
 		}
 		r.Headers = append(r.Headers, HeaderCond{Name: http.CanonicalHeaderKey(name), Value: val, HasValue: has})
-		i += 2
 	}
 	if len(right) == 0 {
-		p.errf(ln, "route needs an action after ->")
-		return nil
+		return nil, errors.New("route needs an action after ->")
 	}
 	a := &r.Act
 	switch right[0].s {
 	case "files":
 		if len(right) != 2 {
-			p.errf(ln, "files takes one folder")
-			return nil
+			return nil, errors.New("files takes one folder")
 		}
 		a.Kind, a.Dir = "files", p.path(right[1].s)
 	case "redirect":
 		if len(right) != 3 {
-			p.errf(ln, "redirect takes a code and a URL")
-			return nil
+			return nil, errors.New("redirect takes a code and a URL")
 		}
 		code, _ := strconv.Atoi(right[1].s)
-		if code != 301 && code != 302 && code != 307 && code != 308 {
-			p.errf(ln, "the redirect code must be 301, 302, 307 or 308")
-			return nil
+		if !slices.Contains([]int{301, 302, 307, 308}, code) {
+			return nil, errors.New("the redirect code must be 301, 302, 307 or 308")
 		}
 		u, err := url.Parse(right[2].s)
 		if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
-			p.errf(ln, "redirect needs a full http:// or https:// URL")
-			return nil
+			return nil, errors.New("redirect needs a full http:// or https:// URL")
 		}
 		a.Kind, a.Code, a.URL = "redirect", code, right[2].s
 	case "respond":
 		if len(right) < 2 || len(right) > 3 {
-			p.errf(ln, "respond takes a status and an optional text")
-			return nil
+			return nil, errors.New("respond takes a status and an optional text")
 		}
 		st, err := strconv.Atoi(right[1].s)
 		if err != nil || st < 200 || st > 599 {
-			p.errf(ln, "respond needs a status from 200 to 599")
-			return nil
+			return nil, errors.New("respond needs a status from 200 to 599")
 		}
 		a.Kind, a.Status = "respond", st
 		if len(right) == 3 {
@@ -622,8 +575,7 @@ func (p *parser) route(ln int, toks []token) *Route {
 		}
 	default:
 		if !validName(right[0].s) {
-			p.errf(ln, "%q isn't an action: use a pool name, files, redirect or respond", right[0].s)
-			return nil
+			return nil, fmt.Errorf("%q isn't an action: use a pool name, files, redirect or respond", right[0].s)
 		}
 		a.Kind, a.Pool = "pool", right[0].s
 		switch {
@@ -633,75 +585,63 @@ func (p *parser) route(ln int, toks []token) *Route {
 				p.warnf(ln, "strip does nothing on /*")
 			}
 		case len(right) != 1:
-			p.errf(ln, "after a pool name a route takes only strip")
-			return nil
+			return nil, errors.New("after a pool name a route takes only strip")
 		}
 	}
-	return r
+	return r, nil
 }
 
-func (p *parser) poolSetting(ps *PoolSpec, ln int, w []string) {
-	dur := func() (time.Duration, bool) {
+func (p *parser) poolSetting(ps *PoolSpec, ln int, w []string) error {
+	setDuration := func(dst *time.Duration) error {
 		if len(w) != 2 {
-			p.errf(ln, "%s takes one duration, such as 5s", w[0])
-			return 0, false
+			return fmt.Errorf("%s takes one duration, such as 5s", w[0])
 		}
 		d, err := time.ParseDuration(w[1])
 		if err != nil || d <= 0 {
-			p.errf(ln, "bad duration %q: use a number with ms, s or m", w[1])
-			return 0, false
+			return fmt.Errorf("bad duration %q: use a number with ms, s or m", w[1])
 		}
-		return d, true
+		*dst = d
+		return nil
 	}
 	switch w[0] {
 	case "backend":
 		if len(w) != 2 {
-			p.errf(ln, "backend takes one address, such as 10.0.0.11:8080")
-			return
+			return errors.New("backend takes one address, such as 10.0.0.11:8080")
 		}
-		a, https := w[1], false
-		switch {
-		case strings.HasPrefix(a, "unix:"):
-			p.errf(ln, "unix: backends aren't built yet in this version")
-			return
-		case strings.HasPrefix(a, "https://"):
-			a, https = a[len("https://"):], true
-		case strings.HasPrefix(a, "http://"):
-			a = a[len("http://"):]
+		if strings.HasPrefix(w[1], "unix:") {
+			return errors.New("unix: backends aren't built yet in this version")
+		}
+		a, https := strings.CutPrefix(w[1], "https://")
+		if !https {
+			a = strings.TrimPrefix(a, "http://")
 		}
 		host, port, err := net.SplitHostPort(a)
 		if err != nil || host == "" {
-			p.errf(ln, "a backend address is host:port, such as 10.0.0.11:8080")
-			return
+			return errors.New("a backend address is host:port, such as 10.0.0.11:8080")
 		}
 		if n, err := strconv.Atoi(port); err != nil || n < 1 || n > 65535 {
-			p.errf(ln, "bad backend port %q", port)
-			return
+			return fmt.Errorf("bad backend port %q", port)
 		}
 		for _, b := range ps.Backends {
 			if b.Addr == a && b.HTTPS == https {
-				p.errf(ln, "backend %s is already listed on line %d", a, b.Line)
-				return
+				return fmt.Errorf("backend %s is already listed on line %d", a, b.Line)
 			}
 		}
 		ps.Backends = append(ps.Backends, BackendSpec{Line: ln, Addr: a, HTTPS: https})
 	case "health":
 		if len(w) < 2 || !strings.HasPrefix(w[1], "/") {
-			p.errf(ln, "health takes a path, such as /healthz")
-			return
+			return errors.New("health takes a path, such as /healthz")
 		}
 		h := &HealthSpec{Line: ln, Path: w[1], Every: 5 * time.Second, Timeout: 2 * time.Second, Lo: 200, Hi: 399}
 		for i := 2; i < len(w); i += 2 {
 			if i+1 >= len(w) {
-				p.errf(ln, "%s needs a value", w[i])
-				return
+				return fmt.Errorf("%s needs a value", w[i])
 			}
 			switch w[i] {
 			case "every", "timeout":
 				d, err := time.ParseDuration(w[i+1])
 				if err != nil || d <= 0 {
-					p.errf(ln, "bad duration %q", w[i+1])
-					return
+					return fmt.Errorf("bad duration %q", w[i+1])
 				}
 				if w[i] == "every" {
 					h.Every = d
@@ -711,43 +651,34 @@ func (p *parser) poolSetting(ps *PoolSpec, ln int, w []string) {
 			case "expect":
 				lo, hi, ok := parseRange(w[i+1])
 				if !ok {
-					p.errf(ln, "expect takes a status range such as 200-399")
-					return
+					return errors.New("expect takes a status range such as 200-399")
 				}
 				h.Lo, h.Hi = lo, hi
 			default:
-				p.errf(ln, "unknown health option %q: use every, timeout or expect", w[i])
-				return
+				return fmt.Errorf("unknown health option %q: use every, timeout or expect", w[i])
 			}
 		}
 		ps.Health = h
 	case "host-header":
 		if len(w) != 2 {
-			p.errf(ln, "host-header takes one value")
-			return
+			return errors.New("host-header takes one value")
 		}
 		ps.HostHeader = w[1]
 	case "connect-timeout":
-		if d, ok := dur(); ok {
-			ps.ConnectTimeout = d
-		}
+		return setDuration(&ps.ConnectTimeout)
 	case "response-timeout":
-		if d, ok := dur(); ok {
-			ps.ResponseTimeout = d
-		}
+		return setDuration(&ps.ResponseTimeout)
+	case "drain":
+		return setDuration(&ps.Drain)
 	case "retries":
 		if len(w) != 2 || (w[1] != "0" && w[1] != "1" && w[1] != "2") {
-			p.errf(ln, "retries takes 0, 1 or 2")
-			return
+			return errors.New("retries takes 0, 1 or 2")
 		}
 		ps.Retries = int(w[1][0] - '0')
-	case "drain":
-		if d, ok := dur(); ok {
-			ps.Drain = d
-		}
 	default:
-		p.errf(ln, "unknown pool setting %q", w[0])
+		return fmt.Errorf("unknown pool setting %q", w[0])
 	}
+	return nil
 }
 
 // compile resolves pools, opens folders and certificates and builds the
@@ -762,12 +693,11 @@ func (p *parser) compile() {
 		for _, r := range s.Routes {
 			switch r.Act.Kind {
 			case "pool":
-				ps := c.Pools[r.Act.Pool]
-				if ps == nil {
+				if ps := c.Pools[r.Act.Pool]; ps != nil {
+					ps.used = true
+				} else {
 					p.errf(r.Line, "no pool named %s", r.Act.Pool)
-					continue
 				}
-				ps.used = true
 			case "files":
 				if p.opt.NoDisk {
 					continue
@@ -786,12 +716,7 @@ func (p *parser) compile() {
 				r.Act.Root = root
 			}
 		}
-		https := false
-		for _, a := range s.Addrs {
-			if a.Scheme == "https" {
-				https = true
-			}
-		}
+		https := slices.ContainsFunc(s.Addrs, func(a Addr) bool { return a.Scheme == "https" })
 		switch {
 		case https && (s.TLSAuto || s.CertFile == ""):
 			p.errf(s.Line, "automatic certificates aren't built yet in this version: add tls CERT KEY, or use http:// addresses")
@@ -869,24 +794,21 @@ func (c *Config) ensurePort(n int, isTLS bool, line int) *Port {
 // claim gives a host on this port to a site. It returns the site that
 // already holds the host, if another one does.
 func (p *Port) claim(host string, s *Site) *Site {
+	table, key := p.Exact, host
 	switch {
 	case host == "*":
 		if p.Any != nil && p.Any != s {
 			return p.Any
 		}
 		p.Any = s
+		return nil
 	case strings.HasPrefix(host, "*."):
-		k := host[2:]
-		if o := p.Wild[k]; o != nil && o != s {
-			return o
-		}
-		p.Wild[k] = s
-	default:
-		if o := p.Exact[host]; o != nil && o != s {
-			return o
-		}
-		p.Exact[host] = s
+		table, key = p.Wild, host[2:]
 	}
+	if o := table[key]; o != nil && o != s {
+		return o
+	}
+	table[key] = s
 	return nil
 }
 
@@ -908,29 +830,21 @@ func (p *Port) Find(host string) (*Site, string) {
 }
 
 func parseAddr(s string) (Addr, error) {
-	a := Addr{Text: s, Scheme: "https"}
-	rest := s
-	switch {
-	case strings.HasPrefix(rest, "http://"):
-		a.Scheme, rest = "http", rest[len("http://"):]
-	case strings.HasPrefix(rest, "https://"):
-		rest = rest[len("https://"):]
+	a := Addr{Text: s, Scheme: "https", Port: 443}
+	rest := strings.TrimPrefix(s, "https://")
+	if r, ok := strings.CutPrefix(s, "http://"); ok {
+		a.Scheme, a.Port, rest = "http", 80, r
 	}
-	host, port := rest, ""
+	host := rest
 	if i := strings.LastIndexByte(rest, ':'); i >= 0 {
-		host, port = rest[:i], rest[i+1:]
-	}
-	if port == "" {
-		a.Port = 443
-		if a.Scheme == "http" {
-			a.Port = 80
+		host = rest[:i]
+		if port := rest[i+1:]; port != "" {
+			n, err := strconv.Atoi(port)
+			if err != nil || n < 1 || n > 65535 {
+				return a, fmt.Errorf("bad port in address %q", s)
+			}
+			a.Port = n
 		}
-	} else {
-		n, err := strconv.Atoi(port)
-		if err != nil || n < 1 || n > 65535 {
-			return a, fmt.Errorf("bad port in address %q", s)
-		}
-		a.Port = n
 	}
 	host = strings.ToLower(host)
 	if host != "*" && !validHost(strings.TrimPrefix(host, "*.")) {
@@ -940,62 +854,31 @@ func parseAddr(s string) (Addr, error) {
 	return a, nil
 }
 
+// isAll reports whether s is not empty and every character of it passes ok.
+func isAll(s string, ok func(rune) bool) bool {
+	return s != "" && strings.IndexFunc(s, func(c rune) bool { return !ok(c) }) < 0
+}
+
+func isLower(c rune) bool { return 'a' <= c && c <= 'z' }
+func isUpper(c rune) bool { return 'A' <= c && c <= 'Z' }
+func isDigit(c rune) bool { return '0' <= c && c <= '9' }
+
 func validHost(h string) bool {
-	if h == "" || len(h) > 253 {
-		return false
-	}
-	for _, label := range strings.Split(h, ".") {
-		if label == "" || len(label) > 63 {
-			return false
-		}
-		for i := 0; i < len(label); i++ {
-			c := label[i]
-			if !(c >= 'a' && c <= 'z' || c >= '0' && c <= '9' || c == '-') {
-				return false
-			}
-		}
-	}
-	return true
+	return len(h) <= 253 && !slices.ContainsFunc(strings.Split(h, "."), func(label string) bool {
+		return len(label) > 63 || !isAll(label, func(c rune) bool { return isLower(c) || isDigit(c) || c == '-' })
+	})
 }
 
 var reservedNames = map[string]bool{"files": true, "redirect": true, "respond": true, "strip": true}
 
 func validName(s string) bool {
-	if s == "" || reservedNames[s] {
-		return false
-	}
-	for i := 0; i < len(s); i++ {
-		c := s[i]
-		if !(c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9' || c == '-' || c == '_') {
-			return false
-		}
-	}
-	return true
+	return !reservedNames[s] && isAll(s, func(c rune) bool { return isLower(c) || isUpper(c) || isDigit(c) || c == '-' || c == '_' })
 }
 
-func validMethod(s string) bool {
-	if s == "" || len(s) > 20 {
-		return false
-	}
-	for i := 0; i < len(s); i++ {
-		if s[i] < 'A' || s[i] > 'Z' {
-			return false
-		}
-	}
-	return true
-}
+func validMethod(s string) bool { return len(s) <= 20 && isAll(s, isUpper) }
 
 func validHeaderName(s string) bool {
-	if s == "" {
-		return false
-	}
-	for i := 0; i < len(s); i++ {
-		c := s[i]
-		if !(c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9' || c == '-') {
-			return false
-		}
-	}
-	return true
+	return isAll(s, func(c rune) bool { return isLower(c) || isUpper(c) || isDigit(c) || c == '-' })
 }
 
 func parseSize(s string) (int64, error) {
@@ -1056,10 +939,5 @@ func plural(n int, w string) string {
 }
 
 func sortedPorts(c *Config) []*Port {
-	var ps []*Port
-	for _, p := range c.Ports {
-		ps = append(ps, p)
-	}
-	sort.Slice(ps, func(i, j int) bool { return ps[i].Num < ps[j].Num })
-	return ps
+	return slices.SortedFunc(maps.Values(c.Ports), func(a, b *Port) int { return a.Num - b.Num })
 }
