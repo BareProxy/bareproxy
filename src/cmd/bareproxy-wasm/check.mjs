@@ -466,7 +466,7 @@ async function main() {
       }));
       const demoProblems = items.map((p) => (p.line ? `line ${p.line}: ` : '') + `${p.kind}: ${p.msg}`);
       const nb = native.check(BROKEN);
-      const nativeProblems = nb.stdout.trim().split('\n').filter((l) => !l.endsWith(': has errors, so it can\'t be used'));
+      const nativeProblems = nb.stdout.trim().split('\n').filter((l) => !l.endsWith('has errors, so it can\'t be used'));
       out('demo problems:\n' + indent(demoProblems.join('\n')));
       ok('broken config: the problem list equals native, line numbers included', JSON.stringify(demoProblems) === JSON.stringify(nativeProblems) && nb.code === 1,
         'demo:\n' + demoProblems.join('\n') + '\nnative:\n' + nativeProblems.join('\n'));

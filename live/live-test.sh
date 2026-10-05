@@ -44,6 +44,7 @@ cat > live.conf <<EOF
 # BareProxy live test: the bareproxy.com Hugo site plus a test API
 global
   admin run/admin.sock
+  state run/state
   trace-log run/requests.log
 
 site bareproxy.com:8443 http://bareproxy.com:8080
