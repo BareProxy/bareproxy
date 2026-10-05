@@ -1,0 +1,60 @@
+# live/acme-test.sh, run 2026-10-05 13:13 IDT on Linux, Go go1.27.1, Pebble downloaded by the script
+
+## Pebble
+34595d915bbc2fc827affb3f58593034824df57e95353b031c8d5185724485ce  pebble.tar.gz
+a817449d1f05ae58bcb7bf073b4cebe5d31512f859ba4b83951bd825d28d2114  pebble-challtestsrv.tar.gz
+Pebble version: v2.8.0 (d52948ce25e7c1576bcd18ff0e20a1c24ec7c44b)
+Pebble's directory: https://localhost:59013/dir (always-valid off: it validates for real)
+
+## BareProxy
+global
+  admin WORK/admin.sock
+  state WORK/state
+  trace-log WORK/trace.log
+  acme-ca https://localhost:59013/dir
+  acme-email ops@auto.test
+
+site auto.test:34611
+  route /* -> respond 200 "hello over ACME"
+
+$ WORK/bareproxy explain --config WORK/bareproxy.conf GET https://auto.test:34611/
+Running config WORK/bareproxy.conf, version 1
+Site auto.test (line 8): exact host match
+Certificate: automatic, from https://localhost:59013/dir, kept in WORK/state/certs
+  line 9    route /* -> respond 200 "hello over ACME"   match
+Path: /
+Action: BareProxy answers 200 itself with "hello over ACME"
+
+## The first HTTPS request: BareProxy gets the certificate during the handshake
+
+$ curl --cacert pebble-root.pem https://auto.test:34611/
+HTTP 200, 2, took 2.034065 s
+  body: hello over ACME
+  X509v3 Subject Alternative Name: critical
+      DNS:auto.test
+  issuer=CN = Pebble Intermediate CA 126f30
+  serial=54C6CE65891D4F69
+  notAfter=Jan  3 10:13:17 2027 GMT
+  pebble: Pebble 2026/10/05 13:13:17 Starting 3 validations.
+  pebble: Pebble 2026/10/05 13:13:17 authz qg9x5z1cm34LVKHcKv34qkBEQJ1V9e4Jv8Xc4AoV2NM set VALID by completed challenge 61Si9zJn7USSD2jW_NeZKyR2CB0rXP4QllEz2dp93xA
+  pebble: Pebble 2026/10/05 13:13:18 Issued certificate serial 54c6ce65891d4f69 for order XVZEbbSPLRNWXnHPR2keC0y7YWtjb_Pdil4hPFovFAc
+
+## Status, events and the cache
+
+$ bareproxy status (the certificates part)
+Certificates
+  auto.test    ends 2027-01-03, 89 days left
+
+
+$ bareproxy events (the certificate events)
+2026-10-05 10:13:19.998  certificate  certificate for auto.test obtained, ends 2027-01-03
+
+$ ls WORK/state/certs
+acme_account+key
+auto.test
+
+## Restart: the certificate comes from the cache, so Pebble issues nothing new
+HTTP 200
+same certificate after the restart (serial 54C6CE65891D4F69), no new issue: PASS
+
+acme-test: PASS

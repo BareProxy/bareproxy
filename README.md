@@ -2,7 +2,7 @@
 
 BareProxy is a small web server and reverse proxy that explains every routing decision. It terminates TLS, routes each request by host and path, and either serves it from a folder or proxies it to a pool of backends. For any request, `explain` says what would happen before it arrives, and `why` says what did happen after. `plan` says what a config change would do before it goes live.
 
-Most sites and applications use a small part of nginx. The question behind this project is how little machinery it takes to provide the part of nginx that most applications use. BareProxy is one Go binary, built with Go's standard library only. The core does TLS, routing, static files, backend health, safe config changes and request tracing. Add-on modules come later.
+Most sites and applications use a small part of nginx. The question behind this project is how little machinery it takes to provide the part of nginx that most applications use. BareProxy is one Go binary, built with Go's standard library and, for automatic certificates, the Go team's own `golang.org/x/crypto`. The core does TLS, routing, static files, backend health, safe config changes and request tracing. Add-on modules come later.
 
 This is version 0.1.0-alpha, released on 5 October 2026. It follows the 0.1.0-dev first cut of 2 October. It runs on Linux only for now (macOS and Windows come later) and is built with Go 1.27.1. It hasn't had an outside security review yet, so don't put it in front of anything that matters.
 
@@ -34,7 +34,11 @@ The folder also holds this README, LICENSE and NOTICE.
   - Precompressed `.br` and `.gz` copies are sent to clients that accept them. Compression doesn't happen at run time.
   - The site's 404 page is found through the site's own rules. It's used only for 404s BareProxy makes itself.
 - **Proxying.** Requests go to the backend with the fewest in flight, with ties going round robin. There are active health checks, and pools without checks count failed connections instead. One retry happens only when a connection can't be opened. The prefix can be stripped. BareProxy sets `X-Forwarded-For`, `-Host` and `-Proto` and passes the request ID on. WebSocket connections pass through.
-- **HTTPS** from certificate files, TLS 1.2 or newer, with HTTP/2.
+- **HTTPS** with automatic certificates or certificate files, TLS 1.2 or newer, with HTTP/2.
+  - An https site with `tls auto`, or with no `tls` line, gets its certificate from an ACME CA on first use: `acme-ca` names the CA's directory URL (Let's Encrypt by default) and `acme-email` the account's contact. BareProxy accepts the CA's terms of service for you. Certificates are kept in `<state>/certs` and renewed 30 days before they expire.
+  - The CA can check the name in two ways: TLS-ALPN-01 on the site's own port, or HTTP-01 through the port-80 redirect, which answers `/.well-known/acme-challenge/` itself (outcome `local`, one record each).
+  - Only exact host names get automatic certificates: a `*.example.com` or `*` site needs `tls CERT KEY`, and the config check names the line. BareProxy asks only for the https host names of the running config, and the list follows every apply.
+  - `explain` says where a site's certificate comes from, `status` lists automatic certificates from the cache with their end dates, and `events` notes each certificate obtained and the first failure for a name.
 - **Tracing.** Every request that Go's HTTP server hands to BareProxy gets a `BareProxy-Id` header (`id-header off` turns it off) and leaves exactly one JSON record. The record leaves out the query string unless `trace-query on` is set. `why` turns a record back into a story.
   - **In-memory record store.** The latest records are also kept in memory: 32 MB of record JSON by default, set with `trace-memory SIZE`, or `trace-memory off`. `why`, `tail` and `status` read it, so they work even with `trace-log off`. It starts empty after a restart.
   - **Log rotation.** `trace-log FILE SIZE COUNT` (for example `trace-log /var/log/bareproxy/requests.log 10MB 5`) moves the file to `FILE.1` before it would pass SIZE. Older files shift up to `FILE.COUNT`, and the oldest is dropped. `why` looks through the rotated files too.
@@ -54,7 +58,7 @@ The folder also holds this README, LICENSE and NOTICE.
 
 ## Build and test
 
-Only Go's standard library is used, so nothing is downloaded. The release binaries are built with Go 1.27.1.
+The one outside module is vendored (see Dependencies below), so nothing is downloaded. The release binaries are built with Go 1.27.1.
 
 ```
 cd src
@@ -70,6 +74,20 @@ The acceptance tests are in `src/internal/bp`, and their names start with `TestA
 `live/release.sh [DIR]` builds the release tarballs and `SHA256SUMS` into DIR (`dist/` by default): static binaries for linux/amd64 and linux/arm64, each with `-trimpath` and `-ldflags="-s -w"`. `sh src/cmd/bareproxy-wasm/build.sh DIR` builds the browser demo.
 
 **Go version.** Build with Go 1.27.1. Go 1.24.7's `os.Root` follows a symlink out of the folder when a path ends in a slash (CVE-2026-39822), and `TestOSRootTrailingSlash` shows that Go 1.27.1 refuses it: `Open("link/")` fails. BareProxy never opens a path ending in a slash anyway, because it asks for `index.html` instead, so its lookups stay inside on either version.
+
+### Dependencies
+
+BareProxy uses one module from outside Go's standard library: `golang.org/x/crypto` v0.57.0, for `acme/autocert`. It brings in `golang.org/x/net` v0.58.0 (for `idna`) and `golang.org/x/text` v0.42.0. All three come from the Go team and are vendored in `src/vendor/`, so a fresh clone builds and tests with no network.
+
+The Go module proxy (proxy.golang.org) wasn't reachable when they were added. `live/vendor-deps.sh` took them from GitHub's mirror of the Go repositories at those release tags, packed them as standard module zips and ran `go get` with `GONOSUMDB=golang.org/x`, so `go.sum` was computed from those copies. Once the proxy is reachable, check them against the official copies:
+
+```
+cd src
+export GOFLAGS=-mod=mod GOMODCACHE=$(mktemp -d)
+go mod download && go mod verify
+```
+
+`live/acme-test.sh` runs the whole ACME flow against Pebble, Let's Encrypt's test CA, with a real TLS-ALPN-01 check (`results/acme-test.log`). It uses Pebble v2.8.0: later releases answer the finalize request without the `Location` header that this version of `golang.org/x/crypto/acme` follows. `go test` runs the same flow when `PEBBLE` names the pebble binary (and `PEBBLE_CHALLTESTSRV` names pebble-challtestsrv for the real check).
 
 ## Run
 
@@ -198,7 +216,6 @@ HUGO=/path/to/hugo SITE=/path/to/bareproxy.com-main ./live/live-test.sh
 
 These settings are in the grammar, but they aren't built yet. The config check warns that BareProxy ignores them:
 
-- `acme-email` and `acme-ca`
 - `trust`
 - `client-header-timeout`, `client-body-timeout`, `client-idle-timeout` and `shutdown-timeout`
 - `set-response-header` and `remove-response-header`
@@ -207,8 +224,8 @@ These settings are in the grammar, but they aren't built yet. The config check w
 
 ## Known limits
 
-- **Automatic certificates aren't built.** TLS uses certificate files only. A site that serves HTTPS needs `tls CERT KEY`, and the config check says so when the line is missing.
-- **`OPTIONS *` leaves no record.** Go's HTTP server answers it with 200 before BareProxy's handler runs, so it has no `BareProxy-Id` and no trace record. Go's server also answers requests it can't parse (a bad request line or header, an oversized header, an unknown HTTP version) with 400, 431, 501 or 505, and those leave no record either. A test for `OPTIONS *` is skipped on purpose and will fail once the behavior changes.
+- **Automatic certificates are tested against Pebble only.** Let's Encrypt itself hasn't issued a certificate to BareProxy yet; that needs a public name and ports 80 or 443.
+- **Requests Go's server can't parse leave no record.** It answers them itself (a bad request line or header, an oversized header, an unknown HTTP version) with 400, 431, 501 or 505. `OPTIONS *` does reach BareProxy: it gets 200 with no body, a `BareProxy-Id` and one record (outcome `local`, rule `OPTIONS *`).
 - **WebSocket tunnels aren't inspected.** After an upgrade the connection is a plain tunnel, so routing rules don't see what travels inside it.
 - **macOS and Windows are untested.** Only Linux has been built and run.
 - **Modules aren't built.** The core is the whole product in this release.
