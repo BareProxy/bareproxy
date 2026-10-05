@@ -11,8 +11,8 @@
 # VERSION is the Version const in src/internal/bp/server.go. Each tarball holds
 # one folder with the same name as the tarball, and in it bareproxy, README.md,
 # LICENSE and NOTICE. The binaries are built with CGO_ENABLED=0, -trimpath and
-# -ldflags="-s -w". Needs Go and GNU tar on the PATH. Only Go's standard library
-# is used, so nothing is downloaded. If git can't read the repo (a folder owned
+# -ldflags="-s -w". Needs Go and GNU tar on the PATH. The one outside module is
+# vendored, so nothing is downloaded. If git can't read the repo (a folder owned
 # by another user, say), set GOFLAGS=-buildvcs=false.
 set -euo pipefail
 

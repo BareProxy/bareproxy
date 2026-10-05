@@ -6,7 +6,7 @@
 #
 #   usage: build.sh [DIST]        DIST defaults to dist/demo at the repository root
 #
-# Needs Go on the PATH. Only the standard library is used, so nothing is
+# Needs Go on the PATH. The one outside module is vendored, so nothing is
 # downloaded. The result is a folder of static files; serve it with any web
 # server that sends .wasm as application/wasm.
 set -eu
