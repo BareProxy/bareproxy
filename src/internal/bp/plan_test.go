@@ -153,7 +153,7 @@ pool api-v2
 	if len(p.Changes) != 1 {
 		t.Errorf("want 1 change, got:\n%s", p.Text())
 	}
-	wantText(t, p.Settings, "pool api-v2 added (line 9)")
+	wantText(t, p.Settings, "pool api-v2 added (line 9): backend 10.0.0.21:8080, backend 10.0.0.22:8080")
 	if !p.Covers(80, "example.com", "GET", "/api/v2/users", nil) || p.Covers(80, "example.com", "GET", "/api/v1", nil) ||
 		!p.Covers(80, "EXAMPLE.com.", "DELETE", "/api/v2", nil) || p.Covers(80, "example.com", "GET", "/api/v2x", nil) {
 		t.Errorf("Covers places requests wrongly")

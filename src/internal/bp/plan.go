@@ -335,7 +335,8 @@ func (g *hostGroup) analyze() []*lineAcc {
 				what = append(what, sp.headerPhrase(k, prod[k+2]))
 			}
 			in := func(pi int) bool { _, ok := slices.BinarySearch(prod[0], pi); return ok }
-			what = slices.DeleteFunc(append(what, strings.Join(describe(sp.nodes[""], in), "; ")), func(s string) bool { return s == "" })
+			what = append(what, strings.Join(describe(sp.nodes[""], in), "; "))
+			what = slices.DeleteFunc(what, func(s string) bool { return s == "" }) // headers in every state
 			g.lines = append(g.lines, &lineAcc{prod: prod, line: PlanLine{g.where(), strings.Join(what, ", "), e.old, e.new}})
 		}
 	}
@@ -782,8 +783,12 @@ func settings(old, new *Config) []string {
 	for _, name := range keysOf(ob, nb) {
 		o, n := ob[name], nb[name]
 		switch {
-		case o == nil:
-			out = append(out, fmt.Sprintf("%s added (line %d)", name, n[""].line))
+		case o == nil: // an added block comes with its settings
+			var lines []string
+			for _, k := range keysOf(n)[1:] { // [0] is "", the block's first line
+				lines = append(lines, n[k].text)
+			}
+			out = append(out, strings.TrimSuffix(fmt.Sprintf("%s added (line %d): %s", name, n[""].line, strings.Join(lines, ", ")), ": "))
 		case n == nil:
 			out = append(out, fmt.Sprintf("%s removed (was line %d)", name, o[""].line))
 		}
@@ -815,7 +820,7 @@ type cfgLine struct {
 // keyed by their whole text, other settings by name; rules are left out.
 func blocks(c *Config) map[string]map[string]cfgLine {
 	out := map[string]map[string]cfgLine{}
-	var cur map[string]cfgLine
+	cur := map[string]cfgLine{} // (lines before any block, which a valid config hasn't)
 	for i, raw := range c.Lines {
 		toks, err := splitLine(raw)
 		if err != nil || len(toks) == 0 {
