@@ -121,16 +121,6 @@ func (t *TraceLog) SetRotation(size int64, keep int) {
 	t.mu.Unlock()
 }
 
-// Write writes a record as one JSON line.
-func (t *TraceLog) Write(rec *Record) {
-	if t == nil {
-		return
-	}
-	if b, err := RecordJSON(rec); err == nil {
-		t.WriteLine(b)
-	}
-}
-
 // RecordJSON is a record as one line of JSON, with < > and & left as they
 // are, so a rule reads route /api/* -> api in the log, not \u003e.
 func RecordJSON(v any) ([]byte, error) {

@@ -268,7 +268,7 @@ func (s *Site) ErrorPage() (*Route, FileResult, bool) {
 	if s.Err404 == "" {
 		return nil, FileResult{}, false
 	}
-	rt, _ := s.MatchRoute(http.MethodGet, s.Err404, nil)
+	rt, _ := s.match(http.MethodGet, s.Err404, nil, false)
 	if rt == nil || rt.Act.Kind != "files" {
 		return rt, FileResult{}, false
 	}
