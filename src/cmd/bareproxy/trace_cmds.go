@@ -287,7 +287,9 @@ func printStatus(st *bp.Status) {
 	for _, s := range st.Sites {
 		fmt.Printf("  %s (line %d), %s: %s\n", s.Name, s.Line, count(s.Rules, "rule"), strings.Join(s.Addresses, " "))
 	}
-	fmt.Println("\nPools")
+	if len(st.Pools) > 0 {
+		fmt.Println("\nPools")
+	}
 	for _, p := range st.Pools {
 		fmt.Printf("  %s (line %d): %d of %d up. Checks: %s\n", p.Name, p.Line, p.Up, p.Size, p.Checks)
 		for _, b := range p.Backends {
@@ -312,6 +314,10 @@ func printStatus(st *bp.Status) {
 		fmt.Printf("  %s  %s  ends %s, %s\n", c.Site, c.Subject, c.NotAfter[:10], left)
 	}
 	r := st.Requests
+	if r.Ring.Limit == 0 {
+		fmt.Println("\nRequests are not counted, because trace-memory is off")
+		return
+	}
 	fmt.Printf("\nRequests (the %d most recent, held in memory", r.Ring.Records)
 	if r.Ring.Oldest != "" {
 		fmt.Printf(", back to %s", clock(r.Ring.Oldest))

@@ -160,3 +160,41 @@ func TestWhyAsksMemoryBeforeTheLogFile(t *testing.T) {
 		t.Errorf("an unknown request: exit %d, want 1", code)
 	}
 }
+
+func TestPrintStatus(t *testing.T) {
+	st := bp.Status{Version: "0.1.0-dev (first cut)", ConfigFile: "/etc/bareproxy/bareproxy.conf", ConfigVersion: 12,
+		Started: "2026-10-01T06:00:00Z", UptimeSeconds: 3725,
+		Listeners:    []bp.ListenerStatus{{Port: 80, Sites: []string{"example.com"}}, {Port: 443, TLS: true, Sites: []string{"example.com"}}},
+		Sites:        []bp.SiteStatus{{Name: "example.com", Line: 5, Rules: 1, Addresses: []string{"https://example.com"}}},
+		Certificates: []bp.CertStatus{{Site: "example.com", Subject: "CN=example.com", NotAfter: "2026-12-01T00:00:00Z", DaysLeft: 57}, {Site: "old.example", Subject: "CN=old.example", NotAfter: "2026-09-30T00:00:00Z", DaysLeft: -5}},
+		Pools: []bp.PoolStatus{{Name: "api", Line: 14, Checks: "GET /healthz every 5s, timeout 2s, pass on 200 to 399", Up: 1, Size: 2, Backends: []bp.BackendStatus{
+			{Addr: "10.0.0.11:8080", State: "up", Since: "2026-10-01T06:00:05Z", InFlight: 2},
+			{Addr: "10.0.0.13:8080", State: "down", Since: "2026-10-01T07:02:10Z", Failures: 3, Reason: "connect refused"}}}}}
+	st.Requests.Last1m = bp.Rate{Window: bp.Window{Requests: 1204, Status5xx: 3, ProxyErrors: 1}, Complete: true}
+	st.Requests.Last5m = bp.Rate{Window: bp.Window{Requests: 6100, Status5xx: 9, ProxyErrors: 4}}
+	st.Requests.Ring.Records, st.Requests.Ring.Limit, st.Requests.Ring.Oldest = 6100, 32<<20, "2026-10-01T07:03:00.000Z"
+	out, _ := captureStdout(t, func() int { printStatus(&st); return 0 })
+	for _, want := range []string{
+		"BareProxy 0.1.0-dev (first cut), up 1h 2m (since 2026-10-01 06:00:00 UTC)",
+		"Config /etc/bareproxy/bareproxy.conf, version 12",
+		"  :80 http  example.com", "  :443 https  example.com",
+		"  example.com (line 5), 1 rule: https://example.com",
+		"  api (line 14): 1 of 2 up. Checks: GET /healthz every 5s",
+		"    10.0.0.11:8080         up since 06:00:05 UTC, 2 in flight",
+		"    10.0.0.13:8080         down since 07:02:10 UTC, 3 failures in a row (connect refused)",
+		"  example.com  CN=example.com  ends 2026-12-01, 57 days left",
+		"  old.example  CN=old.example  ends 2026-09-30, expired 5 days ago",
+		"Requests (the 6100 most recent, held in memory, back to 07:03:00 UTC)",
+		"  last minute     1204 requests, 3 with status 5xx, 1 proxy error\n",
+		"  last 5 minutes  6100 requests or more (the ring has wrapped), 9 with status 5xx, 4 proxy errors",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("status text lacks %q:\n%s", want, out)
+		}
+	}
+	st.Requests.Ring.Limit = 0
+	out, _ = captureStdout(t, func() int { printStatus(&st); return 0 })
+	if !strings.Contains(out, "Requests are not counted, because trace-memory is off") || strings.Contains(out, "last minute") {
+		t.Errorf("with trace-memory off:\n%s", out)
+	}
+}
