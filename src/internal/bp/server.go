@@ -174,9 +174,9 @@ func Run(file string) error {
 		s.logf("no admin socket (%v), so explain reads the file instead", err)
 	}
 	sig := make(chan os.Signal, 1)
-	signal.Notify(sig, syscall.SIGHUP, syscall.SIGINT, syscall.SIGTERM)
+	signal.Notify(sig, append([]os.Signal{os.Interrupt, syscall.SIGTERM}, reloadSignals...)...)
 	for x := range sig {
-		if x == syscall.SIGHUP {
+		if isReloadSignal(x) {
 			s.Reload()
 			continue
 		}
