@@ -189,7 +189,7 @@ HUGO=/path/to/hugo SITE=/path/to/bareproxy.com-main ./live/live-test.sh
 
 ## Measured on 5 October 2026 (Go 1.27.1, linux/amd64)
 
-- **Tests.** 103 test functions, in 7,089 lines of test code. Two of them, a golden check and a timing check for `plan`, run only when `BP_PLAN_GOLDEN` is set. Blank lines and comments aren't counted.
+- **Tests.** 113 test functions, in 7,492 lines of test code. Three run only when asked: a golden check and a timing check for `plan` (`BP_PLAN_GOLDEN`) and the test against the Pebble CA (`PEBBLE`). Blank lines and comments aren't counted.
 - **Acceptance tests** (`results/accept-test.log`, 30 seconds on a shared 2-CPU machine):
   - 100,000 generated requests were each asked of `explain` first and then sent to a running server. `explain` agreed with the server on every one. The requests ran over 114 routes on 6 sites and 2 ports. The trace log held 100,000 records with 100,000 distinct IDs.
   - 67 broken configs. Every one is refused by the parser with an error (65 name a line, 2 are about the whole file), refused by a reload on a running server, and stops a start.
@@ -197,9 +197,9 @@ HUGO=/path/to/hugo SITE=/path/to/bareproxy.com-main ./live/live-test.sh
   - 91 request smuggling payloads: Content-Length and Transfer-Encoding tricks, odd chunked bodies, folded headers, absolute-form targets, bad Host headers, Upgrade requests and pipelined requests. 34 were refused before the backend, 11 were answered by a rule and 46 were forwarded as one request. There were 0 problems: no request for a path that a rule refuses reached the backend, the backend never got more requests than the payload held, and every response has one record.
 - **Plan exactness.** 1,000 generated config pairs with 300 random requests each (300,000 requests). Every request whose handling changes falls in a listed class with the right old and new effect, and no request whose handling stays the same does.
 - **Applies under load.** 20 applies while requests ran over HTTP/1.1 and HTTP/2, with 0 failed requests.
-- **Browser demo.** 113 checks pass in headless Chromium (`results/demo-check.log`). They compare the demo's check, explain and plan results with the native commands.
-- **Code size.** The core package and the command are 5,675 lines of Go (4,980 in the core, 695 in the command). File serving (`files.go`, 235 lines) has a budget of its own in the design, so 5,440 lines count against the 5,000-line budget: 440 over. Blank lines and comments aren't counted. The alpha shipped at 6,422 lines; a trim on 5 October took out 747 with no change in behavior (see the changelog).
-- **Binary size.** 8.4 MB for linux/amd64 and 7.7 MB for linux/arm64, static and stripped (8,351,904 and 7,733,408 bytes).
+- **Browser demo.** 114 checks pass in headless Chromium (`results/demo-check.log`). They compare the demo's check, explain and plan results with the native commands.
+- **Code size.** The core package and the command are 5,217 lines of Go (4,765 in the core, 452 in the command). File serving (`files.go`, 235 lines) has a budget of its own in the design, so 4,982 lines count against the 5,000-line budget. Blank lines and comments aren't counted. The alpha first shipped at 6,422 lines; two trims on 5 October took it down, and automatic certificates added about 150.
+- **Binary size.** 8.9 MB for linux/amd64 and 8.2 MB for linux/arm64, static and stripped (8,904,864 and 8,192,160 bytes). Automatic certificates added about 0.5 MB; the first build of the alpha was 8.4 MB.
 - **Against nginx.** Measured on 5 October 2026 on a shared 2-CPU cloud machine (Intel Xeon at 2.1 GHz under KVM): each server on one core and the wrk load generator on the other, plain HTTP with keep-alive and 50 connections, 10-second runs, 3 per case, best run shown. All 51 attempts ran with the machine otherwise quiet. Logging was off for both servers; BareProxy kept its default 32 MB in-memory record store, which is most of its memory under load. The full tables, with the setup and caveats, are in `results/bench-summary.md`.
 
   | | BareProxy | nginx 1.24.0 |
@@ -211,7 +211,8 @@ HUGO=/path/to/hugo SITE=/path/to/bareproxy.com-main ./live/live-test.sh
   | Proxied API, p99 latency | 12.5 ms | 3.1 ms |
   | Memory when idle | 7.6 MiB | 11.3 MiB (6.0 MiB PSS) |
   | Memory under load, peak | 111 MiB, as the record store fills | 12.3 MiB |
-- **Live test.** The live test of 2 October, on the 0.1.0-dev build, made 24 requests and got 24 records: 23 over HTTP/2 with TLS 1.3, and 1 over HTTP/1.1 (`results/live-test.log`).
+- **Live test.** Re-run on 5 October on this build: 24 requests and 24 records, 23 over HTTP/2 with TLS 1.3 and 1 over HTTP/1.1 (`results/live-test.log`).
+- **Gate 1 review.** An independent review ran `plan`, apply and rollback on a real config (the bareproxy.com site from two release folders, an API pool with health checks, a redirect, a second site, an HTTPS site). Verdict: pass with conditions, no blockers. Removing a backend under load: 45,518 requests in 8 s, 0 failures. The four conditions are fixed in this build: `status` shows a config file that doesn't hold the running config, apply and rollback say when they rewrite the file, a symlinked config stays a symlink, and an apply with no changes still reaches the server.
 
 ## Not in this release
 
@@ -230,7 +231,6 @@ These settings are in the grammar, but they aren't built yet. The config check w
 - **WebSocket tunnels aren't inspected.** After an upgrade the connection is a plain tunnel, so routing rules don't see what travels inside it.
 - **macOS and Windows are untested.** Only Linux has been built and run.
 - **Modules aren't built.** The core is the whole product in this release.
-- **The core is over its line budget.** It is 5,440 lines (core and command, without file serving) against 5,000.
 
 ## License
 

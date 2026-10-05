@@ -1,7 +1,7 @@
 BareProxy browser demo check
-Run: Mon Oct 05 2026 12:35:35 GMT+0300 (Israel Daylight Time)
+Run: Mon Oct 05 2026 13:56:00 GMT+0300 (Israel Daylight Time)
 Demo folder: /home/claude/out/demo-dist
-bareproxy.wasm: 14877588 bytes raw, 3771708 bytes gzipped (gzip -9)
+bareproxy.wasm: 15800218 bytes raw, 3958359 bytes gzipped (gzip -9)
 
 == What differs between the demo and the native program, and why
   1. The first line names bareproxy.conf, the demo's config name. The native program prints the file's path.
@@ -16,11 +16,11 @@ bareproxy.wasm: 14877588 bytes raw, 3771708 bytes gzipped (gzip -9)
      the rule table lines up. The native build is from the same source tree as the wasm build.
 
 == Setup
-fixture folder: /tmp/bpdc-KN0Lti
+fixture folder: /tmp/bpdc-X6Hwyk
 PASS  native bareproxy builds
 PASS  native planref builds
 native: bareproxy 0.1.0-alpha, built with go1.27.1
-serving /home/claude/out/demo-dist at http://127.0.0.1:39631
+serving /home/claude/out/demo-dist at http://127.0.0.1:43803
 browser: Chromium 141.0.7390.37 (headless, Playwright)
 
 == Loading
@@ -45,7 +45,6 @@ demo problems:
         line 3: error: no pool named nopool
         line 4: error: respond takes a status and an optional text
         line 5: error: unknown site setting "bogus"
-        line 7: error: automatic certificates aren't built yet in this version: add tls CERT KEY, or use http:// addresses
         line 7: error: example.com on port 443 already belongs to the site on line 1
         line 10: error: pool api has no backends
         line 10: warning: pool api isn't used by any route
@@ -58,7 +57,8 @@ PASS  clicking "line N" selects that line in the editor
 PASS  Reset example restores the prefilled config and a clean check
 PASS  no disk: the demo reports ok for a missing folder and certificate
 PASS  no disk: the native program reports both (the expected difference)
-PASS  automatic certificates: the demo gives the same error the server gives
+PASS  automatic certificates: the demo accepts an https site with no tls line, as the server does
+PASS  a wildcard https site without certificate files: the demo gives the same error the server gives
 
 == Check: the page when the core throws or returns something unexpected
 PASS  core throws: the page shows an error and not "ok"
@@ -72,6 +72,7 @@ PASS  the presets are the ones listed in the task
 $ GET https://example.com/about/
         Config bareproxy.conf, read from the file (no running server, so backend states are unknown)
         Site example.com (line 2): exact host match
+        Certificate: from the file /etc/bareproxy/example.com.crt (line 3)
           line 5    route /healthz -> respond 200 "ok"          no: path is not /healthz
           line 6    route /api/* -> api strip                   no: path is not /api or below
           line 7    route /* -> files /var/www/example/public   match
@@ -89,6 +90,7 @@ PASS  GET https://example.com/about/: the preset chip is marked as selected
 $ GET https://example.com/api/orders
         Config bareproxy.conf, read from the file (no running server, so backend states are unknown)
         Site example.com (line 2): exact host match
+        Certificate: from the file /etc/bareproxy/example.com.crt (line 3)
           line 5    route /healthz -> respond 200 "ok"   no: path is not /healthz
           line 6    route /api/* -> api strip            match
         Path: /api/orders
@@ -106,6 +108,7 @@ PASS  GET https://example.com/api/orders: the preset chip is marked as selected
 $ GET https://example.com/old-page/
         Config bareproxy.conf, read from the file (no running server, so backend states are unknown)
         Site example.com (line 2): exact host match
+        Certificate: from the file /etc/bareproxy/example.com.crt (line 3)
           line 5    route /healthz -> respond 200 "ok"          no: path is not /healthz
           line 6    route /api/* -> api strip                   no: path is not /api or below
           line 7    route /* -> files /var/www/example/public   match
@@ -135,6 +138,7 @@ PASS  GET http://example.com/: the preset chip is marked as selected
 $ GET https://www.example.com/x
         Config bareproxy.conf, read from the file (no running server, so backend states are unknown)
         Site www.example.com (line 9): exact host match
+        Certificate: from the file /etc/bareproxy/example.com.crt (line 10)
           line 11   route /* -> redirect 301 https://example.com   match
         Path: /x
         Action: redirect 301 to https://example.com/x
@@ -253,11 +257,11 @@ PASS  GET http://narrow.test/other: output has "Action: 404 (no_route)"
         Routing
           example.com (port 443), any method, /api/v2 and below
               pool api, strip /api  ->  pool api-v2, strip /api/v2
-          example.com (port 443), any method, every other path (not /api and below, /healthz)
+          example.com (port 443), any method, every path except /healthz and /api and below
               files /var/www/example/public  ->  files /var/www/example/releases/2026-10-05
         Other changes
           pool api: backend 10.0.0.14:8080 added (line 18)
-          pool api-v2 added (line 21), 2 backends
+          pool api-v2 added (line 21): backend 10.0.1.11:8080, backend 10.0.1.12:8080, health /healthz
 PASS  the page shows exactly what the core returned
 PASS  plan text is identical to MakePlan run natively on the same pair (same parse options)
 PASS  plan text is identical to MakePlan on configs read from real folders and certificates (plan ID masked: it hashes the text, which has other paths)
@@ -271,9 +275,9 @@ PASS  plan of a config against itself says no changes
 PASS  plan with a broken new config lists its problems
 
 == Speed (measured in this browser)
-  check    median 0.10 ms, slowest 16.10 ms
-  explain  median 0.20 ms, slowest 4.10 ms
-  plan     median 0.60 ms, slowest 1.30 ms
+  check    median 0.10 ms, slowest 12.30 ms
+  explain  median 0.20 ms, slowest 3.00 ms
+  plan     median 0.60 ms, slowest 1.00 ms
 PASS  every call is under 100 ms in the median
 
 == Layout and screenshots
@@ -290,9 +294,9 @@ screenshot: /home/claude/out/demo-shots/demo-320.png
 PASS  the demo loads inside an iframe whose src is /live-demo/ (the way the site embeds it)
 PASS  760 px iframe: no horizontal scroll inside the frame
 screenshot: /home/claude/out/demo-shots/demo-iframe-760-h1100.png (the frame as the site embeds it: 760 x 1100 px, page scrolls inside)
-  the demo is 2463 px tall at 760 px wide, so a 1100 px frame scrolls inside
-  at 760 px wide the three panels end 779, 1433, 2398 px from the top, so a frame about 1449 px tall shows the config and the whole explain panel without scrolling inside
-screenshot: /home/claude/out/demo-shots/demo-iframe-760.png (frame content 2463 px tall)
+  the demo is 2484 px tall at 760 px wide, so a 1100 px frame scrolls inside
+  at 760 px wide the three panels end 779, 1454, 2419 px from the top, so a frame about 1470 px tall shows the config and the whole explain panel without scrolling inside
+screenshot: /home/claude/out/demo-shots/demo-iframe-760.png (frame content 2484 px tall)
 
 == Served under /live-demo/ (the path the site uses)
 PASS  https://.../live-demo/ opens the page and the core starts (relative links work from that folder)
@@ -310,4 +314,4 @@ PASS  no request failed except the ones this check forced
 PASS  no console errors or warnings (apart from the forced wrong-content-type case)
 
 == Summary
-113 passed, 0 failed, in 16 s
+114 passed, 0 failed, in 15 s

@@ -2,6 +2,16 @@ BareProxy is a small web server and reverse proxy that explains every routing de
 
 0.1.0-alpha is the second cut. It runs on Linux only for now (macOS and Windows come later) and is built with Go 1.27.1, standard library only. It hasn't had an outside security review yet, so don't put it in front of anything that matters.
 
+## Rebuilt on 5 October 2026, afternoon
+
+The binaries in this folder were rebuilt from the same version line with these changes:
+
+- Automatic certificates: an https site without certificate files gets its certificate from Let's Encrypt or any ACME CA (`acme-ca`, `acme-email`), with renewal 30 days before expiry. Tested against Let's Encrypt's Pebble test CA.
+- `OPTIONS *` is answered by BareProxy and leaves a record.
+- From the gate 1 review: `status` says when the config file doesn't hold the running config, apply and rollback say when they rewrote the file, a symlinked config stays a symlink, and an apply with no changes still goes to the server (it reloads certificate files).
+- `plan` reads more plainly ("every path except ...", settings as config lines) and the command's errors use one wording each. The core and the command are 5,217 lines of Go, under the 5,000-line budget once file serving (235 lines, its own budget) is set apart.
+- Built with Go 1.27.1; golang.org/x/crypto, x/net and x/text are vendored.
+
 ## What's new since 0.1.0-dev
 
 - `plan` says what a config change would do, in classes of requests, before it goes live.
@@ -35,7 +45,7 @@ The check should print `bareproxy-0.1.0-alpha-linux-amd64.tar.gz: OK`. The folde
 
 - 96 test functions. Acceptance tests: `explain` agreed with the live server on 100,000 generated requests, 67 broken configs were all refused, 30,000 generated paths read nothing outside the folder, and 91 request smuggling payloads got 0 problems.
 - Plan exactness holds on 1,000 generated config pairs (300,000 requests). 20 applies under load had 0 failed requests.
-- The core and the command are 6,422 lines of Go, against a 5,000-line budget. Binary size: 8.4 MB for linux/amd64 and 7.7 MB for linux/arm64, static and stripped (8,351,904 and 7,733,408 bytes).
+- The core and the command were 6,422 lines of Go at the first build of this version, against a 5,000-line budget (5,217 after the rebuild above). Binary size of the first build: 8.4 MB for linux/amd64 and 7.7 MB for linux/arm64, static and stripped (8,351,904 and 7,733,408 bytes).
 - Against nginx 1.24.0 on the same routes: Measured on 5 October 2026 on a shared 2-CPU cloud machine (Intel Xeon at 2.1 GHz under KVM): each server on one core and the wrk load generator on the other, plain HTTP with keep-alive and 50 connections, 10-second runs, 3 per case, best run shown. All 51 attempts ran with the machine otherwise quiet. Logging was off for both servers; BareProxy kept its default 32 MB in-memory record store, which is most of its memory under load. The full tables are in [results/bench-summary.md](https://github.com/BareProxy/bareproxy/blob/main/results/bench-summary.md).
 
   | | BareProxy | nginx 1.24.0 |
@@ -50,12 +60,11 @@ The check should print `bareproxy-0.1.0-alpha-linux-amd64.tar.gz: OK`. The folde
 
 ## Known limits
 
-- Automatic certificates aren't built. TLS uses certificate files only.
-- `OPTIONS *` is answered by Go's HTTP server and leaves no record. Requests that Go's server can't parse get its own error and no record either.
+- Automatic certificates are tested against Pebble only, not yet against Let's Encrypt itself.
+- Requests that Go's server can't parse get its own error and no record.
 - After a WebSocket upgrade the connection is a plain tunnel, so routing rules don't see what travels inside it.
 - macOS and Windows are untested.
 - Modules aren't built.
-- The core is over its line budget.
 
 See the [README](https://github.com/BareProxy/bareproxy#readme) for the full list and the [CHANGELOG](https://github.com/BareProxy/bareproxy/blob/main/CHANGELOG.md) for details.
 

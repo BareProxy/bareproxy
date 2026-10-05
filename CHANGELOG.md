@@ -1,12 +1,15 @@
 # Changelog
 
-## Unreleased
+## 0.1.0-alpha, rebuilt (5 October 2026, afternoon)
+
+The binaries in `releases/v0.1.0-alpha` were rebuilt with these changes. The version name stays 0.1.0-alpha.
 
 - Automatic certificates from Let's Encrypt or any ACME CA (`tls auto`, or an https site with no `tls` line), with `acme-email` and `acme-ca`, kept in `<state>/certs` and renewed 30 days before they expire. TLS-ALPN-01 and HTTP-01 (through the port-80 redirect). Wildcard and catch-all https sites still need certificate files. `explain`, `status` and `events` show automatic certificates. Tested against Pebble with a real TLS-ALPN-01 check (`results/acme-test.log`).
-- The first module from outside the standard library: `golang.org/x/crypto` v0.57.0 (with `golang.org/x/net` v0.58.0 and `golang.org/x/text` v0.42.0), vendored. See Dependencies in the README.
+- The first module from outside the standard library: `golang.org/x/crypto` v0.57.0 (with `golang.org/x/net` v0.58.0 and `golang.org/x/text` v0.42.0), vendored. See Dependencies in the README. go.mod now says Go 1.27.
 - `OPTIONS *` is answered by BareProxy: 200 with no body, a `BareProxy-Id` and one record. Other methods with a `*` target still get 400.
-- Trimmed the core and the command from 6,422 to 5,675 lines of Go, with no change in behavior. `plan`, the command line, the admin endpoints, config checks, `explain` and the request path give byte-identical output to 0.1.0-alpha, checked against captures made from the untouched code. All tests pass, also under the race detector.
-- The binaries in `releases/v0.1.0-alpha` were built from commit 0da5d2d, before the trim.
+- From the gate 1 review on a real config: `status` shows when the config file doesn't hold the running config; apply and rollback say when they rewrote the file; a symlinked config stays a symlink and its target is rewritten; an apply with no changes still goes to the server, so certificate files are reloaded; a refused reload logs its reason on one line.
+- Trimmed the core and the command from 6,422 to 5,217 lines of Go. The first trim changed no output. The second changed wording: `plan` says "every path except ...", lists an added block's settings, shows settings as config lines and redirects as "redirect 301 to URL, keeping path and query"; the command uses one wording for each kind of error (no server, admin error, bad usage), parses options strictly, and `tail` shows the rule as written.
+- The live test was re-run on this build (`results/live-test.log`).
 
 ## 0.1.0-alpha (5 October 2026)
 
