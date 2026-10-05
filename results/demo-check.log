@@ -1,5 +1,5 @@
 BareProxy browser demo check
-Run: Mon Oct 05 2026 09:54:15 GMT+0300 (Israel Daylight Time)
+Run: Mon Oct 05 2026 09:55:37 GMT+0300 (Israel Daylight Time)
 Demo folder: /home/claude/out/demo-dist
 bareproxy.wasm: 11502780 bytes raw, 3027740 bytes gzipped (gzip -9)
 
@@ -16,11 +16,11 @@ bareproxy.wasm: 11502780 bytes raw, 3027740 bytes gzipped (gzip -9)
      the rule table lines up. The native build is from the same source tree as the wasm build.
 
 == Setup
-fixture folder: /tmp/bpdc-u9HSVp
+fixture folder: /tmp/bpdc-ZxSIm3
 PASS  native bareproxy builds
 PASS  native planref builds
 native: bareproxy 0.1.0-dev (first cut), built with go1.27.1
-serving /home/claude/out/demo-dist at http://127.0.0.1:35747
+serving /home/claude/out/demo-dist at http://127.0.0.1:35169
 browser: Chromium 141.0.7390.37 (headless, Playwright)
 
 == Loading
@@ -30,7 +30,7 @@ PASS  page becomes ready after the delayed load
 PASS  page still starts when the host sends .wasm with the wrong content type
 PASS  a missing wasm file shows an error, not a blank page
 PASS  and the output panels say the core is not running
-status line: "Ready. BareProxy 0.1.0-dev (first cut), loaded in 0.3 s." (page load to ready, wall clock 0.4 s, local server)
+status line: "Ready. BareProxy 0.1.0-dev (first cut), loaded in 0.2 s." (page load to ready, wall clock 0.3 s, local server)
 core version string: 0.1.0-dev (first cut)
 PASS  the core version equals the native one
 
@@ -58,6 +58,11 @@ PASS  Reset example restores the prefilled config and a clean check
 PASS  no disk: the demo reports ok for a missing folder and certificate
 PASS  no disk: the native program reports both (the expected difference)
 PASS  automatic certificates: the demo gives the same error the server gives
+
+== Check: the page when the core throws or returns something unexpected
+PASS  core throws: the page shows an error and not "ok"
+PASS  core returns text (as the panic guard does): the page shows an error and not "ok"
+PASS  core returns nothing: the page shows an error and not "ok"
 
 == Explain: the presets
 PASS  there are five presets
@@ -265,9 +270,9 @@ PASS  plan of a config against itself says no changes
 PASS  plan with a broken new config lists its problems
 
 == Speed (measured in this browser)
-  check    median 0.10 ms, slowest 21.90 ms
-  explain  median 0.20 ms, slowest 9.70 ms
-  plan     median 0.50 ms, slowest 4.80 ms
+  check    median 0.10 ms, slowest 14.10 ms
+  explain  median 0.20 ms, slowest 4.70 ms
+  plan     median 0.50 ms, slowest 5.70 ms
 PASS  every call is under 100 ms in the median
 
 == Layout and screenshots
@@ -295,8 +300,8 @@ PASS  and explain answers there
 PASS  every file under /live-demo/ was found
 
 == Network: nothing is sent anywhere
-  requests the local server saw: 41, methods: GET
-  paths: /index.html x6, /demo.css x6, /wasm_exec.js x6, /demo.js x6, /bareproxy.wasm x6, /_frame.html x1, /live-demo/ x2, /live-demo/demo.css x2, /live-demo/wasm_exec.js x2, /live-demo/demo.js x2, /live-demo/bareproxy.wasm x2
+  requests the local server saw: 46, methods: GET
+  paths: /index.html x7, /demo.css x7, /wasm_exec.js x7, /demo.js x7, /bareproxy.wasm x7, /_frame.html x1, /live-demo/ x2, /live-demo/demo.css x2, /live-demo/wasm_exec.js x2, /live-demo/demo.js x2, /live-demo/bareproxy.wasm x2
 PASS  the page only makes GET requests
 PASS  every request goes to the local server (none to any other host)
 PASS  the only files requested are the five that were built (plus the check's own frame page)
@@ -304,4 +309,4 @@ PASS  no request failed except the ones this check forced
 PASS  no console errors or warnings (apart from the forced wrong-content-type case)
 
 == Summary
-109 passed, 0 failed, in 15 s
+112 passed, 0 failed, in 16 s

@@ -133,9 +133,13 @@
     }
   }
 
+  // A result that isn't the object the core promises (an internal error comes back
+  // as text) is shown as an error, never as a clean check.
   function check(text) {
-    return safely('Check', () => window.bareproxyCheck(text), (msg) => (
-      { ok: false, problems: [{ line: 0, msg, warn: false }], summary: 'has errors, so it can\'t be used' }));
+    const bad = (msg) => ({ ok: false, problems: [{ line: 0, msg, warn: false }], summary: 'has errors, so it can\'t be used' });
+    const res = safely('Check', () => window.bareproxyCheck(text), bad);
+    if (res && typeof res === 'object' && Array.isArray(res.problems) && typeof res.summary === 'string') return res;
+    return bad(typeof res === 'string' ? res.trim() : 'Check returned something unexpected.');
   }
 
   function markMap(problems) {

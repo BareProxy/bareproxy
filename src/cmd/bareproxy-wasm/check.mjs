@@ -479,6 +479,24 @@ async function main() {
       ok('automatic certificates: the demo gives the same error the server gives', !aRes.ok && /automatic certificates aren't built yet/.test(aRes.problems[0].msg) && native.check(autoConf).stdout.includes(aRes.problems[0].msg));
     }
 
+    // ---- when the core misbehaves ------------------------------------------------------
+    head('Check: the page when the core throws or returns something unexpected');
+    {
+      const c5 = await browser.newContext(); hookRequests(c5);
+      const p5 = await c5.newPage(); hookPage(p5, 'misbehave');
+      await p5.goto(base + '/index.html');
+      await p5.waitForSelector('#status[data-state="ready"]', { timeout: 120000 });
+      for (const [what, body] of [['throws', "() => { throw new Error('boom'); }"], ['returns text (as the panic guard does)', "() => 'bareproxy: internal error: boom\\n'"], ['returns nothing', '() => undefined']]) {
+        await p5.evaluate((src) => { window.bareproxyCheck = eval(src); }, body);
+        await p5.click('#check-btn');
+        const chipTxt = (await p5.textContent('#check-chip')).trim();
+        const sum = (await p5.textContent('#check-summary')).trim();
+        const shownProblems = await p5.$$eval('#check-list li', (ls) => ls.map((l) => l.textContent));
+        ok(`core ${what}: the page shows an error and not "ok"`, /error/.test(chipTxt) && /has errors/.test(sum) && shownProblems.length === 1, `chip "${chipTxt}", summary "${sum}", problems ${JSON.stringify(shownProblems)}`);
+      }
+      await c5.close();
+    }
+
     // ---- explain: the presets -----------------------------------------------------
     head('Explain: the presets');
     const presets = await page.$$eval('#presets .chip', (cs) => cs.map((c) => ({ method: c.dataset.method, url: c.dataset.url, label: c.textContent })));
