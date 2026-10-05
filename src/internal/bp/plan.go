@@ -340,10 +340,7 @@ func (g *hostGroup) effect(old bool, rules *Site, method, path string, h http.He
 	}
 	prefix := ""
 	if other != nil && other.TLS != p.TLS {
-		prefix = "http: "
-		if p.TLS {
-			prefix = "https: "
-		}
+		prefix = schemeName[p.TLS] + ": "
 	}
 	if s == nil {
 		return prefix + "421, no site"
@@ -517,18 +514,14 @@ func rulesFor(s *Site, path string) []*Route {
 // factor splits a set of distinct tuples into a few cartesian products.
 // Each result holds one sorted set of values per dimension.
 func factor(ts [][]int) [][][]int {
-	nd := len(ts[0])
-	proj := make([][]int, nd)
+	proj := make([][]int, len(ts[0]))
 	total := 1
-	for d := 0; d < nd; d++ {
-		seen := map[int]bool{}
+	for d := range proj {
 		for _, t := range ts {
-			if !seen[t[d]] {
-				seen[t[d]] = true
-				proj[d] = append(proj[d], t[d])
-			}
+			proj[d] = append(proj[d], t[d])
 		}
 		slices.Sort(proj[d])
+		proj[d] = slices.Compact(proj[d])
 		if total <= len(ts) {
 			total *= len(proj[d])
 		}
@@ -1023,11 +1016,9 @@ func planWarnings(c *Config) []string {
 				ls = append(ls, strconv.Itoa(l))
 			}
 			msg := fmt.Sprintf("line %d: %s never matches", r.Line, r.Text)
-			switch len(ls) {
-			case 0:
-			case 1:
+			if len(ls) == 1 {
 				msg += ": line " + ls[0] + " takes every request it would get"
-			default:
+			} else if len(ls) > 1 {
 				msg += ": lines " + joinAnd(ls) + " take every request it would get"
 			}
 			ws = append(ws, warn{r.Line, msg})
@@ -1078,18 +1069,20 @@ func pathSite(s *Site, path string) *Site {
 	return &Site{Line: s.Line, Name: s.Name, Routes: rulesFor(s, path)}
 }
 
+// schemeName names a port's scheme by whether it serves TLS.
+var schemeName = map[bool]string{false: "http", true: "https"}
+
 // settings lists the changes outside routing, one line each.
 func (pl *planner) settings() []string {
 	var out []string
-	scheme := map[bool]string{false: "http", true: "https"}
 	for _, pp := range pl.ports {
 		switch {
 		case pp.oldP == nil:
-			out = append(out, fmt.Sprintf("port %d (%s) added (line %d)", pp.num, scheme[pp.newP.TLS], pp.newP.Line))
+			out = append(out, fmt.Sprintf("port %d (%s) added (line %d)", pp.num, schemeName[pp.newP.TLS], pp.newP.Line))
 		case pp.newP == nil:
-			out = append(out, fmt.Sprintf("port %d (%s) removed (was line %d)", pp.num, scheme[pp.oldP.TLS], pp.oldP.Line))
+			out = append(out, fmt.Sprintf("port %d (%s) removed (was line %d)", pp.num, schemeName[pp.oldP.TLS], pp.oldP.Line))
 		case pp.oldP.TLS != pp.newP.TLS:
-			out = append(out, fmt.Sprintf("port %d switched from %s to %s (line %d)", pp.num, scheme[pp.oldP.TLS], scheme[pp.newP.TLS], pp.newP.Line))
+			out = append(out, fmt.Sprintf("port %d switched from %s to %s (line %d)", pp.num, schemeName[pp.oldP.TLS], schemeName[pp.newP.TLS], pp.newP.Line))
 		}
 	}
 	out = append(out, globalChanges(pl.old, pl.new)...)
