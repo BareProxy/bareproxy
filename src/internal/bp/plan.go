@@ -263,34 +263,19 @@ func (pp *portPlan) describeHost(h string) string {
 	return "*." + hostDomain(h)
 }
 
-func findSite(p *Port, host string) *Site {
-	if p == nil {
-		return nil
-	}
-	s, _ := p.Find(host)
-	return s
-}
-
 func newPlanner(old, new *Config) *planner {
 	pl := &planner{old: old, new: new, byNum: map[int]*portPlan{}}
 	for _, n := range keysOf(old.Ports, new.Ports) {
 		pp := &portPlan{num: n, oldP: old.Ports[n], newP: new.Ports[n],
 			exact: map[string]bool{}, wild: map[string]string{}, byRep: map[string]*hostGroup{}}
-		for _, p := range []*Port{pp.oldP, pp.newP} {
-			if p == nil {
-				continue
-			}
-			for h := range p.Exact {
-				pp.exact[h] = true
-			}
-			for d := range p.Wild {
-				pp.wild[d] = ""
-			}
+		op, np := cmp.Or(pp.oldP, &Port{}), cmp.Or(pp.newP, &Port{}) // a missing port has no sites
+		reps := keysOf(op.Exact, np.Exact)
+		for _, h := range reps {
+			pp.exact[h] = true
 		}
 		// Representatives are fresh names: bp-any.DOMAIN, or bp-any2.DOMAIN
 		// and so on when a config names that host.
-		reps := keysOf(pp.exact)
-		for _, d := range keysOf(pp.wild) {
+		for _, d := range keysOf(op.Wild, np.Wild) {
 			h := "bp-any." + d
 			for i := 2; pp.exact[h]; i++ {
 				h = "bp-any" + strconv.Itoa(i) + "." + d
@@ -309,7 +294,8 @@ func newPlanner(old, new *Config) *planner {
 		reps = append(reps, pp.anyRep)
 		byPair := map[[2]*Site]*hostGroup{}
 		for _, h := range reps {
-			os, ns := findSite(pp.oldP, h), findSite(pp.newP, h)
+			os, _ := op.Find(h)
+			ns, _ := np.Find(h)
 			k := [2]*Site{os, ns}
 			g := byPair[k]
 			if g == nil {
