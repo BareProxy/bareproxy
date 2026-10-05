@@ -1,3 +1,4 @@
 # Copyright 2026 BareProxy.com
 # SPDX-License-Identifier: Apache-2.0
 bin/
+dist/
