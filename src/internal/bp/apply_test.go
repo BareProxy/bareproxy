@@ -11,11 +11,14 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/http/httptest"
 	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
+	"time"
 )
 
 func init() { logOutput = io.Discard }
@@ -38,17 +41,20 @@ func freePort(t *testing.T) int {
 	return ln.Addr().(*net.TCPAddr).Port
 }
 
-// text is a config with one site that answers body on every path, plus
-// extra lines at the end.
-func (l *liveServer) text(body string, extra ...string) string {
+// text is a config with one site that answers body on every path.
+func (l *liveServer) text(body string) string { return l.textWith("", body, "") }
+
+// textWith adds routes before the one that answers body, and blocks after
+// the site.
+func (l *liveServer) textWith(routes, body, blocks string) string {
 	return fmt.Sprintf(`global
   admin %s
   trace-log off
   state state
 
 site http://example.com:%d
-  route /* -> respond 200 %q
-%s`, filepath.Join(l.dir, "admin.sock"), l.port, body, strings.Join(extra, ""))
+%s  route /* -> respond 200 %q
+%s`, filepath.Join(l.dir, "admin.sock"), l.port, routes, body, blocks)
 }
 
 func startLive(t *testing.T, body string) *liveServer {
@@ -344,4 +350,91 @@ func TestAdminEndpoints(t *testing.T) {
 	if code, out := adminCall(t, sock, "POST", "/rollback?version=x", ""); code != http.StatusBadRequest {
 		t.Errorf("rollback to version x: %d %q", code, out)
 	}
+}
+
+func TestRemovedBackendDrains(t *testing.T) {
+	arrived, release := make(chan struct{}, 4), make(chan struct{})
+	var aHits atomic.Int32
+	aClosed := make(chan struct{}, 8)
+	a := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		aHits.Add(1)
+		arrived <- struct{}{}
+		<-release
+		io.WriteString(w, "A")
+	}))
+	a.Config.ConnState = func(_ net.Conn, st http.ConnState) {
+		if st == http.StateClosed {
+			aClosed <- struct{}{}
+		}
+	}
+	a.Start()
+	defer a.Close()
+	b := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { io.WriteString(w, "B") }))
+	defer b.Close()
+	l := startLive(t, "v1")
+	withPool := func(addr string) string {
+		return l.textWith("  route /api/* -> api\n", "v1", "\npool api\n  drain 2s\n  backend "+addr+"\n")
+	}
+	mustApply(t, l.s, withPool(a.Listener.Addr().String()))
+	got := make(chan string, 1)
+	go func() {
+		code, body, err := get(l.port, "/api/slow")
+		got <- fmt.Sprintf("%d %s %v", code, body, err)
+	}()
+	select {
+	case <-arrived:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the request never reached backend A")
+	}
+	mustApply(t, l.s, withPool(b.Listener.Addr().String()))
+	// New requests go to B at once, and A gets none.
+	for i := 0; i < 5; i++ {
+		if code, body, err := get(l.port, "/api/x"); err != nil || code != 200 || body != "B" {
+			t.Fatalf("GET /api/x after the apply: %d %q, %v; want B", code, body, err)
+		}
+	}
+	if n := aHits.Load(); n != 1 {
+		t.Fatalf("backend A got %d requests, want only the one in flight", n)
+	}
+	// The request in flight on A finishes on the version it started with.
+	close(release)
+	if r := <-got; r != "200 A <nil>" {
+		t.Fatalf("the request in flight got %s, want 200 A", r)
+	}
+	// After the pool's drain time, A's connections are closed.
+	select {
+	case <-aClosed:
+	case <-time.After(6 * time.Second):
+		t.Fatal("backend A's connection wasn't closed after the drain time")
+	}
+}
+
+func TestApplyOpensAndClosesListeners(t *testing.T) {
+	l := startLive(t, "v1")
+	p1, p2 := l.port, freePort(t)
+	movePort := func(text string, from, to int) string {
+		return strings.Replace(text, fmt.Sprintf(":%d\n", from), fmt.Sprintf(":%d\n", to), 1)
+	}
+	v2 := movePort(l.text("v2"), p1, p2)
+	mustApply(t, l.s, v2)
+	if code, body, err := get(p2, "/"); err != nil || code != 200 || body != "v2\n" {
+		t.Fatalf("new port %d: %d %q, %v", p2, code, body, err)
+	}
+	if _, _, err := get(p1, "/"); err == nil {
+		t.Fatalf("removed port %d still answers", p1)
+	}
+	// A port that can't be opened stops the apply before anything changes.
+	busy, err := net.Listen("tcp", ":0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer busy.Close()
+	p3 := busy.Addr().(*net.TCPAddr).Port
+	if _, err := l.s.Apply(Change{Text: movePort(v2, p2, p3), How: "apply"}); err == nil || !strings.Contains(err.Error(), "can't open port") {
+		t.Fatalf("apply onto a busy port: %v", err)
+	}
+	if code, body, err := get(p2, "/"); err != nil || code != 200 || body != "v2\n" || l.s.Current().Version != 2 {
+		t.Fatalf("after the refused apply: %d %q, %v, version %d", code, body, err, l.s.Current().Version)
+	}
+	l.expectFile(t, v2)
 }

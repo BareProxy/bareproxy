@@ -424,7 +424,11 @@ func (s *Server) drain(old, rt *Runtime, conns map[string]*connSet) {
 		b.state, b.since, b.reason = "draining", time.Now(), "removed from the config"
 		b.mu.Unlock()
 		d := 30 * time.Second
-		if ps := old.Cfg.Pools[b.Pool]; ps != nil && ps.Drain > 0 {
+		ps := rt.Cfg.Pools[b.Pool] // the new setting, if the pool is still there
+		if ps == nil {
+			ps = old.Cfg.Pools[b.Pool]
+		}
+		if ps.Drain > 0 {
 			d = ps.Drain
 		}
 		set, pool, addr := conns[b.Pool], b.Pool, b.Spec.Addr

@@ -134,6 +134,15 @@ func show(code int, out string, asJSON bool) int {
 	return 0
 }
 
+// jsonOr renders v as indented JSON, or returns text and a newline.
+func jsonOr(asJSON bool, v any, text string) string {
+	if !asJSON {
+		return text + "\n"
+	}
+	b, _ := json.MarshalIndent(v, "", "  ")
+	return string(b) + "\n"
+}
+
 func jsonQuery(asJSON bool) url.Values {
 	q := url.Values{}
 	if asJSON {
@@ -234,6 +243,10 @@ func applyCmd(args []string) int {
 			out = pr.Error + "\n"
 		}
 		return show(code, out, f.json)
+	}
+	if f.plan != "" && f.plan != pr.PlanID {
+		err := &bp.PlanChangedError{ID: f.plan}
+		return show(http.StatusConflict, jsonOr(f.json, map[string]string{"error": err.Error()}, err.Error()), f.json)
 	}
 	planOut := os.Stdout
 	if f.json {
