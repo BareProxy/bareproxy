@@ -20,7 +20,7 @@ import (
 
 // FileResult is what a files rule decides for a path, before anything is read.
 type FileResult struct {
-	Status   int      // 200, 301 or 404
+	Status   int      // 200, 301 or 404; 0 when there is no folder to look in
 	Rel      string   // the file inside the folder
 	Checked  []string // what was looked for, inside the folder
 	Reason   string   // why a 404
@@ -56,6 +56,9 @@ func LookupFile(root *os.Root, norm string) FileResult {
 	if dirReq {
 		idx := path.Join(rel, "index.html")
 		res := FileResult{Checked: []string{idx}}
+		if root == nil {
+			return res // no folder is open (browser demo): Status stays 0
+		}
 		fi, err := root.Stat(idx)
 		if err != nil || !fi.Mode().IsRegular() {
 			res.Status, res.Reason = 404, statReason(fi, err)
@@ -65,6 +68,9 @@ func LookupFile(root *os.Root, norm string) FileResult {
 		return res
 	}
 	res := FileResult{Checked: []string{rel}}
+	if root == nil {
+		return res
+	}
 	fi, err := root.Stat(rel)
 	switch {
 	case err != nil:
