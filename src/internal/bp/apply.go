@@ -72,12 +72,11 @@ type Applied struct {
 type ConfigError struct{ Problems []Problem }
 
 func (e *ConfigError) Error() string {
-	var b strings.Builder
-	b.WriteString("the config has errors, so nothing changed")
+	msg := "the config has errors, so nothing changed"
 	for _, p := range e.Problems {
-		b.WriteString("\n  " + p.String())
+		msg += "\n  " + p.String()
 	}
-	return b.String()
+	return msg
 }
 
 // PlanChangedError refuses an apply whose plan is out of date.
