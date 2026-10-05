@@ -1300,9 +1300,9 @@ func (pl *planner) siteChanges() []string {
 				continue
 			}
 			seen[k] = true
-			name := "site " + b.Name
-			if a.Name != b.Name {
-				name += " (was site " + a.Name + ")"
+			name := "site " + siteLabel(b)
+			if siteLabel(a) != siteLabel(b) {
+				name += " (was site " + siteLabel(a) + ")"
 			}
 			tls := func(s *Site) string {
 				switch {
@@ -1336,6 +1336,15 @@ func (pl *planner) siteChanges() []string {
 		}
 	}
 	return out
+}
+
+// siteLabel names a site by its first address as written, so sites with
+// the same host on different ports stay apart.
+func siteLabel(s *Site) string {
+	if len(s.Addrs) > 0 {
+		return s.Addrs[0].Text
+	}
+	return s.Name
 }
 
 func sizeText(n int64) string {

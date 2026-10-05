@@ -735,3 +735,39 @@ func TestPlanExactOnGeneratedPairs(t *testing.T) {
 	}
 	t.Logf("%d config pairs, %d random requests (%d changed), %d listed classes all checked", pairs, pairs*perPair, changed, lines)
 }
+
+func TestPlanHTTPSSiteAddedAndPortSwitch(t *testing.T) {
+	dir := planDir(t, "pub")
+	writeTestCert(t, dir)
+	old := `site example.com
+  tls cert.pem key.pem
+  route /* -> files pub
+
+site http://example.com:8443
+  route /* -> respond 200 "plain"
+`
+	new := `site example.com
+  tls cert.pem key.pem
+  route /* -> files pub
+
+site www.example.com
+  tls cert.pem key.pem
+  route /* -> redirect 301 https://example.com
+
+site example.com:8443
+  tls cert.pem key.pem
+  route /* -> respond 200 "plain"
+`
+	p := planOf(t, dir, old, new)
+	// A new HTTPS site on 443 also gets port 80 redirected to it.
+	wantLine(t, p, "www.example.com (port 80)", "any method, every path", "421, no site", "plain HTTP redirected to https://")
+	wantLine(t, p, "www.example.com (port 443)", "any method, every path", "421, no site", "redirect 301 https://example.com")
+	// Every request on a port that switches between http and https changes.
+	wantLine(t, p, "example.com (port 8443)", "any method, every path", `http: respond 200 "plain"`, `https: respond 200 "plain"`)
+	wantLine(t, p, "any other host (port 8443)", "any method, every path", "http: 421, no site", "https: 421, no site")
+	if len(p.Changes) != 4 {
+		t.Errorf("want 4 changes, got:\n%s", p.Text())
+	}
+	wantText(t, p.Settings, "port 8443 switched from http to https (line 9)")
+	wantText(t, p.Settings, "site example.com:8443 (was site http://example.com:8443): tls none  ->  ")
+}
