@@ -1131,3 +1131,39 @@ func TestTraceEventsEndpoint(t *testing.T) {
 		t.Errorf("events: %+v", evs)
 	}
 }
+
+func TestTraceReloadAppliesNewRotationToTheOpenLog(t *testing.T) {
+	f := newFixture(t, "", false)
+	s := NewServer(f.conf, f.rt)
+	s.logger.SetOutput(io.Discard)
+	writeFile(t, f.conf, "global\n  admin off\n  trace-log requests.log 1KB 2\nsite http://example.com:8080\n  route /* -> respond 200 \"v2\"\n")
+	s.Reload()
+	rt := s.Current()
+	defer rt.Stop()
+	if rt.Version != 2 || rt.Trace != f.rt.Trace {
+		t.Fatalf("version %d; the log file was reopened instead of kept", rt.Version)
+	}
+	h := s.Handler(8080, false)
+	for i := 0; i < 40; i++ {
+		req := httptest.NewRequest("GET", fmt.Sprintf("/page%d", i), nil)
+		req.Host = "example.com:8080"
+		h.ServeHTTP(httptest.NewRecorder(), req)
+	}
+	for _, name := range []string{"requests.log", "requests.log.1", "requests.log.2"} {
+		st, err := os.Stat(filepath.Join(f.dir, name))
+		if err != nil || st.Size() > 1024 || st.Size() == 0 {
+			t.Errorf("%s: %v (size %v), want a file of 1 to 1024 bytes", name, err, st)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(f.dir, "requests.log.3")); err == nil {
+		t.Errorf("a third old file was kept")
+	}
+	// The newest request is in the live file, and the ring still has all 40.
+	last := traceReadLines(t, filepath.Join(f.dir, "requests.log"))
+	if len(last) == 0 || !strings.Contains(last[len(last)-1], `"path":"/page39"`) {
+		t.Errorf("the live file doesn't end with the newest request: %q", last)
+	}
+	if st := rt.Mem.Stats(); st.Records != 40 {
+		t.Errorf("the ring holds %d records, want 40", st.Records)
+	}
+}
