@@ -49,16 +49,15 @@ func callServer(file, method, path string, q url.Values, body string) (int, stri
 
 // show prints an admin reply: errors go to stderr, except in JSON.
 func show(code int, out string, asJSON bool) int {
-	switch {
-	case code == http.StatusOK:
+	if code == http.StatusOK || asJSON {
 		fmt.Print(out)
-		return 0
-	case asJSON:
-		fmt.Print(out)
-	default:
+	} else {
 		fmt.Fprint(os.Stderr, "bareproxy: "+out)
 	}
-	return 1
+	if code != http.StatusOK {
+		return 1
+	}
+	return 0
 }
 
 // jsonOr renders v as indented JSON, or returns text as it is.
