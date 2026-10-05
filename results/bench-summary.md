@@ -185,5 +185,5 @@ Attempts disturbed by other processes (they used more than 10% of the server or 
 - **API case shares a core with the backend.** The proxy's own cost is the column `Server CPU per request`, taken from the CPU time of the server processes alone (computed from `/proc` ticks of 10 ms, over a 10 s run).
 - **The two logs differ.** BareProxy's trace record is a JSON line with the routing decision; nginx's default line is shorter. Both servers write one line per request, and the log check above confirms it.
 - **Keep-alive is set up alike on both sides.** nginx has `keepalive_requests` raised to 1,000,000 and an upstream pool of 64 idle connections; BareProxy's backend transport also keeps up to 64 idle connections per backend (checked in `pool.go` when this was written). The keep-alive table above shows how many connections each server really opened.
-- **One build, one day.** BareProxy here is the 0.1.0-dev first cut as built at the start of the day; nginx is Ubuntu's 1.24.0 package. The numbers are for these two builds on this machine and not a general claim.
+- **One build, one day.** BareProxy here is the first 0.1.0-alpha build (before the afternoon trims and automatic certificates); nginx is Ubuntu's 1.24.0 package. The numbers are for these two builds on this machine and not a general claim.
 
