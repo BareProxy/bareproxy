@@ -656,12 +656,11 @@ func (sp *space) count() int {
 // digits splits a tuple (method*combos+combo) into method and header states.
 func (sp *space) digits(t int) []int {
 	d := make([]int, 1+len(sp.names))
-	d[0] = t / sp.ncombo
-	c := t % sp.ncombo
 	for i := len(sp.names) - 1; i >= 0; i-- {
-		d[i+1] = c % sp.nstates[i]
-		c /= sp.nstates[i]
+		d[i+1] = t % sp.nstates[i]
+		t /= sp.nstates[i]
 	}
+	d[0] = t // what is left is the method
 	return d
 }
 
