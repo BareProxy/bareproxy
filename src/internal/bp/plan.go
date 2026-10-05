@@ -371,13 +371,13 @@ type effPair struct{ old, new string }
 func (g *hostGroup) analyze() []*lineAcc {
 	o, n := g.port.oldP, g.port.newP
 	samePort := o != nil && n != nil && o.TLS == n.TLS
-	if samePort && sameRules(g.oldS, g.newS) {
+	sameElse := samePort && g.oldS != nil && g.newS != nil && routeEffect(g.oldS, nil) == routeEffect(g.newS, nil)
+	if sameElse && sameList(g.oldS.Routes, g.newS.Routes) {
 		return nil // the matcher picks the same rule with the same effect for every request
 	}
 	sp := g.sp
 	// A path whose rules (those whose path pattern takes it) are the same
 	// on both sides is handled the same for every method and header.
-	sameElse := samePort && g.oldS != nil && g.newS != nil && routeEffect(g.oldS, nil) == routeEffect(g.newS, nil)
 	fo, fn, same := make([]*Site, len(sp.reps)), make([]*Site, len(sp.reps)), make([]bool, len(sp.reps))
 	for pi, path := range sp.reps {
 		fo[pi], fn[pi] = pathSite(g.oldS, path), pathSite(g.newS, path)
@@ -454,16 +454,6 @@ func (g *hostGroup) analyze() []*lineAcc {
 			strings.Compare(a.line.Old, b.line.Old), strings.Compare(a.line.New, b.line.New))
 	})
 	return lines
-}
-
-// sameRules reports whether two sites have the same rules in the same
-// order, each with the same matchers and effect, and the same no-rule
-// effect. Then every request is handled the same by both.
-func sameRules(a, b *Site) bool {
-	if a == nil || b == nil {
-		return a == b
-	}
-	return routeEffect(a, nil) == routeEffect(b, nil) && sameList(a.Routes, b.Routes)
 }
 
 // sameList reports whether two lists of rules have the same matchers and
