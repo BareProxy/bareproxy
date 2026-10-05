@@ -219,10 +219,26 @@ func (s *Server) proxy(w *respWriter, r *http.Request, rt *Runtime, site *Site, 
 			}
 			s.proxyError(w, r, rec, err)
 		},
-		ErrorLog: log.New(io.Discard, "", 0),
+		ErrorLog:   log.New(io.Discard, "", 0),
+		BufferPool: copyBufs,
 	}
 	rp.ServeHTTP(w, r)
 }
+
+// copyBufs lends the proxy its 32 KB copy buffers, which it would otherwise
+// allocate for every response.
+var copyBufs = &bufPool{}
+
+type bufPool struct{ sync.Pool }
+
+func (p *bufPool) Get() []byte {
+	if b, ok := p.Pool.Get().(*[]byte); ok {
+		return *b
+	}
+	return make([]byte, 32<<10)
+}
+
+func (p *bufPool) Put(b []byte) { p.Pool.Put(&b) }
 
 func (s *Server) proxyError(w *respWriter, r *http.Request, rec *Record, err error) {
 	var de *dialError
