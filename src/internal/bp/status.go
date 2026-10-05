@@ -122,7 +122,7 @@ func portSites(p *Port) []string {
 	return names
 }
 
-func healthText(h *HealthSpec) string {
+func poolChecksText(h *HealthSpec) string {
 	if h == nil {
 		return "none: a backend is down after 3 failed connections in a row"
 	}
@@ -152,7 +152,7 @@ func (s *Server) Status() *Status {
 	}
 	for _, name := range c.PoolOrder {
 		pool := rt.Pools[name]
-		ps := PoolStatus{Name: name, Line: pool.Spec.Line, Checks: healthText(pool.Spec.Health), Size: len(pool.Backends), Backends: []BackendStatus{}}
+		ps := PoolStatus{Name: name, Line: pool.Spec.Line, Checks: poolChecksText(pool.Spec.Health), Size: len(pool.Backends), Backends: []BackendStatus{}}
 		for _, b := range pool.Backends {
 			b := b.Snapshot()
 			if b.State == "up" {
