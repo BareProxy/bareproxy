@@ -110,8 +110,7 @@ func retire(old, rt *Runtime) {
 		}
 	}
 	if old.Trace != nil && old.Trace != rt.Trace {
-		t := old.Trace
-		time.AfterFunc(time.Minute, t.Close)
+		time.AfterFunc(time.Minute, old.Trace.Close)
 	}
 	time.AfterFunc(2*time.Minute, func() {
 		old.Cfg.Close()
@@ -354,8 +353,7 @@ func (s *Server) Handler(port int, isTLS bool) http.Handler {
 }
 
 func (s *Server) serve(w *respWriter, r *http.Request, rt *Runtime, port int, rec *Record) {
-	c := rt.Cfg
-	p := c.Ports[port]
+	p := rt.Cfg.Ports[port]
 	rec.Path = requestPath(r)
 	var site *Site
 	if p != nil {

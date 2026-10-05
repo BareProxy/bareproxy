@@ -6,6 +6,7 @@ package bp
 import (
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -76,11 +77,7 @@ func newTraceMem() *TraceMem { return &TraceMem{started: time.Now()} }
 // isProxyError reports outcomes where BareProxy, not the application,
 // failed to deliver.
 func isProxyError(outcome string) bool {
-	switch outcome {
-	case "no_backend", "connect_failed", "bad_response", "timeout":
-		return true
-	}
-	return false
+	return slices.Contains([]string{"no_backend", "connect_failed", "bad_response", "timeout"}, outcome)
 }
 
 // Add stores a finished record, given with its JSON. The oldest records go

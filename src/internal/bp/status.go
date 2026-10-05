@@ -6,7 +6,8 @@ package bp
 import (
 	"crypto/x509"
 	"fmt"
-	"sort"
+	"maps"
+	"slices"
 	"time"
 )
 
@@ -114,12 +115,7 @@ func portSites(p *Port) []string {
 	if p.Any != nil {
 		seen[p.Any.Name] = true
 	}
-	names := []string{}
-	for n := range seen {
-		names = append(names, n)
-	}
-	sort.Strings(names)
-	return names
+	return slices.Sorted(maps.Keys(seen))
 }
 
 func poolChecksText(h *HealthSpec) string {

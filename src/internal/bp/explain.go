@@ -4,6 +4,7 @@
 package bp
 
 import (
+	"cmp"
 	"errors"
 	"fmt"
 	"net/http"
@@ -36,9 +37,6 @@ func Explain(rt *Runtime, method, rawURL string, h http.Header, live bool) (stri
 		if port, err = strconv.Atoi(ps); err != nil {
 			return "", fmt.Errorf("bad port %q", ps)
 		}
-	}
-	if h == nil {
-		h = http.Header{}
 	}
 	c := rt.Cfg
 	var b strings.Builder
@@ -74,9 +72,7 @@ func Explain(rt *Runtime, method, rawURL string, h http.Header, live bool) (stri
 	if strings.Contains(u.RawPath, `\`) {
 		raw = u.RawPath // EscapedPath would turn a raw backslash into %5C; the server sees it as sent and refuses it
 	}
-	if raw == "" {
-		raw = "/"
-	}
+	raw = cmp.Or(raw, "/")
 	norm, err := NormalizePath(raw, site.KeepEncodedSlash)
 	if err != nil {
 		fmt.Fprintf(&b, "Path %s refused: %v\nAction: 400 (bad_request)\n", raw, err)
@@ -85,9 +81,7 @@ func Explain(rt *Runtime, method, rawURL string, h http.Header, live bool) (stri
 	route, checks := site.MatchRoute(method, norm, h)
 	width := 0
 	for _, ch := range checks {
-		if n := len(ch.Route.Text); n > width {
-			width = n
-		}
+		width = max(width, len(ch.Route.Text))
 	}
 	for _, ch := range checks {
 		why := ch.Why
@@ -212,9 +206,7 @@ func explainPool(b *strings.Builder, rt *Runtime, route *Route, norm, method, ho
 	if route.Act.Strip {
 		up = stripPrefix(norm, route.Path)
 	}
-	if pool.Spec.HostHeader != "" {
-		hostHeader = pool.Spec.HostHeader
-	}
+	hostHeader = cmp.Or(pool.Spec.HostHeader, hostHeader)
 	fmt.Fprintf(b, "Sent upstream as %s %s with Host: %s\n", method, up, hostHeader)
 	if !live {
 		fmt.Fprintf(b, "Pool %s (line %d): %d backends, states unknown without a running server\n", pool.Spec.Name, pool.Spec.Line, len(pool.Backends))

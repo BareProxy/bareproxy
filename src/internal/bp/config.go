@@ -42,12 +42,7 @@ func (p Problem) String() string {
 
 // HasErrors reports whether any problem is an error and not just a warning.
 func HasErrors(ps []Problem) bool {
-	for _, p := range ps {
-		if !p.Warn {
-			return true
-		}
-	}
-	return false
+	return slices.ContainsFunc(ps, func(p Problem) bool { return !p.Warn })
 }
 
 // Config is a compiled config file.
@@ -382,13 +377,10 @@ func (p *parser) path(s string) string {
 }
 
 func onOff(s string) (bool, error) {
-	switch s {
-	case "on":
-		return true, nil
-	case "off":
-		return false, nil
+	if s != "on" && s != "off" {
+		return false, fmt.Errorf("expected on or off, got %q", s)
 	}
-	return false, fmt.Errorf("expected on or off, got %q", s)
+	return s == "on", nil
 }
 
 func (p *parser) global(ln int, w []string) error {
@@ -622,10 +614,8 @@ func (p *parser) poolSetting(ps *PoolSpec, ln int, w []string) error {
 		if n, err := strconv.Atoi(port); err != nil || n < 1 || n > 65535 {
 			return fmt.Errorf("bad backend port %q", port)
 		}
-		for _, b := range ps.Backends {
-			if b.Addr == a && b.HTTPS == https {
-				return fmt.Errorf("backend %s is already listed on line %d", a, b.Line)
-			}
+		if i := slices.IndexFunc(ps.Backends, func(b BackendSpec) bool { return b.Addr == a && b.HTTPS == https }); i >= 0 {
+			return fmt.Errorf("backend %s is already listed on line %d", a, ps.Backends[i].Line)
 		}
 		ps.Backends = append(ps.Backends, BackendSpec{Line: ln, Addr: a, HTTPS: https})
 	case "health":

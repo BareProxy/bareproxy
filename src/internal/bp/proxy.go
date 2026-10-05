@@ -4,6 +4,7 @@
 package bp
 
 import (
+	"cmp"
 	"errors"
 	"io"
 	"log"
@@ -191,10 +192,7 @@ func (s *Server) proxy(w *respWriter, r *http.Request, rt *Runtime, site *Site, 
 	if err != nil {
 		decoded = upstream
 	}
-	host := r.Host
-	if pool.Spec.HostHeader != "" {
-		host = pool.Spec.HostHeader
-	}
+	host := cmp.Or(pool.Spec.HostHeader, r.Host)
 	rec.Outcome = "ok"
 	rp := &httputil.ReverseProxy{
 		Rewrite: func(pr *httputil.ProxyRequest) {
@@ -211,18 +209,17 @@ func (s *Server) proxy(w *respWriter, r *http.Request, rt *Runtime, site *Site, 
 			resp.Header.Del("BareProxy-Id")
 			return nil
 		},
-		ErrorHandler: func(http.ResponseWriter, *http.Request, error) {},
-		ErrorLog:     log.New(io.Discard, "", 0),
-	}
-	rp.ErrorHandler = func(_ http.ResponseWriter, _ *http.Request, err error) {
-		var mb *http.MaxBytesError
-		if body.err != nil && !errors.As(body.err, &mb) && r.Context().Err() == nil {
-			// The client's body couldn't be read (a bad chunk size, say): its fault, not the backend's.
-			rec.Outcome, rec.Reason = "bad_request", shortErr(body.err)
-			s.plain(w, r, rec, http.StatusBadRequest, "Bad request: the request body is broken")
-			return
-		}
-		s.proxyError(w, r, rec, err)
+		ErrorHandler: func(_ http.ResponseWriter, _ *http.Request, err error) {
+			var mb *http.MaxBytesError
+			if body.err != nil && !errors.As(body.err, &mb) && r.Context().Err() == nil {
+				// The client's body couldn't be read (a bad chunk size, say): its fault, not the backend's.
+				rec.Outcome, rec.Reason = "bad_request", shortErr(body.err)
+				s.plain(w, r, rec, http.StatusBadRequest, "Bad request: the request body is broken")
+				return
+			}
+			s.proxyError(w, r, rec, err)
+		},
+		ErrorLog: log.New(io.Discard, "", 0),
 	}
 	rp.ServeHTTP(w, r)
 }

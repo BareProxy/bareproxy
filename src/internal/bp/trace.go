@@ -257,6 +257,11 @@ func FindRecord(file, prefix string) (*Record, error) {
 // RenderWhy tells the story of one request from its record.
 func RenderWhy(rec *Record) string {
 	var b strings.Builder
+	note := func(format, value string) {
+		if value != "" {
+			fmt.Fprintf(&b, format, value)
+		}
+	}
 	when := rec.Time
 	if t, err := time.Parse(time.RFC3339Nano, rec.Time); err == nil {
 		when = t.UTC().Format("2 Jan 2006 15:04:05.000 UTC")
@@ -271,16 +276,12 @@ func RenderWhy(rec *Record) string {
 		target += "?" + rec.Query
 	}
 	fmt.Fprintf(&b, "%s %s from %s, %s\n", rec.Method, target, rec.Client, conn)
-	if rec.TraceID != "" {
-		fmt.Fprintf(&b, "W3C trace ID %s\n", rec.TraceID)
-	}
+	note("W3C trace ID %s\n", rec.TraceID)
 	b.WriteString("\n")
 	if rec.Site != "" {
 		fmt.Fprintf(&b, "Site %s (line %d)\n", rec.Site, rec.SiteLine)
 	}
-	if rec.NormPath != "" {
-		fmt.Fprintf(&b, "Normalized path: %s\n", rec.NormPath)
-	}
+	note("Normalized path: %s\n", rec.NormPath)
 	if rec.Rule != "" {
 		fmt.Fprintf(&b, "Rule line %d: %s\n", rec.Line, rec.Rule)
 	}
@@ -319,15 +320,9 @@ func RenderWhy(rec *Record) string {
 			fmt.Fprintf(&b, "Checked: %s\n", inFolder(rec.Folder, rec.Checked[0]))
 		}
 	}
-	if rec.Location != "" {
-		fmt.Fprintf(&b, "Redirected to %s\n", rec.Location)
-	}
-	if rec.Reason != "" {
-		fmt.Fprintf(&b, "Reason: %s\n", rec.Reason)
-	}
-	if rec.ErrorPage != "" {
-		fmt.Fprintf(&b, "Error page: %s\n", rec.ErrorPage)
-	}
+	note("Redirected to %s\n", rec.Location)
+	note("Reason: %s\n", rec.Reason)
+	note("Error page: %s\n", rec.ErrorPage)
 	fmt.Fprintf(&b, "Response %d, %s, %s in total (outcome %s)\n", rec.Status, fmtBytes(rec.BytesOut), fmtMS(rec.MS), rec.Outcome)
 	return b.String()
 }
@@ -348,12 +343,7 @@ func parseTraceparent(v string) (traceID, flags string, ok bool) {
 }
 
 func lowerHex(s string) bool {
-	for i := 0; i < len(s); i++ {
-		if c := s[i]; (c < '0' || c > '9') && (c < 'a' || c > 'f') {
-			return false
-		}
-	}
-	return true
+	return !strings.ContainsFunc(s, func(c rune) bool { return (c < '0' || c > '9') && (c < 'a' || c > 'f') })
 }
 
 // requestTrace returns the trace ID and flags of a request's traceparent
