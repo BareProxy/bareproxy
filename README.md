@@ -177,18 +177,18 @@ HUGO=/path/to/hugo SITE=/path/to/bareproxy.com-main ./live/live-test.sh
 - **Applies under load.** 20 applies while requests ran over HTTP/1.1 and HTTP/2, with 0 failed requests.
 - **Browser demo.** 113 checks pass in headless Chromium (`results/demo-check.log`). They compare the demo's check, explain and plan results with the native commands.
 - **Code size.** The core package and the command are 6,422 lines of Go (5,556 in the core, 866 in the command), against the 5,000-line budget. That is 1,422 lines over. Blank lines and comments aren't counted.
-- **Binary size.** [[BINARY_SIZE]]
-- **Against nginx.** [[BENCH_SETUP]] The full tables, with the setup and caveats, are in `results/bench-summary.md`.
+- **Binary size.** 8.4 MB for linux/amd64 and 7.7 MB for linux/arm64, static and stripped (8,351,904 and 7,733,408 bytes).
+- **Against nginx.** Measured on 5 October 2026 on a shared 2-CPU cloud machine (Intel Xeon at 2.1 GHz under KVM): each server on one core and the wrk load generator on the other, plain HTTP with keep-alive and 50 connections, 10-second runs, 3 per case, best run shown. All 51 attempts ran with the machine otherwise quiet. Logging was off for both servers; BareProxy kept its default 32 MB in-memory record store, which is most of its memory under load. The full tables, with the setup and caveats, are in `results/bench-summary.md`.
 
   | | BareProxy | nginx 1.24.0 |
   | --- | --- | --- |
-  | Home page, requests per second | [[BENCH_HOME_BP_RPS]] | [[BENCH_HOME_NGINX_RPS]] |
-  | Home page, p99 latency | [[BENCH_HOME_BP_P99]] | [[BENCH_HOME_NGINX_P99]] |
-  | Large file, requests per second | [[BENCH_FILE_BP_RPS]] | [[BENCH_FILE_NGINX_RPS]] |
-  | Proxied API, requests per second | [[BENCH_API_BP_RPS]] | [[BENCH_API_NGINX_RPS]] |
-  | Proxied API, p99 latency | [[BENCH_API_BP_P99]] | [[BENCH_API_NGINX_P99]] |
-  | Memory when idle | [[BENCH_RSS_IDLE_BP]] | [[BENCH_RSS_IDLE_NGINX]] |
-  | Memory under load, peak | [[BENCH_RSS_LOAD_BP]] | [[BENCH_RSS_LOAD_NGINX]] |
+  | Home page, requests per second | 20,872 | 61,593 |
+  | Home page, p99 latency | 11.1 ms | 1.6 ms |
+  | 72 KB image, requests per second | 17,084 | 53,809 (a floor: the load generator's core was full) |
+  | Proxied API, requests per second | 10,430 | 35,414 |
+  | Proxied API, p99 latency | 12.5 ms | 3.1 ms |
+  | Memory when idle | 7.6 MiB | 11.3 MiB (6.0 MiB PSS) |
+  | Memory under load, peak | 111 MiB, as the record store fills | 12.3 MiB |
 - **Live test.** The live test of 2 October, on the 0.1.0-dev build, made 24 requests and got 24 records: 23 over HTTP/2 with TLS 1.3, and 1 over HTTP/1.1 (`results/live-test.log`).
 
 ## Not in this release

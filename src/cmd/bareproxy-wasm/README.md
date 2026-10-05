@@ -136,7 +136,7 @@ All measured on the build in this tree (Go 1.27.1, `-trimpath -ldflags="-s -w"`)
 
 | File | Bytes |
 | --- | --- |
-| `bareproxy.wasm` | 11,521,637 raw, 3,032,933 gzipped (`gzip -9`) |
+| `bareproxy.wasm` | 14,860,769 raw, 3,767,689 gzipped (`gzip -9`), 0.1.0-alpha |
 | `index.html` | 7,495 |
 | `demo.css` | 10,297 |
 | `demo.js` | 13,702 |

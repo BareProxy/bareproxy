@@ -15,7 +15,7 @@ import (
 
 // DefaultStateDir holds the config history unless the global setting state
 // names another folder.
-const DefaultStateDir = "/var/lib/bareproxy"
+var DefaultStateDir = "/var/lib/bareproxy"
 
 // keepVersions is how many config versions the history keeps.
 const keepVersions = 100

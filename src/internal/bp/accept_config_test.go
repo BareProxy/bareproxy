@@ -128,6 +128,11 @@ func accNoStderr(t *testing.T, f func()) {
 // must refuse it on reload and keep its version; and the server must refuse
 // to start with it.
 func TestAcceptBrokenConfigs(t *testing.T) {
+	// A broken file makes Run fall back to the last good version in the state
+	// folder, so give Run an empty one: the machine's default may hold history.
+	oldState := DefaultStateDir
+	DefaultStateDir = t.TempDir()
+	defer func() { DefaultStateDir = oldState }()
 	dir := t.TempDir()
 	accWrite(t, dir+"/public/index.html", "x")
 	accWrite(t, dir+"/afile", "not a folder")

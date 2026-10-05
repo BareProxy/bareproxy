@@ -1,7 +1,7 @@
 BareProxy browser demo check
-Run: Mon Oct 05 2026 09:59:17 GMT+0300 (Israel Daylight Time)
+Run: Mon Oct 05 2026 11:17:17 GMT+0300 (Israel Daylight Time)
 Demo folder: /home/claude/out/demo-dist
-bareproxy.wasm: 11521637 bytes raw, 3032933 bytes gzipped (gzip -9)
+bareproxy.wasm: 14860769 bytes raw, 3767689 bytes gzipped (gzip -9)
 
 == What differs between the demo and the native program, and why
   1. The first line names bareproxy.conf, the demo's config name. The native program prints the file's path.
@@ -16,11 +16,11 @@ bareproxy.wasm: 11521637 bytes raw, 3032933 bytes gzipped (gzip -9)
      the rule table lines up. The native build is from the same source tree as the wasm build.
 
 == Setup
-fixture folder: /tmp/bpdc-tSFPl6
+fixture folder: /tmp/bpdc-kWMaQw
 PASS  native bareproxy builds
 PASS  native planref builds
-native: bareproxy 0.1.0-dev (first cut), built with go1.27.1
-serving /home/claude/out/demo-dist at http://127.0.0.1:39365
+native: bareproxy 0.1.0-alpha, built with go1.27.1
+serving /home/claude/out/demo-dist at http://127.0.0.1:41449
 browser: Chromium 141.0.7390.37 (headless, Playwright)
 
 == Loading
@@ -31,8 +31,8 @@ PASS  page still starts when the host sends .wasm with the wrong content type
 PASS  a missing wasm file shows an error, not a blank page
 PASS  and the output panels say the core is not running
 PASS  opened from disk the page says so and says to use a web server
-status line: "Ready. BareProxy 0.1.0-dev (first cut), loaded in 0.4 s." (page load to ready, wall clock 0.6 s, local server)
-core version string: 0.1.0-dev (first cut)
+status line: "Ready. BareProxy 0.1.0-alpha, loaded in 0.2 s." (page load to ready, wall clock 0.3 s, local server)
+core version string: 0.1.0-alpha
 PASS  the core version equals the native one
 
 == Check
@@ -271,8 +271,8 @@ PASS  plan of a config against itself says no changes
 PASS  plan with a broken new config lists its problems
 
 == Speed (measured in this browser)
-  check    median 0.10 ms, slowest 25.60 ms
-  explain  median 0.20 ms, slowest 8.60 ms
+  check    median 0.20 ms, slowest 22.50 ms
+  explain  median 0.20 ms, slowest 4.30 ms
   plan     median 0.50 ms, slowest 4.90 ms
 PASS  every call is under 100 ms in the median
 
