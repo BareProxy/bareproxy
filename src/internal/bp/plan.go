@@ -451,10 +451,22 @@ func (pl *planner) analyze(g *hostGroup, gi int, lines []*lineAcc) []*lineAcc {
 		return lines // the matcher picks the same rule with the same effect for every request
 	}
 	sp := g.sp
+	// A path whose rules (those whose path pattern takes it) are the same
+	// on both sides is handled the same for every method and header.
+	same := make([]bool, len(sp.reps))
+	if o, n := g.port.oldP, g.port.newP; o != nil && n != nil && o.TLS == n.TLS && g.oldS != nil && g.newS != nil &&
+		routeEffect(g.oldS, nil) == routeEffect(g.newS, nil) {
+		for pi, path := range sp.reps {
+			same[pi] = sameList(rulesFor(g.oldS, path), rulesFor(g.newS, path))
+		}
+	}
 	changed := map[int]map[effPair][]int{} // path rep -> effects -> tuples
 	for c := 0; c < sp.ncombo; c++ {
 		h := sp.header(c)
 		for pi, path := range sp.reps {
+			if same[pi] {
+				continue
+			}
 			for mi, m := range sp.methods {
 				eo := g.effect(true, m, path, h)
 				en := g.effect(false, m, path, h)
@@ -542,17 +554,35 @@ func sameRules(a, b *Site) bool {
 	if a == nil || b == nil {
 		return a == b
 	}
-	if len(a.Routes) != len(b.Routes) || routeEffect(a, nil) != routeEffect(b, nil) {
+	return routeEffect(a, nil) == routeEffect(b, nil) && sameList(a.Routes, b.Routes)
+}
+
+// sameList reports whether two lists of rules have the same matchers and
+// effects in the same order.
+func sameList(a, b []*Route) bool {
+	if len(a) != len(b) {
 		return false
 	}
-	for i, x := range a.Routes {
-		y := b.Routes[i]
+	for i, x := range a {
+		y := b[i]
 		if x.Path != y.Path || x.Prefix != y.Prefix || strings.Join(x.Methods, ",") != strings.Join(y.Methods, ",") ||
-			fmt.Sprint(x.Headers) != fmt.Sprint(y.Headers) || routeEffect(a, x) != routeEffect(b, y) {
+			fmt.Sprint(x.Headers) != fmt.Sprint(y.Headers) || routeEffect(nil, x) != routeEffect(nil, y) {
 			return false
 		}
 	}
 	return true
+}
+
+// rulesFor lists a site's rules whose path pattern takes a path (the path
+// part of Route.matches), in order.
+func rulesFor(s *Site, path string) []*Route {
+	var out []*Route
+	for _, r := range s.Routes {
+		if r.Prefix && (r.Path == "" || path == r.Path || strings.HasPrefix(path, r.Path+"/")) || !r.Prefix && path == r.Path {
+			out = append(out, r)
+		}
+	}
+	return out
 }
 
 // factor splits a set of distinct tuples into a few cartesian products.
