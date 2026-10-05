@@ -12,6 +12,7 @@ import (
 	"encoding/json"
 	"encoding/pem"
 	"math/big"
+	mrand "math/rand/v2"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -451,4 +452,264 @@ pool api-v2
 `
 	p = planOf(t, dir, old, plain)
 	wantText(t, p.Settings, "port 443 switched from https to http")
+}
+
+// genRoute and genSite describe a generated config before it is written out.
+type genRoute struct{ methods, path, header, action string }
+
+type genSite struct {
+	hosts  []string
+	err404 bool
+	routes []genRoute
+}
+
+var (
+	genHosts   = []string{"a.test", "b.test", "www.a.test", "*.a.test", "*"}
+	genPaths   = []string{"/*", "/", "/a", "/a/*", "/a/b", "/a/b/*", "/api", "/api/*", "/api/v2", "/api/v2/*"}
+	genMethods = []string{"", "", "", "GET", "POST", "GET,POST"}
+	genHeaders = []string{"", "", "", "header X-T", "header X-T=1", "header X-T=2"}
+	genActions = []string{`respond 200 "x"`, "respond 201", "redirect 301 http://r.test", "redirect 302 http://r.test/fixed",
+		"p1", "p1 strip", "p2", "files f1", "files f2"}
+)
+
+func pick[T any](r *mrand.Rand, xs []T) T { return xs[r.IntN(len(xs))] }
+
+func genRandomRoute(r *mrand.Rand) genRoute {
+	return genRoute{pick(r, genMethods), pick(r, genPaths), pick(r, genHeaders), pick(r, genActions)}
+}
+
+func genConfig(r *mrand.Rand) []genSite {
+	hosts := append([]string(nil), genHosts...)
+	r.Shuffle(len(hosts), func(i, j int) { hosts[i], hosts[j] = hosts[j], hosts[i] })
+	n := 1 + r.IntN(3)
+	sites := make([]genSite, n)
+	for i := range sites {
+		sites[i].hosts = []string{hosts[0]}
+		hosts = hosts[1:]
+		if r.IntN(3) == 0 && len(hosts) > n-1-i {
+			sites[i].hosts = append(sites[i].hosts, hosts[0])
+			hosts = hosts[1:]
+		}
+		sites[i].err404 = r.IntN(4) == 0
+		for k := 1 + r.IntN(8); k > 0; k-- {
+			sites[i].routes = append(sites[i].routes, genRandomRoute(r))
+		}
+	}
+	return sites
+}
+
+func cloneSites(in []genSite) []genSite {
+	out := make([]genSite, len(in))
+	for i, s := range in {
+		out[i] = genSite{hosts: append([]string(nil), s.hosts...), err404: s.err404, routes: append([]genRoute(nil), s.routes...)}
+	}
+	return out
+}
+
+// mutate makes one to three random edits to a generated config.
+func mutate(r *mrand.Rand, in []genSite) []genSite {
+	sites := cloneSites(in)
+	for k := 1 + r.IntN(3); k > 0; k-- {
+		s := &sites[r.IntN(len(sites))]
+		var rt *genRoute
+		if len(s.routes) > 0 {
+			rt = &s.routes[r.IntN(len(s.routes))]
+		}
+		switch op := r.IntN(10); {
+		case op == 0 && rt != nil:
+			rt.action = pick(r, genActions)
+		case op == 1 && rt != nil:
+			rt.path = pick(r, genPaths)
+		case op == 2 && rt != nil:
+			rt.methods = pick(r, genMethods)
+		case op == 3 && rt != nil:
+			rt.header = pick(r, genHeaders)
+		case op == 4 && len(s.routes) > 1:
+			i := r.IntN(len(s.routes) - 1)
+			s.routes[i], s.routes[i+1] = s.routes[i+1], s.routes[i]
+		case op == 5 && len(s.routes) > 1:
+			i := r.IntN(len(s.routes))
+			s.routes = append(s.routes[:i], s.routes[i+1:]...)
+		case op == 6 && len(s.routes) < 8:
+			i := r.IntN(len(s.routes) + 1)
+			s.routes = append(s.routes[:i], append([]genRoute{genRandomRoute(r)}, s.routes[i:]...)...)
+		case op == 7:
+			s.err404 = !s.err404
+		case op == 8 && len(sites) > 1:
+			// Move a host to another site (when its site keeps one).
+			from, to := r.IntN(len(sites)), r.IntN(len(sites))
+			if from != to && len(sites[from].hosts) > 1 {
+				h := sites[from].hosts[len(sites[from].hosts)-1]
+				sites[from].hosts = sites[from].hosts[:len(sites[from].hosts)-1]
+				sites[to].hosts = append(sites[to].hosts, h)
+			}
+		case op == 9:
+			// Add a site on an unused host, or remove one.
+			used := map[string]bool{}
+			for _, x := range sites {
+				for _, h := range x.hosts {
+					used[h] = true
+				}
+			}
+			var free []string
+			for _, h := range genHosts {
+				if !used[h] {
+					free = append(free, h)
+				}
+			}
+			if len(free) > 0 && r.IntN(2) == 0 {
+				sites = append(sites, genSite{hosts: []string{pick(r, free)}, routes: []genRoute{genRandomRoute(r)}})
+			} else if len(sites) > 1 {
+				i := r.IntN(len(sites))
+				sites = append(sites[:i], sites[i+1:]...)
+			}
+		}
+	}
+	return sites
+}
+
+func renderSites(sites []genSite) string {
+	var b strings.Builder
+	for _, s := range sites {
+		b.WriteString("site")
+		for _, h := range s.hosts {
+			b.WriteString(" http://" + h)
+		}
+		b.WriteString("\n")
+		if s.err404 {
+			b.WriteString("  error 404 /404.html\n")
+		}
+		for _, rt := range s.routes {
+			b.WriteString("  route ")
+			if rt.methods != "" {
+				b.WriteString(rt.methods + " ")
+			}
+			b.WriteString(rt.path + " ")
+			if rt.header != "" {
+				b.WriteString(rt.header + " ")
+			}
+			b.WriteString("-> " + rt.action + "\n")
+		}
+		b.WriteString("\n")
+	}
+	b.WriteString("pool p1\n  backend 10.0.0.1:80\n\npool p2\n  backend 10.0.0.2:80\n")
+	return b.String()
+}
+
+type genReq struct {
+	host, method, path string
+	h                  http.Header
+}
+
+func genHeader(r *mrand.Rand) http.Header {
+	h := http.Header{}
+	switch r.IntN(7) {
+	case 1:
+		h.Add("X-T", "1")
+	case 2:
+		h.Add("x-t", "2")
+	case 3:
+		h.Add("X-T", "3")
+	case 4:
+		h.Add("X-T", "1")
+		h.Add("X-T", "2")
+	case 5:
+		h.Add("X-T", "")
+	case 6:
+		h.Add("X-T", "2")
+		h.Add("X-T", "9")
+	}
+	return h
+}
+
+var (
+	reqHosts   = []string{"a.test", "b.test", "www.a.test", "x.a.test", "y.b.test", "c.test", "x.y.a.test", "A.Test.", "10.0.0.1"}
+	reqMethods = []string{"GET", "HEAD", "POST", "PUT", "DELETE"}
+	reqPaths   = []string{"/", "/a", "/a/", "/a/b", "/a/b/", "/a/b/c", "/a/bc", "/ab", "/api", "/api/", "/api/v2", "/api/v2/",
+		"/api/v2/x", "/api/v3", "/apix", "/z", "/z/y", "/api/v2x", "/a/b/c/d"}
+)
+
+// candidates holds at least one request of every class the generated
+// configs can tell apart.
+func candidates() []genReq {
+	var out []genReq
+	hdrs := []http.Header{{}, {"X-T": {"1"}}, {"X-T": {"2"}}, {"X-T": {"3"}}, {"X-T": {"1", "2"}}}
+	for _, host := range []string{"a.test", "b.test", "www.a.test", "x.a.test", "c.test"} {
+		for _, m := range []string{"GET", "HEAD", "POST", "PUT"} {
+			for _, p := range []string{"/", "/a", "/a/b", "/api", "/api/v2", "/zz", "/a/zz", "/a/b/zz", "/api/zz", "/api/v2/zz"} {
+				for _, h := range hdrs {
+					out = append(out, genReq{host, m, p, h})
+				}
+			}
+		}
+	}
+	return out
+}
+
+// TestPlanExactOnGeneratedPairs is the check from design note section 12:
+// plan is exact on 1,000 generated config pairs. Every request whose
+// handling changes falls in a listed class with the right old and new
+// effect, no request whose handling stays the same falls in one, and
+// every listed class holds a request that changes.
+func TestPlanExactOnGeneratedPairs(t *testing.T) {
+	dir := planDir(t, "f1", "f2")
+	pairs, perPair := 1000, 300
+	if testing.Short() {
+		pairs = 200
+	}
+	r := mrand.New(mrand.NewPCG(2026, 10))
+	cands := candidates()
+	lines, changed := 0, 0
+	for i := 0; i < pairs; i++ {
+		oldSites := genConfig(r)
+		newSites := mutate(r, oldSites)
+		oldSrc, newSrc := renderSites(oldSites), renderSites(newSites)
+		oc, op := Parse(filepath.Join(dir, "old.conf"), oldSrc)
+		nc, np := Parse(filepath.Join(dir, "new.conf"), newSrc)
+		if HasErrors(op) || HasErrors(np) {
+			t.Fatalf("pair %d: generated config has errors: %v %v\n%s\n----\n%s", i, op, np, oldSrc, newSrc)
+		}
+		p := MakePlan(oc, nc)
+		if p.TooMany {
+			t.Fatalf("pair %d: TooMany on a small config", i)
+		}
+		fail := func(what string, q genReq, eo, en string) {
+			t.Fatalf("pair %d: %s: %s %s%s %v: old %q, new %q\nplan:\n%s\nold:\n%s\nnew:\n%s", i, what, q.method, q.host, q.path, q.h, eo, en, p.Text(), oldSrc, newSrc)
+		}
+		check := func(q genReq) bool {
+			eo := RequestEffect(oc, 80, q.host, q.method, q.path, q.h)
+			en := RequestEffect(nc, 80, q.host, q.method, q.path, q.h)
+			k := p.Classify(80, q.host, q.method, q.path, q.h)
+			switch {
+			case eo != en && k < 0:
+				fail("changed request in no listed class", q, eo, en)
+			case eo == en && k >= 0:
+				fail("unchanged request in listed class "+p.Changes[k].Where+", "+p.Changes[k].What, q, eo, en)
+			case k >= 0 && (p.Changes[k].Old != eo || p.Changes[k].New != en):
+				fail("request in a class with other effects "+p.Changes[k].Old+" -> "+p.Changes[k].New, q, eo, en)
+			}
+			return eo != en
+		}
+		for j := 0; j < perPair; j++ {
+			q := genReq{pick(r, reqHosts), pick(r, reqMethods), pick(r, reqPaths), genHeader(r)}
+			if check(q) {
+				changed++
+			}
+		}
+		held := make([]bool, len(p.Changes))
+		for _, q := range cands {
+			if k := p.Classify(80, q.host, q.method, q.path, q.h); k >= 0 && !held[k] {
+				held[k] = check(q)
+			}
+		}
+		for k, ok := range held {
+			if !ok {
+				t.Fatalf("pair %d: listed class holds no changed request: %+v\nplan:\n%s\nold:\n%s\nnew:\n%s", i, p.Changes[k], p.Text(), oldSrc, newSrc)
+			}
+		}
+		lines += len(p.Changes)
+		oc.Close()
+		nc.Close()
+	}
+	t.Logf("%d config pairs, %d random requests (%d changed), %d listed classes all checked", pairs, pairs*perPair, changed, lines)
 }
