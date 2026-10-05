@@ -365,7 +365,9 @@ func newPlanner(old, new *Config) *planner {
 
 // effect is how one side handles a class representative, with the scheme
 // in front when the port switches between http and https.
-func (g *hostGroup) effect(old bool, method, path string, h http.Header) string {
+// rules holds that side's rules for the path (rulesFor): only they can
+// match it, so the matcher runs on them alone.
+func (g *hostGroup) effect(old bool, rules *Site, method, path string, h http.Header) string {
 	p, other, s := g.port.newP, g.port.oldP, g.newS
 	if old {
 		p, other, s = g.port.oldP, g.port.newP, g.oldS
@@ -383,7 +385,7 @@ func (g *hostGroup) effect(old bool, method, path string, h http.Header) string 
 	if s == nil {
 		return prefix + "421, no site"
 	}
-	r, _ := s.MatchRoute(method, path, h)
+	r, _ := rules.MatchRoute(method, path, h)
 	return prefix + routeEffect(s, r)
 }
 
@@ -460,6 +462,10 @@ func (pl *planner) analyze(g *hostGroup, gi int, lines []*lineAcc) []*lineAcc {
 			same[pi] = sameList(rulesFor(g.oldS, path), rulesFor(g.newS, path))
 		}
 	}
+	fo, fn := make([]*Site, len(sp.reps)), make([]*Site, len(sp.reps))
+	for pi, path := range sp.reps {
+		fo[pi], fn[pi] = pathSite(g.oldS, path), pathSite(g.newS, path)
+	}
 	changed := map[int]map[effPair][]int{} // path rep -> effects -> tuples
 	for c := 0; c < sp.ncombo; c++ {
 		h := sp.header(c)
@@ -468,8 +474,8 @@ func (pl *planner) analyze(g *hostGroup, gi int, lines []*lineAcc) []*lineAcc {
 				continue
 			}
 			for mi, m := range sp.methods {
-				eo := g.effect(true, m, path, h)
-				en := g.effect(false, m, path, h)
+				eo := g.effect(true, fo[pi], m, path, h)
+				en := g.effect(false, fn[pi], m, path, h)
 				if eo == en {
 					continue
 				}
@@ -1177,8 +1183,8 @@ func planWarnings(c *Config) []string {
 			continue
 		}
 		won := map[*Route]bool{}
-		sp.each(func(m, p string, h http.Header) {
-			if r, _ := s.MatchRoute(m, p, h); r != nil {
+		sp.each(s, func(fs *Site, m, p string, h http.Header) {
+			if r, _ := fs.MatchRoute(m, p, h); r != nil {
 				won[r] = true
 			}
 		})
@@ -1190,9 +1196,9 @@ func planWarnings(c *Config) []string {
 				continue
 			}
 			takers := map[int]bool{}
-			sp.each(func(m, p string, h http.Header) {
+			sp.each(s, func(fs *Site, m, p string, h http.Header) {
 				if ok, _ := r.matches(m, p, h); ok {
-					if w, _ := s.MatchRoute(m, p, h); w != nil {
+					if w, _ := fs.MatchRoute(m, p, h); w != nil {
 						takers[w.Line] = true
 					}
 				}
@@ -1231,15 +1237,29 @@ func planWarnings(c *Config) []string {
 }
 
 // each calls f for every class representative.
-func (sp *space) each(f func(method, path string, h http.Header)) {
+// each calls f for every class representative of a site, with the
+// site's rules for the representative's path (pathSite).
+func (sp *space) each(s *Site, f func(rules *Site, method, path string, h http.Header)) {
+	fs := make([]*Site, len(sp.reps))
+	for pi, p := range sp.reps {
+		fs[pi] = pathSite(s, p)
+	}
 	for c := 0; c < sp.ncombo; c++ {
 		h := sp.header(c)
-		for _, p := range sp.reps {
+		for pi, p := range sp.reps {
 			for _, m := range sp.methods {
-				f(m, p, h)
+				f(fs[pi], m, p, h)
 			}
 		}
 	}
+}
+
+// pathSite is a site cut down to its rules for one path, or nil.
+func pathSite(s *Site, path string) *Site {
+	if s == nil {
+		return nil
+	}
+	return &Site{Line: s.Line, Name: s.Name, Routes: rulesFor(s, path)}
 }
 
 // settings lists the changes outside routing, one line each.
