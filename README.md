@@ -10,7 +10,7 @@ The whole project is open source under the Apache License 2.0. Copyright 2026 Ba
 
 ## Install
 
-Download the tarball for your CPU and `SHA256SUMS` from the [v0.1.0-alpha release](https://github.com/BareProxy/bareproxy/releases/tag/v0.1.0-alpha). There are two tarballs: `bareproxy-0.1.0-alpha-linux-amd64.tar.gz` for x86-64 and `bareproxy-0.1.0-alpha-linux-arm64.tar.gz` for 64-bit ARM. The binary inside is static, so it needs no libraries on the machine.
+Download the tarball for your CPU and `SHA256SUMS` from the [v0.1.0-alpha release](https://github.com/BareProxy/bareproxy/releases/tag/v0.1.0-alpha). There are two tarballs: `bareproxy-0.1.0-alpha-linux-amd64.tar.gz` for x86-64 and `bareproxy-0.1.0-alpha-linux-arm64.tar.gz` for 64-bit ARM. The binary inside is static, so it needs no libraries on the machine. The same files are in this repository under [releases/v0.1.0-alpha](releases/v0.1.0-alpha/).
 
 ```
 sha256sum --ignore-missing -c SHA256SUMS
