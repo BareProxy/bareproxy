@@ -221,12 +221,14 @@ func TestStatusListsDrainingBackends(t *testing.T) {
 	event := func(text string) bool {
 		return slices.ContainsFunc(l.s.Current().Mem.Events(), func(e Event) bool { return e.Kind == "backend" && strings.HasPrefix(e.Text, text) })
 	}
-	for deadline := time.Now().Add(5 * time.Second); !event("pool api: " + addrB + " drained, "); time.Sleep(50 * time.Millisecond) {
+	// Each drain ends on its own timer, so wait for both: on a busy machine
+	// the two timers' events can land in either order.
+	for deadline := time.Now().Add(5 * time.Second); !event("pool api: "+addrB+" drained, ") || !event("pool api: "+addrA+" drained, "); time.Sleep(50 * time.Millisecond) {
 		if time.Now().After(deadline) {
-			t.Fatalf("no drained event for B: %+v", l.s.Current().Mem.Events())
+			t.Fatalf("no drained event for A or B: %+v", l.s.Current().Mem.Events())
 		}
 	}
-	if !event("pool api: "+addrA+" removed, draining for 2s") || !event("pool api: "+addrA+" drained, ") {
+	if !event("pool api: " + addrA + " removed, draining for 2s") {
 		t.Errorf("events for A: %+v", l.s.Current().Mem.Events())
 	}
 }
