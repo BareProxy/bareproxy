@@ -1,29 +1,39 @@
-# BareProxy 0.1.0-alpha
+# BareProxy
 
 BareProxy is a small web server and reverse proxy that explains every routing decision. It terminates TLS, routes each request by host and path, and either serves it from a folder or proxies it to a pool of backends. For any request, `explain` says what would happen before it arrives, and `why` says what did happen after. `plan` says what a config change would do before it goes live.
 
 Most sites and applications use a small part of nginx. The question behind this project is how little machinery it takes to provide the part of nginx that most applications use. BareProxy is one Go binary, built with Go's standard library and, for automatic certificates, the Go team's own `golang.org/x/crypto`. The core does TLS, routing, static files, backend health, safe config changes and request tracing. Add-on modules come later.
 
-This is version 0.1.0-alpha, released on 5 October 2026. It follows the 0.1.0-dev first cut of 2 October. It runs on Linux only for now (macOS and Windows come later) and is built with Go 1.27.1. It hasn't had an outside security review yet, so don't put it in front of anything that matters.
+This is version 0.1.0, released on 8 October 2026. It follows the 0.1.0-alpha of 5 October and the 0.1.0-dev first cut of 2 October. Binaries are built for Linux, macOS and Windows with Go 1.27. Linux is where it has been run in earnest and measured; see Known limits for the others. It hasn't had an outside security review yet, so don't put it in front of anything that matters.
 
 The whole project is open source under the Apache License 2.0. Copyright 2026 BareProxy.com.
 
 ## Install
 
-The Linux binaries are in this repository, in [releases/v0.1.0-alpha](releases/v0.1.0-alpha/): `bareproxy-0.1.0-alpha-linux-amd64.tar.gz` for x86-64 and `bareproxy-0.1.0-alpha-linux-arm64.tar.gz` for 64-bit ARM, with `SHA256SUMS` and the [release notes](releases/v0.1.0-alpha/RELEASE-NOTES.md). The binary inside is static, so it needs no libraries on the machine.
+Ready-built binaries are on the [releases page](https://github.com/BareProxy/bareproxy/releases/latest). Each archive holds the `bareproxy` command with this README, LICENSE and NOTICE, in a folder of the same name as the archive. The links below always get the newest release.
+
+| System | Archive |
+|---|---|
+| Linux, x86-64 (static) | [bareproxy_linux_amd64.tar.gz](https://github.com/BareProxy/bareproxy/releases/latest/download/bareproxy_linux_amd64.tar.gz) |
+| Linux, 64-bit ARM (static) | [bareproxy_linux_arm64.tar.gz](https://github.com/BareProxy/bareproxy/releases/latest/download/bareproxy_linux_arm64.tar.gz) |
+| macOS, Apple silicon | [bareproxy_darwin_arm64.tar.gz](https://github.com/BareProxy/bareproxy/releases/latest/download/bareproxy_darwin_arm64.tar.gz) |
+| macOS, Intel | [bareproxy_darwin_amd64.tar.gz](https://github.com/BareProxy/bareproxy/releases/latest/download/bareproxy_darwin_amd64.tar.gz) |
+| Windows, x86-64 | [bareproxy_windows_amd64.zip](https://github.com/BareProxy/bareproxy/releases/latest/download/bareproxy_windows_amd64.zip) |
+
+On Linux:
 
 ```
-V=0.1.0-alpha
-curl -LO https://github.com/BareProxy/bareproxy/raw/main/releases/v$V/bareproxy-$V-linux-amd64.tar.gz
-curl -LO https://github.com/BareProxy/bareproxy/raw/main/releases/v$V/SHA256SUMS
+U=https://github.com/BareProxy/bareproxy/releases/latest/download
+curl -LO $U/bareproxy_linux_amd64.tar.gz
+curl -LO $U/SHA256SUMS
 sha256sum --ignore-missing -c SHA256SUMS
-tar xzf bareproxy-$V-linux-amd64.tar.gz
-cd bareproxy-$V-linux-amd64
+tar xzf bareproxy_linux_amd64.tar.gz
+cd bareproxy_linux_amd64
 ./bareproxy version
 sudo install -m 0755 bareproxy /usr/local/bin/bareproxy
 ```
 
-The folder also holds this README, LICENSE and NOTICE.
+The Linux binaries are static, so they need no libraries on the machine. The macOS binaries aren't signed by Apple, so macOS may ask you to allow them the first time, or run `xattr -d com.apple.quarantine bareproxy`. Earlier versions and their notes are on the [releases page](https://github.com/BareProxy/bareproxy/releases) and in the [CHANGELOG](CHANGELOG.md).
 
 ## What works
 
@@ -71,9 +81,13 @@ go test -race ./...
 
 The acceptance tests are in `src/internal/bp`, and their names start with `TestAccept`. To run just them with their output: `go test -count=1 -run TestAccept -v ./internal/bp/`.
 
-`live/release.sh [DIR]` builds the release tarballs and `SHA256SUMS` into DIR (`dist/` by default): static binaries for linux/amd64 and linux/arm64, each with `-trimpath` and `-ldflags="-s -w"`. `sh src/cmd/bareproxy-wasm/build.sh DIR` builds the browser demo.
+`live/release.sh [DIR]` builds the release archives and `SHA256SUMS` into DIR (`dist/` by default): binaries for linux/amd64, linux/arm64, darwin/arm64, darwin/amd64 and windows/amd64, each with `CGO_ENABLED=0`, `-trimpath` and `-ldflags="-s -w"`. `live/smoke.sh BINARY` runs a binary the way a new user would: version, check, explain, serve a page and a 404, status. `sh src/cmd/bareproxy-wasm/build.sh DIR` builds the browser demo.
 
 **Go version.** Build with Go 1.27.1. Go 1.24.7's `os.Root` follows a symlink out of the folder when a path ends in a slash (CVE-2026-39822), and `TestOSRootTrailingSlash` shows that Go 1.27.1 refuses it: `Open("link/")` fails. BareProxy never opens a path ending in a slash anyway, because it asks for `index.html` instead, so its lookups stay inside on either version.
+
+### Releases
+
+Releases go out on their own. The test workflow runs `go vet`, `go test` (with `-race` on Linux) on Linux and macOS for every push to main, checks the vendored modules against Go's checksum database, and builds every release target. When it passes and the `Version` in `src/internal/bp/server.go` has no tag yet, the release workflow builds the archives from that commit, smoke-tests them on Linux x86-64, Linux ARM, macOS and Windows, and only then tags the commit `vX.Y.Z` and publishes the release with the archives, `SHA256SUMS` and that version's section of the CHANGELOG. So a release is: raise the version, add its CHANGELOG section, push.
 
 ### Dependencies
 
@@ -232,7 +246,7 @@ These settings are in the grammar, but they aren't built yet. The config check w
 - **Automatic certificates are tested against Pebble only.** Let's Encrypt itself hasn't issued a certificate to BareProxy yet; that needs a public name and ports 80 or 443.
 - **Requests Go's server can't parse leave no record.** It answers them itself (a bad request line or header, an oversized header, an unknown HTTP version) with 400, 431, 501 or 505. `OPTIONS *` does reach BareProxy: it gets 200 with no body, a `BareProxy-Id` and one record (outcome `local`, rule `OPTIONS *`).
 - **WebSocket tunnels aren't inspected.** After an upgrade the connection is a plain tunnel, so routing rules don't see what travels inside it. When an apply removes a backend, the tunnels through it close at the end of the pool's `drain` time, in use or not. WebSocket was tested over HTTP/1.1, plain and with TLS, not over HTTP/2.
-- **macOS and Windows are untested.** Only Linux has been built and run.
+- **macOS and Windows are lightly tested.** The test suite runs on Linux and macOS on every push, and each release's binaries pass a smoke test on macOS and Windows, but only Linux has run under load or in front of a real site. Outside Linux, `history` doesn't record the user who made a change. Windows has no SIGHUP, so reload with `apply`, and its admin socket is a Unix socket file, which needs Windows 10 version 1803 or later.
 - **Modules aren't built.** The core is the whole product in this release.
 
 ## License

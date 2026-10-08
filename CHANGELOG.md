@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.1.0 (8 October 2026)
+
+The first release published on GitHub's releases page, and the first built by the project's own release workflow. The code is the 0.1.0-alpha of 5 October, evening, with no change in behavior.
+
+- Binaries for macOS (Apple silicon and Intel) and Windows (x86-64), beside Linux x86-64 and ARM. On Linux they are tested in full; on macOS the test suite runs on every push; each release's macOS and Windows binaries pass a smoke test (see Known limits in the README).
+- Releases go out on their own: a push to main that passes the tests and carries a version with no tag yet is built, smoke-tested on every system, tagged and published, with SHA256SUMS. Archive names carry no version (`bareproxy_linux_amd64.tar.gz` and so on), so `releases/latest/download/...` links always get the newest release.
+- Continuous integration on every push and pull request: `go vet` and `go test` on Linux and macOS, the race detector on Linux, the vendored modules checked against Go's checksum database, and every release target and the browser demo built.
+- The binaries are no longer kept in the repository; the `releases/` folder is gone, and the README's install section points at the releases page.
+
 ## 0.1.0-alpha, finished (5 October 2026, evening)
 
 The binaries in `releases/v0.1.0-alpha` were rebuilt with these changes. The version name stays 0.1.0-alpha.
