@@ -15,6 +15,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -341,8 +342,12 @@ func TestAdminEndpoints(t *testing.T) {
 		Running  int
 		Versions []Entry
 	}
+	user := "" // peerContext names the admin socket's user on Linux only
+	if runtime.GOOS == "linux" {
+		user = userName(os.Getuid())
+	}
 	if err := json.Unmarshal([]byte(out), &hr); err != nil || code != 200 || hr.Running != 2 || len(hr.Versions) != 2 ||
-		hr.Versions[1].User != userName(os.Getuid()) || hr.Versions[1].Plan != pr.PlanID {
+		hr.Versions[1].User != user || hr.Versions[1].Plan != pr.PlanID {
 		t.Fatalf("GET /history: %d %s", code, out)
 	}
 	if code, out := adminCall(t, sock, "GET", "/history", ""); code != 200 || !strings.Contains(out, "(running)") {

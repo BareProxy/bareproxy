@@ -58,7 +58,14 @@ func runCmd(t *testing.T, args ...string) (stdout, stderr string, code int) {
 // fakeAdmin serves h on a Unix socket in a temporary folder and returns its path.
 func fakeAdmin(t *testing.T, h http.HandlerFunc) string {
 	t.Helper()
-	sock := filepath.Join(t.TempDir(), "a.sock")
+	// A short folder, not t.TempDir(): macOS caps a socket path at 104 bytes,
+	// and t.TempDir() there is long and grows with the test's name.
+	dir, err := os.MkdirTemp("", "bp")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.RemoveAll(dir) })
+	sock := filepath.Join(dir, "a.sock")
 	ln, err := net.Listen("unix", sock)
 	if err != nil {
 		t.Fatal(err)
