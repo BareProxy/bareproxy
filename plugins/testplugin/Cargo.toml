@@ -1,0 +1,15 @@
+[package]
+name = "testplugin"
+description = "BareProxy's test plugin in Rust, for the plugin host's tests: what it does is set by its config"
+publish = false
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+proxy-wasm.workspace = true
+log.workspace = true

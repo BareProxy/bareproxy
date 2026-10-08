@@ -20,16 +20,41 @@ import (
 	"bareproxy/internal/plugin/plugintest"
 )
 
-// fixture is the test plugin, testdata/fixture, built once for the package.
-var fixture []byte
+// The test plugins: the Go one (testdata/fixture), built once for the
+// package, and the Rust one (plugins/testplugin), when BP_RUST_FIXTURE names
+// its .wasm file. fixture and lang are the one the running test uses.
+var (
+	goFixture, rustFixture []byte
+	fixture                []byte
+	lang                   string
+)
 
 func TestMain(m *testing.M) {
 	var err error
-	if fixture, err = plugintest.Fixture(); err != nil {
+	if goFixture, err = plugintest.Fixture(); err == nil {
+		rustFixture, err = plugintest.RustFixture()
+	}
+	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
 	os.Exit(m.Run())
+}
+
+// both runs a test with each test plugin, as subtests go and rust.
+func both(t *testing.T, test func(t *testing.T)) {
+	for _, fx := range []struct {
+		lang string
+		wasm []byte
+	}{{"go", goFixture}, {"rust", rustFixture}} {
+		t.Run(fx.lang, func(t *testing.T) {
+			if fx.wasm == nil {
+				t.Skip("no Rust test plugin: set BP_RUST_FIXTURE to plugins/dist/testplugin.wasm")
+			}
+			fixture, lang = fx.wasm, fx.lang
+			test(t)
+		})
+	}
 }
 
 func start(t *testing.T, modes string, s Settings, memory ...int64) *Plugin {
@@ -66,7 +91,7 @@ func request(t *testing.T, p *Plugin, extra ...[2]string) (*Stream, map[string]s
 		return nil, nil, err
 	}
 	h := append([][2]string{{":method", "GET"}, {":path", "/a/b"}, {":authority", "example.com"}}, extra...)
-	h, err = s.Headers(Request, h, true)
+	h, err = s.Headers(Request, h, true, true)
 	out := map[string]string{}
 	for _, kv := range h {
 		out[kv[0]] = kv[1]
@@ -86,7 +111,7 @@ func TestCompileRefusesWhatIsNotAPlugin(t *testing.T) {
 			t.Errorf("Compile: %v, want %q", err, c.want)
 		}
 	}
-	m, err := Compile(fixture, 64<<20)
+	m, err := Compile(goFixture, 64<<20)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -94,9 +119,21 @@ func TestCompileRefusesWhatIsNotAPlugin(t *testing.T) {
 	if m.ABI != "0.2.1" || len(m.SHA) != 64 || !m.Has("proxy_on_response_body") || m.Has("proxy_on_request_body") {
 		t.Errorf("module: ABI %s, SHA %q, exports %v", m.ABI, m.SHA, m.exports)
 	}
+	if rustFixture != nil { // the Rust SDK exports every callback
+		m, err := Compile(rustFixture, 64<<20)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer m.Release()
+		if m.ABI != "0.2.1" || !m.Has("proxy_on_request_body") {
+			t.Errorf("Rust module: ABI %s, exports %v", m.ABI, m.exports)
+		}
+	}
 }
 
-func TestRequestHeadersAndNotes(t *testing.T) {
+func TestRequestHeadersAndNotes(t *testing.T) { both(t, testRequestHeadersAndNotes) }
+
+func testRequestHeadersAndNotes(t *testing.T) {
 	p := start(t, "headers count", Settings{Instances: 2})
 	for i := 1; i <= 4; i++ {
 		s, h, err := request(t, p)
@@ -113,27 +150,32 @@ func TestRequestHeadersAndNotes(t *testing.T) {
 	}
 }
 
-func TestLocalResponse(t *testing.T) {
+func TestLocalResponse(t *testing.T) { both(t, testLocalResponse) }
+
+func testLocalResponse(t *testing.T) {
 	p := start(t, "deny", Settings{})
 	s, _, err := request(t, p)
 	if err != nil {
 		t.Fatal(err)
 	}
 	l := s.Local()
-	if l == nil || l.Status != 403 || string(l.Body) != "denied by plugin\n" || l.Details != "test_deny" ||
+	details := map[string]string{"go": "test_deny", "rust": ""}[lang] // the Rust SDK sends no details
+	if l == nil || l.Status != 403 || string(l.Body) != "denied by plugin\n" || l.Details != details ||
 		!slices.Contains(l.Headers, [2]string{"x-denied", "1"}) {
 		t.Errorf("local response %+v", l)
 	}
 }
 
-func TestResponsePhase(t *testing.T) {
+func TestResponsePhase(t *testing.T) { both(t, testResponsePhase) }
+
+func testResponsePhase(t *testing.T) {
 	p := start(t, "resp log", Settings{})
 	s, _, err := request(t, p)
 	if err != nil {
 		t.Fatal(err)
 	}
 	s.SetInt("response.code", 200)
-	h, err := s.Headers(Response, [][2]string{{":status", "200"}}, false)
+	h, err := s.Headers(Response, [][2]string{{":status", "200"}}, false, false)
 	if err != nil || !slices.Contains(h, [2]string{"x-resp", "200"}) {
 		t.Errorf("response headers %v, %v", h, err)
 	}
@@ -146,7 +188,9 @@ func TestResponsePhase(t *testing.T) {
 	}
 }
 
-func TestOutgoingCall(t *testing.T) {
+func TestOutgoingCall(t *testing.T) { both(t, testOutgoingCall) }
+
+func testOutgoingCall(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		fmt.Fprintf(w, "%s %s\n", r.Host, r.URL.Path)
 	}))
@@ -164,7 +208,9 @@ func TestOutgoingCall(t *testing.T) {
 	}
 }
 
-func TestStoreAndRead(t *testing.T) {
+func TestStoreAndRead(t *testing.T) { both(t, testStoreAndRead) }
+
+func testStoreAndRead(t *testing.T) {
 	dir := t.TempDir()
 	os.WriteFile(filepath.Join(dir, "hello.txt"), []byte("hi there\n"), 0o644)
 	root, err := os.OpenRoot(dir)
@@ -184,7 +230,9 @@ func TestStoreAndRead(t *testing.T) {
 	}
 }
 
-func TestTicks(t *testing.T) {
+func TestTicks(t *testing.T) { both(t, testTicks) }
+
+func testTicks(t *testing.T) {
 	p := start(t, "tick", Settings{})
 	deadline := time.Now().Add(5 * time.Second)
 	for time.Now().Before(deadline) {
@@ -201,7 +249,9 @@ func TestTicks(t *testing.T) {
 
 // A plugin that fails breaks only its instance: the request gets an error,
 // and a new instance takes its place.
-func TestFailuresBreakTheInstanceOnly(t *testing.T) {
+func TestFailuresBreakTheInstanceOnly(t *testing.T) { both(t, testFailuresBreakTheInstanceOnly) }
+
+func testFailuresBreakTheInstanceOnly(t *testing.T) {
 	for _, c := range []struct {
 		modes  string
 		s      Settings
@@ -242,14 +292,18 @@ func TestFailuresBreakTheInstanceOnly(t *testing.T) {
 
 // The memory cap is the configured one: 48 MB fits in 128 MB, not in 32 MB
 // (TestFailuresBreakTheInstanceOnly).
-func TestMemoryCap(t *testing.T) {
+func TestMemoryCap(t *testing.T) { both(t, testMemoryCap) }
+
+func testMemoryCap(t *testing.T) {
 	p := start(t, "grow", Settings{}, 128<<20)
 	if _, _, err := request(t, p); err != nil {
 		t.Errorf("48 MB in a 128 MB cap: %v", err)
 	}
 }
 
-func TestRefusedConfigStopsStart(t *testing.T) {
+func TestRefusedConfigStopsStart(t *testing.T) { both(t, testRefusedConfigStopsStart) }
+
+func testRefusedConfigStopsStart(t *testing.T) {
 	m, err := Compile(fixture, 64<<20)
 	if err != nil {
 		t.Fatal(err)
@@ -276,7 +330,9 @@ func TestPairs(t *testing.T) {
 
 // A plugin that crashes, and whose new instances then fail to start, is
 // retried with growing waits, not in a storm.
-func TestNoRestartStorm(t *testing.T) {
+func TestNoRestartStorm(t *testing.T) { both(t, testNoRestartStorm) }
+
+func testNoRestartStorm(t *testing.T) {
 	p := start(t, "crash flaky", Settings{})
 	if _, _, err := request(t, p); err == nil {
 		t.Fatal("no crash")
@@ -293,6 +349,7 @@ func TestNoRestartStorm(t *testing.T) {
 // A plugin that sleeps doesn't hold its instance: WASI's sleep returns at
 // once, or the call runs into its time limit.
 func TestSleepDoesNotHold(t *testing.T) {
+	fixture = goFixture // a Rust plugin has no sleep
 	p := start(t, "sleep", Settings{Timeout: 100 * time.Millisecond})
 	begin := time.Now()
 	request(t, p)

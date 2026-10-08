@@ -1,0 +1,24 @@
+# BareProxy's plugins, written in Rust with the Proxy-Wasm SDK and built to
+# WebAssembly (wasm32-unknown-unknown). build.sh builds them all into dist/.
+[workspace]
+resolver = "3"
+members = ["testplugin"]
+
+[workspace.package]
+version = "0.3.0"
+edition = "2024"
+license = "Apache-2.0"
+repository = "https://github.com/BareProxy/bareproxy"
+
+[workspace.dependencies]
+proxy-wasm = "=0.2.5"
+log = "0.4"
+
+# Small, fast modules: one codegen unit, link-time optimization, and an
+# abort on panic (which a plugin host sees as a trap).
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = "debuginfo"

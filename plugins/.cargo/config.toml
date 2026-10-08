@@ -1,0 +1,10 @@
+# The crates plugins use are vendored (see build.sh), so a plugin builds with
+# no network, like the rest of BareProxy.
+[source.crates-io]
+replace-with = "vendored-sources"
+
+[source.vendored-sources]
+directory = "vendor"
+
+[net]
+offline = true

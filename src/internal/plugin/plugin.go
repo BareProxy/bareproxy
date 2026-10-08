@@ -87,6 +87,12 @@ type instance struct {
 	limit     time.Duration           // the time limit for calls while starting; 0 means Settings.Timeout
 	starting  bool                    // a failure while starting doesn't call for a replacement
 	fns       map[string]api.Function // exported functions, made once: making one allocates its stack
+	ctx       context.Context         // carries the instance to host functions
+	// The time limit: one timer per instance, armed for each call, instead
+	// of a context deadline, which costs a goroutine and a timer per call.
+	timer     *time.Timer
+	seq       atomic.Uint64 // the call being timed, or 0
+	deadline  atomic.Int64  // when it runs out, in Unix nanoseconds
 	replacing atomic.Bool
 }
 
@@ -159,13 +165,15 @@ type ctxKey struct{}
 
 func (p *Plugin) newInstance() (*instance, error) {
 	in := &instance{p: p, streams: map[uint32]*Stream{}, nextID: rootID, fns: map[string]api.Function{}}
+	in.ctx = context.WithValue(context.Background(), ctxKey{}, in)
+	in.timer = time.AfterFunc(time.Hour, in.expire)
+	in.timer.Stop()
 	logw := &logWriter{p: p}
 	// No real sleep: a plugin that sleeps would hold its instance past the
 	// time limit, so WASI's sleep returns at once.
 	cfg := wazero.NewModuleConfig().WithName("").WithStartFunctions().WithSysWalltime().WithSysNanotime().
 		WithRandSource(rand.Reader).WithStdout(logw).WithStderr(logw)
-	ctx := context.WithValue(context.Background(), ctxKey{}, in)
-	mod, err := p.mod.rt.InstantiateModule(ctx, p.mod.cm, cfg)
+	mod, err := p.mod.rt.InstantiateModule(in.ctx, p.mod.cm, cfg)
 	if err != nil {
 		return nil, fmt.Errorf("it didn't start: %v", err)
 	}
@@ -215,9 +223,13 @@ func (in *instance) call(name string, args ...uint64) (uint64, error) {
 		return 0, nil
 	}
 	limit := cmp.Or(in.limit, in.p.S.Timeout)
-	ctx, cancel := context.WithTimeout(context.WithValue(context.Background(), ctxKey{}, in), limit)
-	defer cancel()
-	res, err := f.Call(ctx, args...)
+	seq := in.seq.Load() + 1
+	in.deadline.Store(time.Now().Add(limit).UnixNano())
+	in.seq.Store(seq)
+	in.timer.Reset(limit)
+	res, err := f.Call(in.ctx, args...)
+	in.seq.Store(0)
+	in.timer.Stop()
 	if err != nil {
 		var ee *sys.ExitError
 		switch {
@@ -240,6 +252,24 @@ func (in *instance) call(name string, args ...uint64) (uint64, error) {
 	return res[0], nil
 }
 
+// expire stops a call that runs past its time limit by closing the module,
+// which the code wazero compiles checks for, in loops too. A timer that
+// fires early (its call ended and another began) waits for the new call's
+// own deadline.
+func (in *instance) expire() {
+	seq := in.seq.Load()
+	if seq == 0 {
+		return
+	}
+	if left := time.Until(time.Unix(0, in.deadline.Load())); left > 0 {
+		in.timer.Reset(left)
+		return
+	}
+	if in.seq.Load() == seq {
+		in.mod.CloseWithExitCode(context.Background(), sys.ExitCodeDeadlineExceeded)
+	}
+}
+
 // fn returns an exported function, or nil.
 func (in *instance) fn(name string) api.Function {
 	f, ok := in.fns[name]
@@ -256,6 +286,7 @@ func (in *instance) fail(err error) {
 		return
 	}
 	in.broken = err
+	in.timer.Stop()
 	if in.tick != nil {
 		close(in.tick)
 		in.tick = nil

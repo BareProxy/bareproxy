@@ -93,6 +93,15 @@ type pluginUse struct {
 	off  bool // it failed with on-error open, so later phases skip it
 }
 
+// wantsBody reports whether the plugin is handed a body: its config says so
+// (body request, body response) and it has the callback.
+func (u *pluginUse) wantsBody(phase int) bool {
+	if phase == plugin.Request {
+		return u.spec.BodyRequest && u.p.Wants("proxy_on_request_body")
+	}
+	return u.spec.BodyResponse && u.p.Wants("proxy_on_response_body")
+}
+
 // pluginRun is a request's plugins, and the response as they see it.
 type pluginRun struct {
 	s         *Server
@@ -139,7 +148,9 @@ func (s *Server) pluginRequest(w *respWriter, r *http.Request, rt *Runtime, site
 		var nh [][2]string
 		if err == nil {
 			use.st = st
-			nh, err = st.Headers(plugin.Request, h, eos)
+			// A plugin that pauses for the request body gets it next;
+			// otherwise a pause waits for it to go on.
+			nh, err = st.Headers(plugin.Request, h, eos, eos || !use.wantsBody(plugin.Request))
 		}
 		rec.Plugins[use.i].MS += msSince(start)
 		if err != nil { // what a failed plugin changed is dropped
@@ -173,7 +184,7 @@ func (s *Server) pluginRequest(w *respWriter, r *http.Request, rt *Runtime, site
 			continue
 		}
 		pr.respHdr = pr.respHdr || use.p.Wants("proxy_on_response_headers")
-		if use.p.Wants("proxy_on_response_body") {
+		if use.wantsBody(plugin.Response) {
 			pr.respBody, pr.bodyMax = true, max(pr.bodyMax, use.spec.BodyLimit)
 		}
 	}
@@ -236,7 +247,7 @@ func (pr *pluginRun) requestBody(w *respWriter, site *Site) bool {
 	var want []*pluginUse
 	var limit int64
 	for _, use := range pr.uses {
-		if !use.off && use.p.Wants("proxy_on_request_body") {
+		if !use.off && use.wantsBody(plugin.Request) {
 			want, limit = append(want, use), max(limit, use.spec.BodyLimit)
 		}
 	}
@@ -347,6 +358,10 @@ func (pr *pluginRun) header(w *respWriter, code int) (int, bool) {
 	if code == http.StatusSwitchingProtocols { // a WebSocket tunnel passes as it is
 		return code, false
 	}
+	// Whether the body goes to the plugins is settled first: a plugin that
+	// pauses on the headers to wait for the body gets it in the body phase.
+	why := pr.bodySkip(w, code)
+	body := pr.respBody && why == ""
 	if pr.respHdr {
 		h := [][2]string{{":status", strconv.Itoa(code)}}
 		for _, k := range slices.Sorted(maps.Keys(w.Header())) {
@@ -361,7 +376,7 @@ func (pr *pluginRun) header(w *respWriter, code int) (int, bool) {
 			}
 			start := time.Now()
 			use.st.SetInt("response.code", int64(code))
-			nh, err := use.st.Headers(plugin.Response, h, false)
+			nh, err := use.st.Headers(plugin.Response, h, false, !(body && use.wantsBody(plugin.Response)))
 			pr.rec.Plugins[use.i].MS += msSince(start)
 			if err != nil {
 				if pr.fail(w, use, err) {
@@ -395,34 +410,40 @@ func (pr *pluginRun) header(w *respWriter, code int) (int, bool) {
 		}
 	}
 	pr.code = code
-	if !pr.respBody || pr.r.Method == http.MethodHead || code == http.StatusNoContent || code == http.StatusNotModified {
-		return code, false
-	}
-	// Bodies a plugin can't make sense of whole go out as they are: a part
-	// of a file (206), a compressed body, a stream of events.
-	h := w.Header()
-	enc := h.Get("Content-Encoding")
-	why := ""
-	switch {
-	case code == http.StatusPartialContent:
-		why = "partial (206)"
-	case enc != "" && enc != "identity":
-		why = "compressed (" + enc + ")"
-	case strings.HasPrefix(h.Get("Content-Type"), "text/event-stream"):
-		why = "a stream of events"
-	}
-	if why != "" {
+	if why != "" && why != "none" {
 		pr.bodyNote("the response body is %s, so it wasn't handed over", why)
+	}
+	if !body {
 		return code, false
 	}
 	pr.buffering = true
 	return code, true
 }
 
+// bodySkip says why the response body won't go to the plugins: "none" when
+// no plugin takes it or there's no body, or a reason for the record. Bodies
+// a plugin can't make sense of whole go out as they are: a part of a file
+// (206), a compressed body, a stream of events.
+func (pr *pluginRun) bodySkip(w *respWriter, code int) string {
+	if !pr.respBody || pr.r.Method == http.MethodHead || code == http.StatusNoContent || code == http.StatusNotModified {
+		return "none"
+	}
+	h := w.Header()
+	switch enc := h.Get("Content-Encoding"); {
+	case code == http.StatusPartialContent:
+		return "partial (206)"
+	case enc != "" && enc != "identity":
+		return "compressed (" + enc + ")"
+	case strings.HasPrefix(h.Get("Content-Type"), "text/event-stream"):
+		return "a stream of events"
+	}
+	return ""
+}
+
 // bodyNote adds a note to each plugin that wanted the response body.
 func (pr *pluginRun) bodyNote(f string, a ...any) {
 	for _, use := range pr.uses {
-		if !use.off && use.p.Wants("proxy_on_response_body") {
+		if !use.off && use.wantsBody(plugin.Response) {
 			pr.rec.Plugins[use.i].Notes = append(pr.rec.Plugins[use.i].Notes, fmt.Sprintf(f, a...))
 		}
 	}
@@ -461,7 +482,7 @@ func (pr *pluginRun) finishBody(w *respWriter) {
 	body := pr.buf.Bytes()
 	for i := len(pr.uses) - 1; i >= 0; i-- {
 		use := pr.uses[i]
-		if use.off || !use.p.Wants("proxy_on_response_body") {
+		if use.off || !use.wantsBody(plugin.Response) {
 			continue
 		}
 		start := time.Now()

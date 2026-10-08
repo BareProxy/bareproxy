@@ -27,7 +27,7 @@ AI crawler control comes first. It is small, needs only headers, the record and 
 
 ## Order of work
 
-1. **The plugin host.** Done in 0.2.0: wazero, the Proxy-Wasm host, the hook points, the `bareproxy_` functions, config lines, plugins in `explain`, `plan`, `history`, `status` and the record, and a test plugin in Go with tests for each callback and failure. Still to do here: trim it to its 2,000-line budget, and a test plugin in Rust, to measure a plugin that doesn't carry Go's runtime.
+1. **The plugin host.** Done in 0.2.0: wazero, the Proxy-Wasm host, the hook points, the `bareproxy_` functions, config lines, plugins in `explain`, `plan`, `history`, `status` and the record, and a test plugin in Go with tests for each callback and failure. Plugins in Rust are set up in 0.3.0 (`plugins/`, with a Rust test plugin the host's tests run with); the plugins are written in Rust. Still to do here: trim the host to its 2,000-line budget.
 2. **AI crawler control**, then **RenderCache** with its renderer worker.
 3. **Rate limiting and basic WAF**, **Auth gate**, **Response cache**: the usual reasons people put a proxy in front of an app.
 4. **Header and rewrite rules**, **Maintenance and failover pages**, **Analytics without JavaScript**.
@@ -43,5 +43,6 @@ Before plugins, the plan was eight modules compiled into the binary. Limit, Auth
 
 - its own folder under `plugins/`, with a README that is its manual
 - tests for each thing it does, and failure tests aimed at its main promise (for AI crawler control: a faked user agent from an address outside the bot's ranges is treated as unknown)
+- its code in Rust, in a folder of `plugins/`, built by `plugins/build.sh`
 - a `.wasm` file built by CI and attached to each release, with its SHA-256 in SHA256SUMS
 - a license stated in its folder. The project is Apache 2.0 today; premium add-ons may come later under other licenses, and which plugins, if any, hasn't been decided

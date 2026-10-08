@@ -40,9 +40,12 @@ type PluginSpec struct {
 	readRoots  []*os.Root
 	Store      int64 // 0: no store
 	BodyLimit  int64
-	Module     *plugin.Module
-	Pinned     bool   // read from the history's copy, not from File
-	wasm       []byte // the file, for the history's copy
+	// BodyRequest and BodyResponse say which bodies the plugin is handed.
+	// Proxy-Wasm SDKs export every callback, so the module can't tell.
+	BodyRequest, BodyResponse bool
+	Module                    *plugin.Module
+	Pinned                    bool   // read from the history's copy, not from File
+	wasm                      []byte // the file, for the history's copy
 }
 
 // Pin is the exact plugin file and config file a history version ran.
@@ -56,8 +59,8 @@ type Pin struct {
 // key says everything that makes a running plugin what it is: two specs with
 // the same key can share one running plugin across an apply.
 func (ps *PluginSpec) key() string {
-	return fmt.Sprintf("%s|%s|%d|%s|%s|%d|%v|%v|%d|%d", ps.SHA, ps.ConfigSHA, ps.Memory, ps.Timeout, ps.Pause,
-		ps.Instances, ps.AllowHTTP, ps.Read, ps.Store, ps.BodyLimit)
+	return fmt.Sprintf("%s|%s|%d|%s|%s|%d|%v|%v|%d|%d|%v|%v", ps.SHA, ps.ConfigSHA, ps.Memory, ps.Timeout, ps.Pause,
+		ps.Instances, ps.AllowHTTP, ps.Read, ps.Store, ps.BodyLimit, ps.BodyRequest, ps.BodyResponse)
 }
 
 func (p *parser) newPlugin(ln int, w []string) *PluginSpec {
@@ -156,6 +159,20 @@ func (p *parser) pluginSetting(ps *PluginSpec, ln int, w []string) error {
 		return size(&ps.Store, 1<<10)
 	case "body-limit":
 		return size(&ps.BodyLimit, 0)
+	case "body":
+		if len(w) < 2 {
+			return errors.New("body takes request, response or both: the bodies the plugin is handed, whole")
+		}
+		for _, b := range w[1:] {
+			switch b {
+			case "request":
+				ps.BodyRequest = true
+			case "response":
+				ps.BodyResponse = true
+			default:
+				return fmt.Errorf("body takes request and response, not %q", b)
+			}
+		}
 	default:
 		return fmt.Errorf("unknown plugin setting %q", w[0])
 	}

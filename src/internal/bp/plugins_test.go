@@ -18,12 +18,45 @@ import (
 	"bareproxy/internal/plugin/plugintest"
 )
 
+// testPlugin is the test plugin the running test uses: the Go one or the
+// Rust one (see bothPlugins).
+var testPlugin []byte
+
+// bothPlugins runs a test with the Go test plugin and with the Rust one, as
+// subtests go and rust. The Rust one is skipped when BP_RUST_FIXTURE isn't
+// set (see plugintest.RustFixture).
+func bothPlugins(t *testing.T, test func(t *testing.T)) {
+	goWasm, err := plugintest.Fixture()
+	if err != nil {
+		t.Fatal(err)
+	}
+	rustWasm, err := plugintest.RustFixture()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, fx := range []struct {
+		lang string
+		wasm []byte
+	}{{"go", goWasm}, {"rust", rustWasm}} {
+		t.Run(fx.lang, func(t *testing.T) {
+			if fx.wasm == nil {
+				t.Skip("no Rust test plugin: set BP_RUST_FIXTURE to plugins/dist/testplugin.wasm")
+			}
+			testPlugin = fx.wasm
+			test(t)
+		})
+	}
+}
+
 // pluginFiles writes the test plugin and its config to dir.
 func pluginFiles(t *testing.T, dir, modes string) (wasm, conf string) {
 	t.Helper()
-	b, err := plugintest.Fixture()
-	if err != nil {
-		t.Fatal(err)
+	b := testPlugin
+	if b == nil {
+		var err error
+		if b, err = plugintest.Fixture(); err != nil {
+			t.Fatal(err)
+		}
 	}
 	wasm, conf = filepath.Join(dir, "test.wasm"), filepath.Join(dir, "test.txt")
 	if os.WriteFile(wasm, b, 0o644) != nil || os.WriteFile(conf, []byte(modes), 0o644) != nil {
@@ -92,14 +125,16 @@ func fetch(t *testing.T, l *liveServer, path string) (*http.Response, string, *R
 	return resp, string(b), &rec
 }
 
-func TestPluginAnswersBeforeRouting(t *testing.T) {
+func TestPluginAnswersBeforeRouting(t *testing.T) { bothPlugins(t, testPluginAnswersBeforeRouting) }
+
+func testPluginAnswersBeforeRouting(t *testing.T) {
 	l := pluginServer(t, "deny", "", "")
 	resp, body, rec := fetch(t, l, "/page.txt")
 	if resp.StatusCode != 403 || body != "denied by plugin\n" || resp.Header.Get("X-Denied") != "1" || resp.Header.Get("BareProxy-Id") == "" {
 		t.Errorf("response %d %q %v", resp.StatusCode, body, resp.Header)
 	}
 	if rec.Outcome != "plugin" || rec.Status != 403 || rec.Rule != "" || len(rec.Plugins) != 1 ||
-		rec.Plugins[0].Action != "answered 403" || rec.Reason != "plugin test answered 403 (test_deny)" {
+		rec.Plugins[0].Action != "answered 403" || !strings.HasPrefix(rec.Reason, "plugin test answered 403") {
 		t.Errorf("record %+v", rec)
 	}
 	if why := RenderWhy(rec); !strings.Contains(why, "Plugin test: answered 403") {
@@ -108,11 +143,15 @@ func TestPluginAnswersBeforeRouting(t *testing.T) {
 }
 
 func TestPluginChangesRequestAndResponse(t *testing.T) {
+	bothPlugins(t, testPluginChangesRequestAndResponse)
+}
+
+func testPluginChangesRequestAndResponse(t *testing.T) {
 	be := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		fmt.Fprintf(w, "backend saw x-plugin=%s\n", r.Header.Get("X-Plugin"))
 	}))
 	defer be.Close()
-	l := pluginServer(t, "headers resp log", be.URL, "")
+	l := pluginServer(t, "headers resp log", be.URL, "  body response\n")
 	for _, c := range []struct{ path, body string }{
 		{"/api/x", "BACKEND SAW X-PLUGIN=HELLO\n"}, // proxied
 		{"/page.txt", "A STATIC PAGE\n"},           // a file, read in for the plugin instead of sent with sendfile
@@ -134,7 +173,9 @@ func TestPluginChangesRequestAndResponse(t *testing.T) {
 	}
 }
 
-func TestPluginFailureFollowsOnError(t *testing.T) {
+func TestPluginFailureFollowsOnError(t *testing.T) { bothPlugins(t, testPluginFailureFollowsOnError) }
+
+func testPluginFailureFollowsOnError(t *testing.T) {
 	l := pluginServer(t, "crash", "", "")
 	resp, _, rec := fetch(t, l, "/page.txt")
 	if resp.StatusCode != 502 || rec.Outcome != "plugin_error" || !strings.Contains(rec.Plugins[0].Error, "crashed") {
@@ -152,6 +193,10 @@ func TestPluginFailureFollowsOnError(t *testing.T) {
 // says so, the history keeps the files each version ran, and a rollback runs
 // the old file, not whatever is at the path now.
 func TestPluginFilesInPlanHistoryAndRollback(t *testing.T) {
+	bothPlugins(t, testPluginFilesInPlanHistoryAndRollback)
+}
+
+func testPluginFilesInPlanHistoryAndRollback(t *testing.T) {
 	l := pluginServer(t, "headers", "", "")
 	text, _ := os.ReadFile(l.conf)
 	first := l.s.Current().Plugins["test"]
@@ -230,7 +275,9 @@ func TestPluginConfigProblems(t *testing.T) {
 
 // A plugin that fails or answers on the response replaces it: nothing of the
 // backend's body gets through.
-func TestPluginReplacesTheResponse(t *testing.T) {
+func TestPluginReplacesTheResponse(t *testing.T) { bothPlugins(t, testPluginReplacesTheResponse) }
+
+func testPluginReplacesTheResponse(t *testing.T) {
 	be := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		io.WriteString(w, "SECRET BACKEND BODY\n")
 	}))
@@ -260,7 +307,9 @@ func TestPluginReplacesTheResponse(t *testing.T) {
 
 // Two plugins on one site: each gets its own properties, and a plugin that
 // fails with on-error open leaves no changes behind.
-func TestTwoPluginsOnOneSite(t *testing.T) {
+func TestTwoPluginsOnOneSite(t *testing.T) { bothPlugins(t, testTwoPluginsOnOneSite) }
+
+func testTwoPluginsOnOneSite(t *testing.T) {
 	be := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		fmt.Fprintf(w, "partial=%q plugin=%q\n", r.Header.Get("X-Partial"), r.Header.Get("X-Plugin"))
 	}))
@@ -313,7 +362,9 @@ pool api
 
 // A plugin kept across an apply keeps reading its folder after the old
 // config's folders close.
-func TestKeptPluginKeepsItsFolders(t *testing.T) {
+func TestKeptPluginKeepsItsFolders(t *testing.T) { bothPlugins(t, testKeptPluginKeepsItsFolders) }
+
+func testKeptPluginKeepsItsFolders(t *testing.T) {
 	l := pluginServer(t, "read", "", "  read public\n")
 	writeFile(t, filepath.Join(l.dir, "public", "hello.txt"), "hi\n")
 	text, _ := os.ReadFile(l.conf)
@@ -344,7 +395,16 @@ func TestKeptPluginKeepsItsFolders(t *testing.T) {
 
 // benchPlugin measures a request answered by a respond rule, with the test
 // plugin in the given modes on its site, or with no plugin when modes is "".
-func benchPlugin(b *testing.B, modes string) {
+func benchPlugin(b *testing.B, modes string, rust bool) {
+	testPlugin = nil
+	if rust {
+		w, err := plugintest.RustFixture()
+		if err != nil || w == nil {
+			b.Skip("no Rust test plugin: set BP_RUST_FIXTURE")
+		}
+		testPlugin = w
+		defer func() { testPlugin = nil }()
+	}
 	dir := b.TempDir()
 	wasm, _ := pluginFiles(&testing.T{}, dir, modes)
 	src := "global\n  trace-log off\n"
@@ -377,6 +437,8 @@ func benchPlugin(b *testing.B, modes string) {
 	}
 }
 
-func BenchmarkPluginNone(b *testing.B)    { benchPlugin(b, "") }
-func BenchmarkPluginEmpty(b *testing.B)   { benchPlugin(b, "nothing") }
-func BenchmarkPluginHeaders(b *testing.B) { benchPlugin(b, "headers") }
+func BenchmarkPluginNone(b *testing.B)        { benchPlugin(b, "", false) }
+func BenchmarkPluginGoEmpty(b *testing.B)     { benchPlugin(b, "nothing", false) }
+func BenchmarkPluginGoHeaders(b *testing.B)   { benchPlugin(b, "headers", false) }
+func BenchmarkPluginRustEmpty(b *testing.B)   { benchPlugin(b, "nothing", true) }
+func BenchmarkPluginRustHeaders(b *testing.B) { benchPlugin(b, "headers", true) }

@@ -1,12 +1,18 @@
-# go test -run XXX -bench BenchmarkPlugin -benchtime 3s -count 3 ./internal/bp, 2026-10-08, go version go1.27.1 linux/amd64, Intel(R) Xeon(R) Processor @ 2.10GHz, 2 CPUs
-# One request answered by a respond rule: no plugin; the test plugin (Go, built for wasip1) doing nothing; and the test plugin adding a request header and writing a note. One instance.
-BenchmarkPluginNone-2      	  743233	      4717 ns/op	    2287 B/op	      22 allocs/op
-BenchmarkPluginNone-2      	  718377	      4777 ns/op	    2287 B/op	      22 allocs/op
-BenchmarkPluginNone-2      	  732746	      4600 ns/op	    2287 B/op	      22 allocs/op
-BenchmarkPluginEmpty-2     	   81144	     42390 ns/op	   10815 B/op	     146 allocs/op
-BenchmarkPluginEmpty-2     	   79862	     41732 ns/op	   10817 B/op	     146 allocs/op
-BenchmarkPluginEmpty-2     	   87270	     44265 ns/op	   10803 B/op	     146 allocs/op
-BenchmarkPluginHeaders-2   	   40698	     93110 ns/op	   16356 B/op	     185 allocs/op
-BenchmarkPluginHeaders-2   	   37923	     86750 ns/op	   17023 B/op	     186 allocs/op
-BenchmarkPluginHeaders-2   	   35913	     88875 ns/op	   15869 B/op	     189 allocs/op
-ok  	bareproxy/internal/bp	37.601s
+# go test -run XXX -bench BenchmarkPlugin -benchtime 3s -count 3 ./internal/bp, 2026-10-08, go version go1.27.1 linux/amd64, rustc 1.97.0 (2d8144b78 2026-07-07), Intel(R) Xeon(R) Processor @ 2.10GHz, 2 CPUs
+# One request answered by a respond rule: with no plugin; with the Go test plugin (Go, built for wasip1) and the Rust test plugin (proxy-wasm SDK 0.2.5, wasm32-unknown-unknown), each doing nothing (Empty) or adding a request header and writing a note (Headers). One instance.
+BenchmarkPluginNone-2          	  944143	      3893 ns/op	    2282 B/op	      22 allocs/op
+BenchmarkPluginNone-2          	  914053	      4004 ns/op	    2282 B/op	      22 allocs/op
+BenchmarkPluginNone-2          	  815038	      3881 ns/op	    2285 B/op	      22 allocs/op
+BenchmarkPluginGoEmpty-2       	  113827	     28864 ns/op	    7439 B/op	      97 allocs/op
+BenchmarkPluginGoEmpty-2       	  122188	     28140 ns/op	    7431 B/op	      97 allocs/op
+BenchmarkPluginGoEmpty-2       	  114189	     29063 ns/op	    7471 B/op	      96 allocs/op
+BenchmarkPluginGoHeaders-2     	   51235	     60770 ns/op	   12852 B/op	     136 allocs/op
+BenchmarkPluginGoHeaders-2     	   63315	     62516 ns/op	   12982 B/op	     138 allocs/op
+BenchmarkPluginGoHeaders-2     	   62702	     61238 ns/op	   13102 B/op	     138 allocs/op
+BenchmarkPluginRustEmpty-2     	  209803	     18519 ns/op	    7385 B/op	      97 allocs/op
+BenchmarkPluginRustEmpty-2     	  173294	     18934 ns/op	    7398 B/op	      97 allocs/op
+BenchmarkPluginRustEmpty-2     	  209312	     18511 ns/op	    7385 B/op	      97 allocs/op
+BenchmarkPluginRustHeaders-2   	  124729	     28469 ns/op	    8852 B/op	     145 allocs/op
+BenchmarkPluginRustHeaders-2   	  130358	     28440 ns/op	    8847 B/op	     145 allocs/op
+BenchmarkPluginRustHeaders-2   	  139929	     28104 ns/op	    8840 B/op	     145 allocs/op
+ok  	bareproxy/internal/bp	62.815s

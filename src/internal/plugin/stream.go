@@ -75,11 +75,12 @@ func (p *Plugin) NewStream(props map[string]string, ints map[string]int64) (*Str
 func (p *Plugin) Wants(callback string) bool { return p.mod.Has(callback) }
 
 // Headers runs proxy_on_request_headers or proxy_on_response_headers and
-// returns the headers as the plugin left them. If the plugin pauses the
-// request, Headers waits for it to go on, up to the pause limit. After it
-// returns, Local and Closed say whether the plugin answered or closed the
-// request instead.
-func (s *Stream) Headers(phase int, h [][2]string, endOfStream bool) ([][2]string, error) {
+// returns the headers as the plugin left them. If the plugin pauses and
+// wait is set, Headers waits for it to go on, up to the pause limit; the
+// caller sets wait unless the body phase follows, which is where a plugin
+// that pauses for the body gets it. After it returns, Local and Closed say
+// whether the plugin answered or closed the request instead.
+func (s *Stream) Headers(phase int, h [][2]string, endOfStream, wait bool) ([][2]string, error) {
 	name := "proxy_on_request_headers"
 	if phase == Response {
 		name = "proxy_on_response_headers"
@@ -91,7 +92,7 @@ func (s *Stream) Headers(phase int, h [][2]string, endOfStream bool) ([][2]strin
 	} else {
 		s.respH = h
 	}
-	err := s.run(name, uint64(len(h)), boolArg(endOfStream))
+	err := s.run(name, uint64(len(h)), boolArg(endOfStream), wait)
 	if phase == Request {
 		h = s.reqH
 	} else {
@@ -115,7 +116,7 @@ func (s *Stream) Body(phase int, b []byte) ([]byte, error) {
 	} else {
 		s.respB = b
 	}
-	err := s.run(name, uint64(len(b)), 1)
+	err := s.run(name, uint64(len(b)), 1, true)
 	if phase == Request {
 		b = s.reqB
 	} else {
@@ -127,7 +128,7 @@ func (s *Stream) Body(phase int, b []byte) ([]byte, error) {
 
 // run makes one callback, and waits while the plugin keeps the request
 // paused. The caller holds in.mu; it is let go while waiting.
-func (s *Stream) run(name string, a, b uint64) error {
+func (s *Stream) run(name string, a, b uint64, wait bool) error {
 	in := s.in
 	if !in.p.mod.Has(name) {
 		return nil
@@ -139,7 +140,7 @@ func (s *Stream) run(name string, a, b uint64) error {
 	s.goAhd = false
 	in.effective = s.id
 	action, err := in.call(name, uint64(s.id), a, b)
-	if err != nil || action == 0 || s.local != nil || s.closed {
+	if err != nil || action == 0 || s.local != nil || s.closed || !wait {
 		return err
 	}
 	in.mu.Unlock()

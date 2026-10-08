@@ -1,6 +1,6 @@
 # BareProxy Plugins: Design Note
 
-Status: accepted on 8 October 2026, and the plugin host is built in 0.2.0. No plugin is built yet; [plugin-program.md](plugin-program.md) lists them and their order. This note now describes what was built. Where the build differs from the first version of the note, it says so.
+Status: accepted on 8 October 2026; the plugin host is built in 0.2.0, and plugins in Rust are set up in 0.3.0. No plugin is built yet; [plugin-program.md](plugin-program.md) lists them and their order. This note now describes what was built. Where the build differs from the first version of the note, it says so.
 
 ## The decision
 
@@ -23,12 +23,14 @@ This replaces the earlier plan of modules compiled into the binary. The trade is
 | Point | Proxy-Wasm callback | What a plugin can do there |
 |---|---|---|
 | Before routing | `proxy_on_request_headers` | Read and change the request's headers, method, path and host (`:method`, `:path`, `:authority`), answer the request itself (`proxy_send_local_response`), pause it, or let it go on |
-| Request body | `proxy_on_request_body` | Read or replace the whole body, up to the body limit, when the plugin exports this callback |
+| Request body | `proxy_on_request_body` | Read or replace the whole body, up to the body limit, with `body request` |
 | Response headers | `proxy_on_response_headers` | Read and change the status and the headers, or replace the response |
-| Response body | `proxy_on_response_body` | Read or replace the whole body, when the plugin exports this callback |
+| Response body | `proxy_on_response_body` | Read or replace the whole body, with `body response` |
 | After the response | `proxy_on_done`, `proxy_on_log`, `proxy_on_delete` | Read the finished request; write notes for the record |
 | Timer | `proxy_on_tick` | Periodic work, once a plugin sets a period |
 | Outgoing call | `proxy_on_http_call_response` | The response to a `proxy_http_call` |
+
+A plugin is handed a body only when its `body` line says so (`body request`, `body response` or both). Proxy-Wasm SDKs export every callback, so the module can't say which bodies a plugin reads, and without the line an SDK plugin would hold up every body. A plugin that pauses on the headers waits there only when no body follows for it; when one does, it gets the body next, as with Envoy.
 
 A site's plugins run in the order its `use` lines name them, after the site is found by host and before the path is normalized and routed. A plugin that answers stops the ones after it. The response goes through the plugins last one first, as in Envoy. Static files go through the response points like proxied responses, so a plugin treats both the same way. A WebSocket upgrade (101) passes through untouched.
 
@@ -104,12 +106,15 @@ Some jobs don't fit a sandbox: running a headless browser, encoding AVIF at spee
 
 ## Speed
 
-Measured on a 2.1 GHz Xeon with the test plugin, which is written in Go and built for `wasip1` (`results/plugin-bench.log`): a request answered by a `respond` rule costs about 4.7 microseconds with no plugin, about 42 with a plugin that does nothing, and about 89 with one that adds a request header and writes a note. The design budget was under 10 microseconds for a header-only plugin, so this is well over it.
+Measured on a 2.1 GHz Xeon (`results/plugin-bench.log`): a request answered by a `respond` rule costs about 4 microseconds with no plugin. The Rust test plugin (Proxy-Wasm SDK 0.2.5) adds about 15 doing nothing and about 24 adding a request header and writing a note. The Go test plugin adds about 25 and 58. The design budget was under 10 microseconds for a header-only plugin, so even Rust is over it.
 
-Most of the time is spent inside the plugin: each callback into Go's WebAssembly runtime costs a few microseconds, and a request makes seven of them. Plugins written in Rust, C or AssemblyScript should cost much less; that is measured when the first one is built. On the host side, each module's exported functions are made once per instance, since making one allocates its stack.
+A request makes six calls into a plugin: create its context, request headers, response headers, done, log and delete. In Go, each call starts Go's runtime inside the plugin, which is most of its cost. In Rust what is left is mostly the host's cost per call. wazero starts a goroutine for each call to enforce the time limit (the code it compiles checks for a closed module, and the goroutine closes it when the call's context ends). BareProxy arms one timer per instance rather than a context deadline per call, which took the Go plugin from 42 to 25; the goroutine stays, because without it a looping plugin couldn't be stopped. Each module's exported functions are made once per instance, since making one allocates its stack.
+
+So the plugins are written in Rust, and a plugin should do its work in as few callbacks as it can.
 
 ## Size of the work
 
-- **The plugin host**, as built: 1,464 lines in `src/internal/plugin`, 740 in `src/internal/bp/plugins_config.go` and `plugins_run.go`, and 212 lines of hook-ups in the core's files, 2,416 in all (blank lines and comments not counted). The design set 2,000; trimming it is on the list.
-- **The test plugin** (`src/internal/plugin/testdata/fixture`), written in Go straight to the ABI with no SDK, so the tests need nothing outside the repository. Its config picks what it does: change headers, answer, call out, use the store and a folder, tick, loop, crash, grow its memory, refuse its config, hold a request, sleep. Tests cover each callback and each failure (`results/plugin-test.log`).
+- **The plugin host**, as built: 1,488 lines in `src/internal/plugin`, 766 in `src/internal/bp/plugins_config.go` and `plugins_run.go`, and 212 lines of hook-ups in the core's files, 2,466 in all (blank lines and comments not counted). The design set 2,000; trimming it is on the list.
+- **Plugins in Rust**: `plugins/`, a Cargo workspace built to `wasm32-unknown-unknown` with vendored crates; `plugins/testplugin`, the Rust test plugin, written with the SDK. CI runs the host's tests with it and with the Go one.
+- **The Go test plugin** (`src/internal/plugin/testdata/fixture`), written in Go straight to the ABI with no SDK, so the tests need nothing outside the repository. Its config picks what it does: change headers, answer, call out, use the store and a folder, tick, loop, crash, grow its memory, refuse its config, hold a request, sleep. Tests cover each callback and each failure (`results/plugin-test.log`).
 - **Each plugin:** its own folder under `plugins/`, its own README and tests, built to `.wasm` by CI and published as release files beside the binaries.

@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.3.0 (8 October 2026)
+
+Plugins in Rust. No plugin is built yet; the first ones will be written this way.
+
+- `plugins/`: a Cargo workspace for plugins written with the Proxy-Wasm Rust SDK (0.2.5), built to `wasm32-unknown-unknown` by `plugins/build.sh`, with the crates vendored so plugins build with no network. See "Writing a plugin in Rust" in the README.
+- `plugins/testplugin`: the Rust test plugin. It does what the Go test plugin does, and the plugin host's tests run with both (in CI; locally when `BP_RUST_FIXTURE` names its `.wasm`). The real SDK works with the host unchanged.
+- New plugin setting `body request response`: the bodies a plugin is handed. SDKs export every callback, so the module can't say which bodies a plugin reads; before, any plugin with the callback got whole bodies, which with an SDK would have meant every plugin held up every body. A plugin that pauses on its headers waits only when no body follows.
+- Cheaper calls into a plugin: the time limit is now kept by one timer per instance instead of a context deadline per call. A do-nothing Rust plugin adds about 15 microseconds to a request, and the Go test plugin about 25 (was 42) (`results/plugin-bench.log`).
+- CI builds the plugins, checks their formatting and lints, and runs the host's tests with the Rust test plugin; releases attach every plugin but the test plugin as `NAME.wasm`, with its checksum in SHA256SUMS.
+
 ## 0.2.0 (8 October 2026)
 
 The plugin host. No plugin is built yet; the [plugin program](docs/plugin-program.md) lists them.

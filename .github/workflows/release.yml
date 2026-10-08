@@ -106,6 +106,19 @@ jobs:
           cache: false
       - name: Build every archive
         run: bash live/release.sh dist
+      - name: Build the plugins
+        # Each plugin in plugins/ (all but the test plugin) is released as
+        # NAME.wasm beside the binaries, with its checksum in SHA256SUMS.
+        run: |
+          rustup target add wasm32-unknown-unknown
+          bash plugins/build.sh plugins/dist
+          shopt -s nullglob
+          for f in plugins/dist/*.wasm; do
+            [ "$(basename "$f")" = testplugin.wasm ] && continue
+            cp "$f" dist/
+            (cd dist && sha256sum "$(basename "$f")" >> SHA256SUMS)
+          done
+          cat dist/SHA256SUMS
       - name: Release notes from the CHANGELOG
         env:
           TAG: ${{ needs.plan.outputs.tag }}
@@ -128,7 +141,19 @@ jobs:
             echo "| macOS, Intel | bareproxy_darwin_amd64.tar.gz |"
             echo "| Windows, x86-64 | bareproxy_windows_amd64.zip |"
             echo
-            echo "Each archive holds the \`bareproxy\` command with README.md, LICENSE and NOTICE. SHA256SUMS lists the checksums. The macOS binaries aren't signed by Apple, so macOS may ask you to allow them the first time, or run \`xattr -d com.apple.quarantine bareproxy\`."
+            shopt -s nullglob
+            plugins=(dist/*.wasm)
+            if [ ${#plugins[@]} -gt 0 ]; then
+              echo
+              echo "| Plugin | File |"
+              echo "|---|---|"
+              for f in "${plugins[@]}"; do
+                n=$(basename "$f" .wasm)
+                echo "| $n | $n.wasm |"
+              done
+              echo
+            fi
+            echo "Each archive holds the \`bareproxy\` command with README.md, LICENSE and NOTICE. Each plugin is a WebAssembly module to name in a \`plugin\` line. SHA256SUMS lists the checksums. The macOS binaries aren't signed by Apple, so macOS may ask you to allow them the first time, or run \`xattr -d com.apple.quarantine bareproxy\`."
           } > dist/notes.md
           rm dist/changes.md
           cat dist/notes.md
@@ -250,17 +275,19 @@ jobs:
             exit 0
           fi
           cd dist
+          shopt -s nullglob
           gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --target "$REF" --latest \
             --title "BareProxy $TAG" --notes-file notes.md \
             bareproxy_linux_amd64.tar.gz bareproxy_linux_arm64.tar.gz bareproxy_darwin_arm64.tar.gz \
-            bareproxy_darwin_amd64.tar.gz bareproxy_windows_amd64.zip SHA256SUMS
+            bareproxy_darwin_amd64.tar.gz bareproxy_windows_amd64.zip *.wasm SHA256SUMS
       - name: Attach the binaries to an existing release
         if: env.NEW != 'true'
         run: |
           cd dist
+          shopt -s nullglob
           gh release upload "$TAG" --repo "$GITHUB_REPOSITORY" --clobber \
             bareproxy_linux_amd64.tar.gz bareproxy_linux_arm64.tar.gz bareproxy_darwin_arm64.tar.gz \
-            bareproxy_darwin_amd64.tar.gz bareproxy_windows_amd64.zip SHA256SUMS
+            bareproxy_darwin_amd64.tar.gz bareproxy_windows_amd64.zip *.wasm SHA256SUMS
           body=$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json body --jq .body)
           if [ -z "$body" ]; then
             gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --notes-file notes.md

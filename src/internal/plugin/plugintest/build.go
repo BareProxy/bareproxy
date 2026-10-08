@@ -48,3 +48,19 @@ func Fixture() ([]byte, error) {
 	})
 	return built, err
 }
+
+// RustFixture reads the Rust test plugin, plugins/testplugin built by
+// plugins/build.sh, from the file BP_RUST_FIXTURE names. It returns nil when
+// the variable isn't set, so tests can skip it on a machine without Rust;
+// CI sets it.
+func RustFixture() ([]byte, error) {
+	f := os.Getenv("BP_RUST_FIXTURE")
+	if f == "" {
+		return nil, nil
+	}
+	b, err := os.ReadFile(f)
+	if err != nil {
+		return nil, fmt.Errorf("BP_RUST_FIXTURE: %v", err)
+	}
+	return b, nil
+}
