@@ -80,6 +80,10 @@ func mustShippedServer(t *testing.T, name, conf, backend string) *liveServer {
 	return l
 }
 
+// noRedirects is a client that hands back a redirect instead of following it.
+var noRedirects = &http.Client{Transport: directClient.Transport,
+	CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+
 // send makes a request with the given headers and returns the response, its
 // body and the request's record.
 func send(t *testing.T, l *liveServer, method, path string, hdr ...string) (*http.Response, string, *Record) {
@@ -89,7 +93,7 @@ func send(t *testing.T, l *liveServer, method, path string, hdr ...string) (*htt
 	for i := 0; i+1 < len(hdr); i += 2 {
 		req.Header.Set(hdr[i], hdr[i+1])
 	}
-	resp, err := directClient.Do(req)
+	resp, err := noRedirects.Do(req)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -295,4 +299,123 @@ func TestCORSResponses(t *testing.T) {
 func TestCORSConfigRefused(t *testing.T) {
 	configRefused(t, "cors", "origins *\ncredentials on\n", "credentials on needs a list of origins, not *: "+
 		"browsers refuse that pair, and it would let any site call with a visitor's cookies")
+}
+
+// With CORS before the maintenance plugin, the maintenance and failover
+// pages carry the CORS headers, so a page on another site can read the 503.
+func TestCORSOnMaintenancePages(t *testing.T) {
+	for _, c := range []struct{ down, path string }{{"maintenance on\n", "/page.txt"}, {"", "/api/x"}} {
+		l := &liveServer{dir: t.TempDir(), port: freePort(t)}
+		l.conf = filepath.Join(l.dir, "bareproxy.conf")
+		writeFile(t, filepath.Join(l.dir, "public", "page.txt"), "a static page\n")
+		writeFile(t, filepath.Join(l.dir, "cors.wasm"), string(shipped(t, "cors")))
+		writeFile(t, filepath.Join(l.dir, "maintenance.wasm"), string(shipped(t, "maintenance")))
+		writeFile(t, filepath.Join(l.dir, "cors.conf"), "origins https://app.example.com\n")
+		writeFile(t, filepath.Join(l.dir, "down.conf"), c.down)
+		writeFile(t, l.conf, fmt.Sprintf(`global
+  admin off
+  trace-log off
+  state state
+
+plugin cors cors.wasm
+  config cors.conf
+plugin down maintenance.wasm
+  config down.conf
+
+site http://example.com:%d
+  use cors down
+  route /api/* -> api
+  route /* -> files public
+
+pool api
+  backend 127.0.0.1:%d
+`, l.port, freePort(t)))
+		s, err := Start(l.conf)
+		if err != nil {
+			t.Fatal(err)
+		}
+		l.s = s
+		resp, body, _ := send(t, l, "GET", c.path, "Origin", "https://app.example.com")
+		if resp.StatusCode < 502 || resp.StatusCode > 504 || !strings.Contains(body, "Back soon") ||
+			resp.Header.Get("Access-Control-Allow-Origin") != "https://app.example.com" || resp.Header.Get("Vary") != "Origin" {
+			t.Errorf("%s: %d %q %v", c.path, resp.StatusCode, body, resp.Header)
+		}
+		s.Stop()
+	}
+}
+
+const headersConf = `redirect /old-page /page.txt
+redirect /home /de/ when accept-language has de
+rewrite /docs/* /manual/*
+
+request set x-from-proxy yes
+request remove x-secret
+response remove x-powered-by
+
+path /manual/
+  response set cache-control public, max-age=3600
+path /docs/
+  response add x-docs 1
+`
+
+func TestHeaderRules(t *testing.T) {
+	var seen http.Header
+	b := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		seen = r.Header.Clone()
+		w.Header().Set("X-Powered-By", "PHP/5.4")
+		w.Header().Set("X-Frame-Options", "DENY")
+		fmt.Fprintln(w, "from the app")
+	}))
+	t.Cleanup(b.Close)
+	l := mustShippedServer(t, "headers", headersConf, b.URL)
+	writeFile(t, filepath.Join(l.dir, "public", "manual", "intro.txt"), "the manual\n")
+
+	// Redirects, with the query kept; one that depends on a header says so in Vary.
+	resp, _, rec := send(t, l, "GET", "/old-page?a=1")
+	if resp.StatusCode != 301 || resp.Header.Get("Location") != "/page.txt?a=1" ||
+		!strings.Contains(notes(rec), "redirected /old-page to /page.txt (line 1)") {
+		t.Errorf("redirect %d %v %+v", resp.StatusCode, resp.Header, rec.Plugins)
+	}
+	resp, _, _ = send(t, l, "GET", "/home", "Accept-Language", "de-DE,de;q=0.9")
+	if resp.StatusCode != 302 || resp.Header.Get("Location") != "/de/" || resp.Header.Get("Vary") != "accept-language" {
+		t.Errorf("redirect by language %d %v", resp.StatusCode, resp.Header)
+	}
+	if resp, _, _ := send(t, l, "GET", "/home", "Accept-Language", "en"); resp.StatusCode != 404 {
+		t.Errorf("no redirect for en: %d", resp.StatusCode)
+	}
+
+	// A rewrite: routed and served as /manual/intro.txt. Path sections
+	// match the path as it arrived, so /docs/ applies and /manual/ doesn't.
+	resp, body, rec := send(t, l, "GET", "/docs/intro.txt")
+	if resp.StatusCode != 200 || body != "the manual\n" || resp.Header.Get("X-Docs") != "1" || resp.Header.Get("Cache-Control") != "" {
+		t.Errorf("rewrite %d %q %v", resp.StatusCode, body, resp.Header)
+	}
+	if !strings.Contains(notes(rec), "rewrote /docs/intro.txt to /manual/intro.txt (line 3)") ||
+		!strings.Contains(notes(rec), "the plugins changed the path to /manual/intro.txt") {
+		t.Errorf("rewrite record %+v", rec.Plugins)
+	}
+	if why := RenderWhy(rec); !strings.Contains(why, "rewrote /docs/intro.txt") {
+		t.Errorf("why doesn't show the rewrite:\n%s", why)
+	}
+
+	// Security headers on a static file; none over plain http for HSTS.
+	resp, _, _ = send(t, l, "GET", "/manual/intro.txt")
+	h := resp.Header
+	if h.Get("X-Content-Type-Options") != "nosniff" || h.Get("Referrer-Policy") != "strict-origin-when-cross-origin" ||
+		h.Get("X-Frame-Options") != "SAMEORIGIN" || h.Get("Strict-Transport-Security") != "" || h.Get("Cache-Control") != "public, max-age=3600" {
+		t.Errorf("static headers %v", h)
+	}
+
+	// Request headers reach the app changed; the app's own X-Frame-Options stays.
+	resp, body, _ = send(t, l, "GET", "/api/x", "X-Secret", "s3cret")
+	if body != "from the app\n" || seen.Get("X-From-Proxy") != "yes" || seen.Get("X-Secret") != "" {
+		t.Errorf("request headers %q %v", body, seen)
+	}
+	if resp.Header.Get("X-Powered-By") != "" || resp.Header.Get("X-Frame-Options") != "DENY" || resp.Header.Get("X-Content-Type-Options") != "nosniff" {
+		t.Errorf("app response headers %v", resp.Header)
+	}
+}
+
+func TestHeaderRulesConfigRefused(t *testing.T) {
+	configRefused(t, "headers", "response set cache-control\n", "line 1: set cache-control needs a value")
 }

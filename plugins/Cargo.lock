@@ -10,7 +10,7 @@ checksum = "683d7910e743518b0e34f1186f92494becacb047c7b6bf616c96772180fef923"
 
 [[package]]
 name = "cors"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "kit",
  "proxy-wasm",
@@ -40,8 +40,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "headers"
+version = "0.5.0"
+dependencies = [
+ "kit",
+ "proxy-wasm",
+]
+
+[[package]]
 name = "kit"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "proxy-wasm",
 ]
@@ -54,7 +62,7 @@ checksum = "f9f8bd3e56ce4dfc153cf470fffbfa98c7620958b312ca5c3a4b8d5181fd13c6"
 
 [[package]]
 name = "maintenance"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "kit",
  "proxy-wasm",
@@ -72,7 +80,7 @@ dependencies = [
 
 [[package]]
 name = "testplugin"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "log",
  "proxy-wasm",

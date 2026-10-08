@@ -1,6 +1,6 @@
 # BareProxy Plugin Program
 
-Status: set on 8 October 2026, with eleven candidates added and all 21 put in one build order, easiest first, the same day. The plugin host is built (0.2.0, Rust plugins in 0.3.0). Plugins 1 and 2 are built and ship in 0.4.0. Each plugin is a WebAssembly module loaded at run time through BareProxy's Proxy-Wasm host; [plugins.md](plugins.md) is the design.
+Status: set on 8 October 2026, with eleven candidates added and all 21 put in one build order, easiest first, the same day. The plugin host is built (0.2.0, Rust plugins in 0.3.0). Plugins 1 and 2 are built and ship in 0.4.0, and plugin 3 in 0.5.0. Each plugin is a WebAssembly module loaded at run time through BareProxy's Proxy-Wasm host; [plugins.md](plugins.md) is the design.
 
 ## Build order
 
@@ -10,7 +10,7 @@ All 21 plugins in one order, easiest and quickest to ship first, so a new plugin
 |---|---|---|---|---|
 | 1 | **Maintenance and failover pages** (built, 0.4.0) | A static page when the backend is down or the site is in maintenance, with an allow list and Retry-After. | Response headers | An hour or two: one callback, nothing else. The first plugin, so it also proves the path from `plugins/` to a `.wasm` file in a release. |
 | 2 | **CORS** (built, 0.4.0) | Allowed origins per site or path, preflight answers at the proxy, `Vary: Origin`. | Before routing, response headers | Two or three hours: headers only. |
-| 3 | **Header and rewrite rules** | Security headers and URL rewrites. The core already does redirects. | Before routing, response headers | About half a day: exact and prefix rules, no bodies. |
+| 3 | **Header and rewrite rules** (built, 0.5.0) | Security headers and URL rewrites. The core already does redirects. | Before routing, response headers | About half a day: exact and prefix rules, no bodies. |
 | 4 | **Redirects from a file** | Thousands of redirects from one plain file the plugin reads, looked up in a table, reloaded on change, counted. | Before routing | About half a day: one file read into a table, reloaded on a timer. |
 | 5 | **Geo rules** | Allow, block or route by country from a local database file; the country passed on in a header ordinary route rules can match. | Before routing | About a day: a lookup, then a header. |
 | 6 | **Request signing** | Signed requests to backends, so an app can tell a request came through BareProxy, and signed URLs that expire. | Before routing | About a day: signatures with a key from the config, no outside calls. |

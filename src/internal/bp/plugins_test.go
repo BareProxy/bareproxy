@@ -12,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -442,3 +443,59 @@ func BenchmarkPluginGoEmpty(b *testing.B)     { benchPlugin(b, "nothing", false)
 func BenchmarkPluginGoHeaders(b *testing.B)   { benchPlugin(b, "headers", false) }
 func BenchmarkPluginRustEmpty(b *testing.B)   { benchPlugin(b, "nothing", true) }
 func BenchmarkPluginRustHeaders(b *testing.B) { benchPlugin(b, "headers", true) }
+
+// A plugin's own response goes back through the plugins before it, as a
+// backend's would, last first; not through itself or the ones after it.
+func TestPluginAnswerPassesEarlierPlugins(t *testing.T) {
+	bothPlugins(t, testPluginAnswerPassesEarlierPlugins)
+}
+
+func testPluginAnswerPassesEarlierPlugins(t *testing.T) {
+	for _, c := range []struct{ answer, action string }{{"deny", "answered 403"}, {"denyresp", "replaced the response with 451"}} {
+		l := &liveServer{dir: t.TempDir(), port: freePort(t)}
+		l.conf = filepath.Join(l.dir, "bareproxy.conf")
+		pluginFiles(t, l.dir, "")
+		writeFile(t, filepath.Join(l.dir, "a.txt"), "resp")
+		writeFile(t, filepath.Join(l.dir, "b.txt"), c.answer)
+		writeFile(t, filepath.Join(l.dir, "c.txt"), "resp")
+		writeFile(t, l.conf, fmt.Sprintf(`global
+  admin off
+  trace-log off
+  state state
+
+plugin a test.wasm
+  config a.txt
+  timeout 2s
+plugin b test.wasm
+  config b.txt
+  timeout 2s
+plugin c test.wasm
+  config c.txt
+  timeout 2s
+
+site http://example.com:%d
+  use a b c
+  route /* -> respond 200 "from the core"
+`, l.port))
+		s, err := Start(l.conf)
+		if err != nil {
+			t.Fatal(err)
+		}
+		l.s = s
+		resp, body, rec := fetch(t, l, "/x")
+		want := 403
+		if c.answer == "denyresp" {
+			want = 451
+		}
+		// a sees b's answer and adds x-resp; when b answers before routing,
+		// c never ran, and when b replaces the response, c had seen the
+		// core's 200 first.
+		if resp.StatusCode != want || resp.Header.Get("X-Resp") != strconv.Itoa(want) || strings.Contains(body, "core") {
+			t.Errorf("%s: response %d %q %v", c.answer, resp.StatusCode, body, resp.Header)
+		}
+		if rec.Plugins[1].Action != c.action || rec.Status != want {
+			t.Errorf("%s: record %+v %+v", c.answer, rec, rec.Plugins)
+		}
+		s.Stop()
+	}
+}

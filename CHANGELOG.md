@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.5.0 (8 October 2026)
+
+The third plugin, and plugin answers that the plugins before them see.
+
+- **Header and rewrite rules** (`plugins/headers`, released as `headers.wasm`), number 3 in the build order: security headers added to every response that lacks them (`X-Content-Type-Options`, `Referrer-Policy`, `X-Frame-Options`, and on https `Strict-Transport-Security`); request and response headers set, added or removed for the whole site or per path prefix; redirects by exact path or prefix, also by a word in a request header (a language, say), with the query kept; rewrites of the path the core routes on. No regular expressions. Every redirect, rewrite and header change is a note in the request's record. See its README.
+- A plugin's own answer, before routing or on the response headers, now goes back through the response headers of the plugins before it, last first, as a local reply does in Envoy. Before, it went out past them, so with `use cors down` the maintenance page went out without CORS headers and a page on another site couldn't read the 503. A replacement on the response body still goes out as it is, since every plugin has seen the headers by then.
+- The server tests no longer follow redirects, so they see what BareProxy sent.
+
 ## 0.4.0 (8 October 2026)
 
 The first two plugins, numbers 1 and 2 in the [build order](docs/plugin-program.md).

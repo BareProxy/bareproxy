@@ -166,7 +166,7 @@ func (s *Server) pluginRequest(w *respWriter, r *http.Request, rt *Runtime, site
 			if l.Details != "" {
 				rec.Reason += " (" + l.Details + ")"
 			}
-			pr.writeLocal(w, l)
+			pr.writeLocal(w, l, len(pr.uses)-1)
 			return true
 		}
 		if st.Closed() {
@@ -290,7 +290,7 @@ func (pr *pluginRun) requestBody(w *respWriter, site *Site) bool {
 		if l := use.st.Local(); l != nil {
 			pr.rec.Plugins[use.i].Action = fmt.Sprintf("answered %d", l.Status)
 			pr.rec.Outcome, pr.rec.Reason = "plugin", fmt.Sprintf("plugin %s answered %d", use.name, l.Status)
-			pr.writeLocal(w, l)
+			pr.writeLocal(w, l, slices.Index(pr.uses, use))
 			return true
 		}
 	}
@@ -322,16 +322,54 @@ func (pr *pluginRun) fail(w *respWriter, use *pluginUse, err error) bool {
 	return true
 }
 
-// writeLocal sends a plugin's own response. The response phase is skipped.
-func (pr *pluginRun) writeLocal(w *respWriter, l *plugin.Local) {
+// writeLocal sends a plugin's own response. The plugins before it, the
+// ones that would see a backend's response after it, see its status and
+// headers, last first, as in Envoy: so a CORS plugin adds its headers to a
+// page another plugin sends. upto is the answering plugin's place; the
+// plugins from there on are skipped, and so are bodies.
+func (pr *pluginRun) writeLocal(w *respWriter, l *plugin.Local, upto int) {
 	pr.seen, pr.buffering = true, false
+	hs := [][2]string{{":status", strconv.Itoa(l.Status)}}
+	for _, kv := range l.Headers {
+		if !strings.HasPrefix(kv[0], ":") {
+			hs = append(hs, [2]string{strings.ToLower(kv[0]), kv[1]})
+		}
+	}
+	code := l.Status
+	for i := upto - 1; i >= 0; i-- {
+		use := pr.uses[i]
+		if use.off || use.st == nil || !use.p.Wants("proxy_on_response_headers") {
+			continue
+		}
+		start := time.Now()
+		use.st.SetInt("response.code", int64(code))
+		nh, err := use.st.Headers(plugin.Response, hs, true, true)
+		pr.rec.Plugins[use.i].MS += msSince(start)
+		if err != nil {
+			if pr.fail(w, use, err) {
+				return
+			}
+			continue
+		}
+		hs = nh
+		if l2 := use.st.Local(); l2 != nil {
+			pr.rec.Plugins[use.i].Action = fmt.Sprintf("replaced the response with %d", l2.Status)
+			pr.writeLocal(w, l2, i)
+			return
+		}
+		for _, kv := range hs {
+			if n, err := strconv.Atoi(kv[1]); kv[0] == ":status" && err == nil && n >= 200 && n <= 999 {
+				code = n
+			}
+		}
+	}
 	h := w.Header()
 	id := h.Get("BareProxy-Id")
 	clear(h)
 	if id != "" {
 		h.Set("BareProxy-Id", id)
 	}
-	for _, kv := range l.Headers {
+	for _, kv := range hs {
 		if !strings.HasPrefix(kv[0], ":") {
 			h.Add(kv[0], kv[1])
 		}
@@ -340,7 +378,7 @@ func (pr *pluginRun) writeLocal(w *respWriter, l *plugin.Local) {
 		h.Set("Content-Type", "text/plain; charset=utf-8")
 	}
 	h.Set("Content-Length", strconv.Itoa(len(l.Body)))
-	w.writeHeader(l.Status)
+	w.writeHeader(code)
 	if pr.r.Method != http.MethodHead {
 		w.Write(l.Body)
 	}
@@ -387,7 +425,7 @@ func (pr *pluginRun) header(w *respWriter, code int) (int, bool) {
 			h = nh
 			if l := use.st.Local(); l != nil {
 				pr.rec.Plugins[use.i].Action = fmt.Sprintf("replaced the response with %d", l.Status)
-				pr.writeLocal(w, l)
+				pr.writeLocal(w, l, i)
 				return 0, true
 			}
 		}
@@ -496,8 +534,10 @@ func (pr *pluginRun) finishBody(w *respWriter) {
 		}
 		body = b
 		if l := use.st.Local(); l != nil {
+			// The headers went through every plugin already, so the
+			// replacement goes out as it is.
 			pr.rec.Plugins[use.i].Action = fmt.Sprintf("replaced the response with %d", l.Status)
-			pr.writeLocal(w, l)
+			pr.writeLocal(w, l, 0)
 			return
 		}
 	}

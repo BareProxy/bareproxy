@@ -1,0 +1,15 @@
+[package]
+name = "headers"
+description = "BareProxy plugin: security headers, header changes by path, redirects and rewrites"
+publish = false
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+proxy-wasm.workspace = true
+kit = { path = "../kit" }
