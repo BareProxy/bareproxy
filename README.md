@@ -2,7 +2,7 @@
 
 BareProxy is a small web server and reverse proxy that explains every routing decision. It terminates TLS, routes each request by host and path, and either serves it from a folder or proxies it to a pool of backends. For any request, `explain` says what would happen before it arrives, and `why` says what did happen after. `plan` says what a config change would do before it goes live.
 
-Most sites and applications use a small part of nginx. The question behind this project is how little machinery it takes to provide the part of nginx that most applications use. BareProxy is one Go binary, built with Go's standard library and, for automatic certificates, the Go team's own `golang.org/x/crypto`. The core does TLS, routing, static files, backend health, safe config changes and request tracing. Add-on modules come later.
+Most sites and applications use a small part of nginx. The question behind this project is how little machinery it takes to provide the part of nginx that most applications use. BareProxy is one Go binary, built with Go's standard library and, for automatic certificates, the Go team's own `golang.org/x/crypto`. The core does TLS, routing, static files, backend health, safe config changes and request tracing. Everything else will come as plugins: WebAssembly modules loaded at run time, sandboxed, and written in any language. The [plugin design](docs/plugins.md) and the [plugin program](docs/plugin-program.md) say how and in what order.
 
 This is version 0.1.0, released on 8 October 2026. It follows the 0.1.0-alpha of 5 October and the 0.1.0-dev first cut of 2 October. Binaries are built for Linux, macOS and Windows with Go 1.27. Linux is where it has been run in earnest and measured; see Known limits for the others. It hasn't had an outside security review yet, so don't put it in front of anything that matters.
 
@@ -247,7 +247,7 @@ These settings are in the grammar, but they aren't built yet. The config check w
 - **Requests Go's server can't parse leave no record.** It answers them itself (a bad request line or header, an oversized header, an unknown HTTP version) with 400, 431, 501 or 505. `OPTIONS *` does reach BareProxy: it gets 200 with no body, a `BareProxy-Id` and one record (outcome `local`, rule `OPTIONS *`).
 - **WebSocket tunnels aren't inspected.** After an upgrade the connection is a plain tunnel, so routing rules don't see what travels inside it. When an apply removes a backend, the tunnels through it close at the end of the pool's `drain` time, in use or not. WebSocket was tested over HTTP/1.1, plain and with TLS, not over HTTP/2.
 - **macOS and Windows are lightly tested.** The test suite runs on Linux and macOS on every push, and each release's binaries pass a smoke test on macOS and Windows, but only Linux has run under load or in front of a real site. Outside Linux, `history` doesn't record the user who made a change. Windows has no SIGHUP, so reload with `apply`, and its admin socket is a Unix socket file, which needs Windows 10 version 1803 or later.
-- **Modules aren't built.** The core is the whole product in this release.
+- **Plugins aren't built yet.** The core is the whole product in this release. [docs/plugins.md](docs/plugins.md) is the design and [docs/plugin-program.md](docs/plugin-program.md) the list.
 
 ## License
 
