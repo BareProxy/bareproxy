@@ -44,4 +44,4 @@ Before plugins, the plan was eight modules compiled into the binary. Limit, Auth
 - its own folder under `plugins/`, with a README that is its manual
 - tests for each thing it does, and failure tests aimed at its main promise (for AI crawler control: a faked user agent from an address outside the bot's ranges is treated as unknown)
 - a `.wasm` file built by CI and attached to each release, with its SHA-256 in SHA256SUMS
-- an Apache 2.0 license, like the rest of the project
+- a license stated in its folder. The project is Apache 2.0 today; premium add-ons may come later under other licenses, and which plugins, if any, hasn't been decided
