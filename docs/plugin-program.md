@@ -1,6 +1,6 @@
 # BareProxy Plugin Program
 
-Status: set on 8 October 2026. The plugin host is built (0.2.0); no plugin is built yet. Each plugin is a WebAssembly module loaded at run time through BareProxy's Proxy-Wasm host; [plugins.md](plugins.md) is the design.
+Status: set on 8 October 2026, with eleven candidates added the same day. The plugin host is built (0.2.0); no plugin is built yet. Each plugin is a WebAssembly module loaded at run time through BareProxy's Proxy-Wasm host; [plugins.md](plugins.md) is the design.
 
 ## The list, roughly by demand
 
@@ -18,6 +18,26 @@ Status: set on 8 October 2026. The plugin host is built (0.2.0); no plugin is bu
 | 10 | **Header and rewrite rules** | Security headers, redirects, URL rewrites. | Before routing, response headers | The core already does redirects; this adds headers and rewrites. |
 | 11 | **Markdown serving** | `.md` files rendered to HTML straight from the folder, with a template, no build step. | Response body | Reads files through `bareproxy_read_file`, limited to the folders the config names. |
 | 12 | **Plan and explain** | Seeing what the proxy does with each request and why. | | Already the core's own (`explain`, `why`, `plan`). The plugin side is that every plugin reports into it, through `bareproxy_note`, so plugins never become a blind spot. |
+
+## Candidates
+
+On the list since 8 October 2026, without a place in the order of work yet. They are scheduled as the waves before them ship. Each has a page on bareproxy.com.
+
+| Plugin | What it would do |
+|---|---|
+| AI crawler payment gate | 402 Payment Required with prices per bot and path; access once a crawler pays. Works with AI crawler control, which tells real crawlers from impostors. |
+| Geo rules | Allow, block or route by country, from a local database file; the country passed on in a header that ordinary route rules can match. |
+| Bot challenges | A proof-of-work check for clients that look like scrapers, with a signed cookie once passed and no outside service. |
+| A/B and canary splits | A share of traffic sent to a new version, visitors kept on theirs by a cookie; the plugin sets a header and the core's routes pick the pool, so `plan` sees the routing. A guard that rolls back a bad canary (the earlier Guard module) would follow. |
+| Request signing | Signed requests to backends, so an app can tell a request came through BareProxy, and signed URLs that expire. |
+| CORS | Allowed origins per site or path, preflight answers at the proxy, `Vary: Origin`. |
+| OpenTelemetry export | Request records sent as spans or logs over OTLP/HTTP, in batches, sampled. Covers the earlier Export module. |
+| Uptime checks and status pages | Checks on a timer, 90 days of history in the store, a public status page served by the plugin. |
+| Cookie consent | A consent banner on HTML pages, non-essential cookies held back until consent, Global Privacy Control respected. |
+| Redirects from a file | Thousands of redirects from one plain file in a folder the plugin reads, looked up in a table, reloaded on change, counted. |
+| Link previews | Open Graph tags added for preview fetchers to pages that lack them. |
+
+That makes 21 plugins: 10 in the waves below, and these 11. Automatic certificates and plan and explain stay in the core.
 
 ## The first pair: RenderCache and AI crawler control
 
