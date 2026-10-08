@@ -68,6 +68,7 @@ func Explain(rt *Runtime, method, rawURL string, h http.Header, live bool) (stri
 	if p.TLS {
 		fmt.Fprintf(&b, "Certificate: %s\n", certSource(c, site))
 	}
+	explainPlugins(&b, rt, site, live)
 	raw := u.EscapedPath()
 	if strings.Contains(u.RawPath, `\`) {
 		raw = u.RawPath // EscapedPath would turn a raw backslash into %5C; the server sees it as sent and refuses it
@@ -230,5 +231,30 @@ func explainPool(b *strings.Builder, rt *Runtime, route *Route, norm, method, ho
 	}
 	if next == nil {
 		b.WriteString("Action: 503 (no_backend)\n")
+	}
+}
+
+// explainPlugins lists the plugins a site runs before routing. explain
+// doesn't run them: what they did to a request is in its record (why).
+func explainPlugins(b *strings.Builder, rt *Runtime, site *Site, live bool) {
+	if len(site.Uses) == 0 {
+		return
+	}
+	b.WriteString("Plugins, run in this order before routing (explain doesn't run them; why shows what they did to a request):\n")
+	for _, u := range site.Uses {
+		ps := rt.Cfg.Plugins[u.Name]
+		if ps == nil {
+			continue
+		}
+		fmt.Fprintf(b, "  %s (line %d): %s", u.Name, ps.Line, ps.File)
+		if ps.SHA != "" {
+			fmt.Fprintf(b, ", sha256 %s", ps.SHA[:12])
+		}
+		fmt.Fprintf(b, ", on-error %s", ps.OnError)
+		if p := rt.Plugins[u.Name]; live && p != nil {
+			working, all := p.Health()
+			fmt.Fprintf(b, ", %d of %d instances working", working, all)
+		}
+		b.WriteString("\n")
 	}
 }

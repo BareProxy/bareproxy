@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.2.0 (8 October 2026)
+
+The plugin host. No plugin is built yet; the [plugin program](docs/plugin-program.md) lists them.
+
+- WebAssembly plugins written to the Proxy-Wasm ABI (0.2.1 and 0.2.0), run on wazero, a WebAssembly runtime in pure Go, so BareProxy is still one static binary. New config lines: a `plugin NAME FILE` block (`config`, `memory`, `timeout`, `pause`, `instances`, `on-error`, `allow-http`, `read`, `store`, `body-limit`) and `use NAME ...` in a site. See Plugins in the README.
+- Plugins run before routing and can change the request or answer it, see the response headers and, when they ask, the whole response body, and get `proxy_on_log` after the response. BareProxy's own functions (`bareproxy_note`, a store on disk, reading a folder) come through `proxy_call_foreign_function`.
+- The sandbox: no files, environment or network unless the config allows them; a memory cap per module; a time limit per call; a broken instance replaced in the background, with growing waits after repeated failures; plugin output rate-limited in the log; limits on shared data, metrics and outgoing calls.
+- The core's promises with plugins: `check` refuses a module that isn't a Proxy-Wasm plugin; `plan` lists changed plugin files and plugin configs; the history keeps the files each version ran, and `rollback` runs them; every request's one record says what each plugin did (`why` shows it); `explain` and `status` list plugins.
+- An independent review of the first build found a restart storm when new instances failed to start, sleeps that held an instance past its time limit, the backend's body leaking after a plugin replaced the response, a failed plugin's partial changes being kept, kept plugins losing their folders two minutes after an apply, plugins sharing request properties, and an outgoing call that could be pointed at another address through its path. All are fixed and tested (`results/plugin-test.log`).
+- `golang.org/x/sys` and `github.com/tetratelabs/wazero` v1.12.0 vendored; `live/vendor-deps.sh` fetches them.
+- Measured: a do-nothing plugin written in Go adds about 42 microseconds a request, over the design's 10 (`results/plugin-bench.log`, and Known limits in the README). The binary is 11.6 MB (was 8.9 MB).
+
 ## 0.1.0 (8 October 2026)
 
 The first release published on GitHub's releases page, and the first built by the project's own release workflow. The code is the 0.1.0-alpha of 5 October, evening, with no change in behavior.

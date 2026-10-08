@@ -44,24 +44,26 @@ func HasErrors(ps []Problem) bool {
 
 // Config is a compiled config file.
 type Config struct {
-	File       string
-	Lines      []string
-	Admin      string
-	State      string // state dir; empty means /var/lib/bareproxy
-	TraceLog   string
-	TraceSize  int64 // rotate the trace log file past this many bytes; 0 means never
-	TraceCount int   // old trace log files kept
-	TraceMem   int64 // bytes of record JSON kept in memory
-	TraceQuery bool
-	IDHeader   bool
-	ACMEEmail  string
-	ACMECA     string // the ACME directory URL; empty means Let's Encrypt
-	Sites      []*Site
-	Pools      map[string]*PoolSpec
-	PoolOrder  []string
-	Ports      map[int]*Port
-	roots      []*os.Root
-	warns      []Problem // what Parse found; Warnings adds plan's
+	File        string
+	Lines       []string
+	Admin       string
+	State       string // state dir; empty means /var/lib/bareproxy
+	TraceLog    string
+	TraceSize   int64 // rotate the trace log file past this many bytes; 0 means never
+	TraceCount  int   // old trace log files kept
+	TraceMem    int64 // bytes of record JSON kept in memory
+	TraceQuery  bool
+	IDHeader    bool
+	ACMEEmail   string
+	ACMECA      string // the ACME directory URL; empty means Let's Encrypt
+	Sites       []*Site
+	Pools       map[string]*PoolSpec
+	PoolOrder   []string
+	Ports       map[int]*Port
+	Plugins     map[string]*PluginSpec
+	PluginOrder []string
+	roots       []*os.Root
+	warns       []Problem // what Parse found; Warnings adds plan's
 }
 
 // Port is one listener and the sites it serves.
@@ -88,6 +90,13 @@ type Site struct {
 	KeepEncodedSlash  bool
 	BodyLimit         int64
 	Synthetic         bool
+	Uses              []PluginUse // the plugins the site runs, in order
+}
+
+// PluginUse is one plugin named on a site's use line.
+type PluginUse struct {
+	Name string
+	Line int
 }
 
 // Addr is one site address.
@@ -167,6 +176,10 @@ func (c *Config) Close() {
 		r.Close()
 	}
 	c.roots = nil
+	for _, ps := range c.Plugins {
+		ps.Module.Release()
+		ps.Module = nil
+	}
 }
 
 // Load reads and compiles a config file.
@@ -250,6 +263,10 @@ type ParseOptions struct {
 	// no disk, such as the browser demo. Files rules get no Root, and explain
 	// says so instead of looking.
 	NoDisk bool
+	// Pins names the exact plugin files a history version ran; a plugin
+	// whose file and config file match its pin is read from the history's
+	// copy, so a rollback runs the same code that ran before.
+	Pins map[string]Pin
 }
 
 // Parse compiles config source. It returns the config even when there are
@@ -266,6 +283,7 @@ func ParseWith(file, src string, o ParseOptions) (*Config, []Problem) {
 		IDHeader: true,
 		Pools:    map[string]*PoolSpec{},
 		Ports:    map[int]*Port{},
+		Plugins:  map[string]*PluginSpec{},
 	}
 	p := &parser{c: c, dir: filepath.Dir(file), opt: o}
 	src = strings.ReplaceAll(src, "\r\n", "\n")
@@ -273,6 +291,7 @@ func ParseWith(file, src string, o ParseOptions) (*Config, []Problem) {
 	block := ""
 	var site *Site
 	var pool *PoolSpec
+	var plug *PluginSpec
 	for i, raw := range c.Lines {
 		ln := i + 1
 		toks, err := splitLine(raw)
@@ -288,7 +307,7 @@ func ParseWith(file, src string, o ParseOptions) (*Config, []Problem) {
 			w[k] = t.s
 		}
 		if raw[0] != ' ' && raw[0] != '\t' {
-			site, pool, block = nil, nil, ""
+			site, pool, plug, block = nil, nil, nil, ""
 			switch w[0] {
 			case "global":
 				block = "global"
@@ -327,8 +346,11 @@ func ParseWith(file, src string, o ParseOptions) (*Config, []Problem) {
 				}
 				c.Pools[pool.Name] = pool
 				c.PoolOrder = append(c.PoolOrder, pool.Name)
+			case "plugin":
+				block = "plugin"
+				plug = p.newPlugin(ln, w)
 			default:
-				p.errf(ln, "%q can't start a block: a line in the first column starts global, site or pool", w[0])
+				p.errf(ln, "%q can't start a block: a line in the first column starts global, site, pool or plugin", w[0])
 			}
 			continue
 		}
@@ -339,8 +361,10 @@ func ParseWith(file, src string, o ParseOptions) (*Config, []Problem) {
 			err = p.siteSetting(site, ln, toks, w)
 		case "pool":
 			err = p.poolSetting(pool, ln, w)
+		case "plugin":
+			err = p.pluginSetting(plug, ln, w)
 		default:
-			err = errors.New("indented line outside a global, site or pool block")
+			err = errors.New("indented line outside a global, site, pool or plugin block")
 		}
 		if err != nil {
 			p.errf(ln, "%v", err)
@@ -474,6 +498,16 @@ func (p *parser) siteSetting(s *Site, ln int, toks []token, w []string) error {
 		s.BodyLimit = n
 	case "set-response-header", "remove-response-header":
 		p.warnf(ln, "%s isn't built yet in this version, so it's ignored", w[0])
+	case "use":
+		if len(w) < 2 {
+			return errors.New("use takes the names of one or more plugins, run in that order")
+		}
+		for _, name := range w[1:] {
+			if slices.ContainsFunc(s.Uses, func(u PluginUse) bool { return u.Name == name }) {
+				return fmt.Errorf("plugin %s is already used by this site", name)
+			}
+			s.Uses = append(s.Uses, PluginUse{name, ln})
+		}
 	default:
 		return fmt.Errorf("unknown site setting %q", w[0])
 	}
@@ -665,6 +699,11 @@ func (p *parser) compile() {
 		if len(s.Routes) == 0 {
 			p.warnf(s.Line, "site %s has no routes, so every request gets 404", s.Name)
 		}
+		for _, u := range s.Uses {
+			if c.Plugins[u.Name] == nil {
+				p.errf(u.Line, "no plugin named %s", u.Name)
+			}
+		}
 		for _, r := range s.Routes {
 			switch r.Act.Kind {
 			case "pool":
@@ -747,6 +786,7 @@ func (p *parser) compile() {
 			p.errf(ps.Line, "pool %s has no backends", name)
 		}
 	}
+	p.loadPlugins()
 	if len(c.Sites) == 0 {
 		p.errf(0, "the config has no sites")
 	}

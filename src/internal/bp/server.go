@@ -23,10 +23,12 @@ import (
 	"sync/atomic"
 	"syscall"
 	"time"
+
+	"bareproxy/internal/plugin"
 )
 
 // Version is this build's version.
-const Version = "0.1.0"
+const Version = "0.2.0"
 
 // Runtime is one running config version with its live pools.
 type Runtime struct {
@@ -36,6 +38,7 @@ type Runtime struct {
 	backends map[string]*Backend
 	Trace    *TraceLog
 	Mem      *TraceMem // recent records and events, inherited across reloads
+	Plugins  map[string]*plugin.Plugin
 	acme     *acmeState
 }
 
@@ -91,6 +94,9 @@ func NewRuntime(c *Config, old *Runtime, version int, logf func(string, ...any),
 		rt.Pools[name] = pool
 	}
 	if checks {
+		if err := rt.startPlugins(old, logf); err != nil {
+			return nil, err
+		}
 		var prev *acmeState
 		if old != nil {
 			prev = old.acme
@@ -107,6 +113,7 @@ func (rt *Runtime) Stop() {
 			b.stop()
 		}
 	}
+	rt.stopPlugins(nil)
 }
 
 // retire stops what the old runtime has and the new one doesn't. Folders and
@@ -121,6 +128,7 @@ func retire(old, rt *Runtime) {
 		time.AfterFunc(time.Minute, old.Trace.Close)
 	}
 	time.AfterFunc(2*time.Minute, func() {
+		old.stopPlugins(rt)
 		old.Cfg.Close()
 		for _, p := range old.Pools {
 			p.transport.CloseIdleConnections()
@@ -255,9 +263,24 @@ type respWriter struct {
 	http.ResponseWriter
 	status int
 	bytes  int64
+	pl     *pluginRun // the request's plugins, when its site uses any
 }
 
 func (w *respWriter) WriteHeader(code int) {
+	if w.pl != nil && w.pl.replaced {
+		return
+	}
+	if w.pl != nil {
+		var held bool
+		if code, held = w.pl.header(w, code); held {
+			return
+		}
+	}
+	w.writeHeader(code)
+}
+
+// writeHeader sends the status, past the plugins.
+func (w *respWriter) writeHeader(code int) {
 	if code >= 200 && w.status == 0 {
 		w.status = code
 	}
@@ -265,6 +288,15 @@ func (w *respWriter) WriteHeader(code int) {
 }
 
 func (w *respWriter) Write(b []byte) (int, error) {
+	if w.pl != nil && w.pl.replaced {
+		return len(b), nil
+	}
+	if w.pl != nil && !w.pl.seen {
+		w.WriteHeader(http.StatusOK)
+	}
+	if w.pl != nil && w.pl.buffering {
+		return w.pl.write(w, b)
+	}
 	if w.status == 0 {
 		w.status = http.StatusOK
 	}
@@ -275,8 +307,17 @@ func (w *respWriter) Write(b []byte) (int, error) {
 
 // ReadFrom hands a file to the underlying writer's ReaderFrom, which on plain
 // HTTP/1.1 sends it with sendfile. The status and the byte count are kept as
-// Write keeps them.
+// Write keeps them. A body held for the plugins is read in instead.
 func (w *respWriter) ReadFrom(r io.Reader) (int64, error) {
+	if w.pl != nil && w.pl.replaced {
+		return io.Copy(io.Discard, r)
+	}
+	if w.pl != nil && !w.pl.seen {
+		w.WriteHeader(http.StatusOK)
+	}
+	if w.pl != nil && w.pl.buffering {
+		return io.Copy(struct{ io.Writer }{w}, r)
+	}
 	if w.status == 0 {
 		w.status = http.StatusOK
 	}
@@ -293,7 +334,23 @@ func (w *respWriter) ReadFrom(r io.Reader) (int64, error) {
 
 func (w *respWriter) Unwrap() http.ResponseWriter { return w.ResponseWriter }
 
-func (w *respWriter) Flush() { http.NewResponseController(w.ResponseWriter).Flush() }
+func (w *respWriter) Flush() {
+	if w.pl != nil {
+		switch {
+		case w.pl.replaced:
+			return
+		case !w.pl.seen:
+			w.WriteHeader(http.StatusOK)
+		}
+		if w.pl.buffering { // a response that flushes is streaming: it goes out as it comes
+			w.pl.bodyNote("the response streams (it flushed), so its body wasn't handed over")
+			if w.pl.release(w) != nil {
+				return
+			}
+		}
+	}
+	http.NewResponseController(w.ResponseWriter).Flush()
+}
 
 type countReader struct {
 	io.ReadCloser
@@ -340,6 +397,9 @@ func (s *Server) Handler(port int, isTLS bool) http.Handler {
 			if body != nil {
 				rec.BytesIn = body.n.Load()
 			}
+			if w.pl != nil {
+				w.pl.finish()
+			}
 			rec.MS = msSince(start)
 			rt.record(rec)
 		}
@@ -356,6 +416,9 @@ func (s *Server) Handler(port int, isTLS bool) http.Handler {
 			finish()
 		}()
 		s.serve(w, r, rt, port, rec)
+		if w.pl != nil {
+			w.pl.finishBody(w)
+		}
 	})
 }
 
@@ -387,6 +450,9 @@ func (s *Server) serve(w *respWriter, r *http.Request, rt *Runtime, port int, re
 			s.plain(w, r, rec, http.StatusMisdirectedRequest, "Host and SNI belong to different sites")
 			return
 		}
+	}
+	if len(site.Uses) > 0 && rt.Plugins != nil && s.pluginRequest(w, r, rt, site, rec) {
+		return
 	}
 	norm, err := NormalizePath(rec.Path, site.KeepEncodedSlash)
 	if err != nil {

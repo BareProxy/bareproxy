@@ -12,6 +12,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"net"
 	"net/http"
 	"net/url"
@@ -530,6 +531,19 @@ func printStatus(st bp.Status) {
 	fmt.Printf("\nCertificates (%d)\n", len(st.Certificates))
 	for _, c := range st.Certificates {
 		fmt.Printf("  %s  %s  ends %s, %d days left\n", c.Site, c.Subject, c.NotAfter[:10], c.DaysLeft)
+	}
+	if len(st.Plugins) > 0 {
+		fmt.Printf("\nPlugins (%d)\n", len(st.Plugins))
+		for _, p := range st.Plugins {
+			from := ""
+			if p.Pinned {
+				from = ", run from the history's copy"
+			}
+			fmt.Printf("  %s (line %d)  %s, sha256 %.12s%s, %d of %d instances working\n", p.Name, p.Line, p.File, p.SHA256, from, p.Working, p.Instances)
+			for _, k := range slices.Sorted(maps.Keys(p.Metrics)) {
+				fmt.Printf("    %s: %d\n", k, p.Metrics[k])
+			}
+		}
 	}
 	r := st.Requests
 	if r.Ring.Limit == 0 {

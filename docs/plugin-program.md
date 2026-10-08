@@ -1,6 +1,6 @@
 # BareProxy Plugin Program
 
-Status: set on 8 October 2026. No plugin is built yet. Each plugin is a WebAssembly module loaded at run time through BareProxy's Proxy-Wasm host; [plugins.md](plugins.md) is the design.
+Status: set on 8 October 2026. The plugin host is built (0.2.0); no plugin is built yet. Each plugin is a WebAssembly module loaded at run time through BareProxy's Proxy-Wasm host; [plugins.md](plugins.md) is the design.
 
 ## The list, roughly by demand
 
@@ -27,7 +27,7 @@ AI crawler control comes first. It is small, needs only headers, the record and 
 
 ## Order of work
 
-1. **The plugin host.** wazero, the Proxy-Wasm host, the hook points, the `bareproxy_` functions, config lines, plugins in `explain`, `plan`, `history` and the record, and a test plugin set in Rust and Go. Nothing else starts before this passes its tests.
+1. **The plugin host.** Done in 0.2.0: wazero, the Proxy-Wasm host, the hook points, the `bareproxy_` functions, config lines, plugins in `explain`, `plan`, `history`, `status` and the record, and a test plugin in Go with tests for each callback and failure. Still to do here: trim it to its 2,000-line budget, and a test plugin in Rust, to measure a plugin that doesn't carry Go's runtime.
 2. **AI crawler control**, then **RenderCache** with its renderer worker.
 3. **Rate limiting and basic WAF**, **Auth gate**, **Response cache**: the usual reasons people put a proxy in front of an app.
 4. **Header and rewrite rules**, **Maintenance and failover pages**, **Analytics without JavaScript**.

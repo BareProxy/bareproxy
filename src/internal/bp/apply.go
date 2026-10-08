@@ -64,8 +64,9 @@ type Change struct {
 	PlanID string // when set, refuse if the plan for this change has another ID
 	From   int    // for a rollback, the version restored
 
-	keepFile bool // run the text but leave the file alone (startup fallback)
-	version  int  // run as this history version (startup fallback)
+	keepFile bool           // run the text but leave the file alone (startup fallback)
+	version  int            // run as this history version (startup fallback)
+	pins     map[string]Pin // the plugin files a history version ran
 }
 
 // Applied says what an apply did. Warnings are about the apply itself; the
@@ -138,7 +139,7 @@ func Start(file string) (*Server, error) {
 	}
 	text, err := s.cs.hist.text(n)
 	if err == nil {
-		_, err = s.Apply(Change{Text: text, How: "startup", User: user, keepFile: true, version: n})
+		_, err = s.Apply(Change{Text: text, How: "startup", User: user, keepFile: true, version: n, pins: s.cs.hist.pins(n)})
 	}
 	if err != nil {
 		return nil, fmt.Errorf("the config has errors, and version %d from the history didn't start either: %v", n, err)
@@ -192,7 +193,7 @@ func (s *Server) Rollback(version int, user string) (*Applied, error) {
 	if err != nil {
 		return nil, err
 	}
-	return s.apply(Change{Text: text, How: "rollback", User: user, From: version})
+	return s.apply(Change{Text: text, How: "rollback", User: user, From: version, pins: h.pins(version)})
 }
 
 // History returns the config versions kept, oldest first.
@@ -219,7 +220,7 @@ func (s *Server) Apply(ch Change) (*Applied, error) {
 func (s *Server) apply(ch Change) (*Applied, error) {
 	old := s.rt.Load()
 	file, _ := filepath.Abs(s.file)
-	c, probs := Parse(file, ch.Text)
+	c, probs := ParseWith(file, ch.Text, ParseOptions{Pins: ch.pins})
 	if HasErrors(probs) {
 		c.Close()
 		return nil, &ConfigError{probs}
@@ -244,14 +245,14 @@ func (s *Server) apply(ch Change) (*Applied, error) {
 		return nil, err
 	}
 	h := s.cs.hist
-	unchanged := old != nil && ch.Text == s.cs.text
+	unchanged := old != nil && ch.Text == s.cs.text && pluginPrint(c) == pluginPrint(old.Cfg)
 	save := false
 	switch {
 	case unchanged:
 		res.Version, res.Unchanged = old.Version, true
 	case ch.version > 0:
 		res.Version = ch.version
-	case old == nil && h.last() > 0 && h.lastText() == ch.Text:
+	case old == nil && h.last() > 0 && h.lastText() == ch.Text && pinsPrint(h.pins(h.last())) == pluginPrint(c):
 		res.Version = h.last()
 	default:
 		save = true
@@ -295,7 +296,11 @@ func (s *Server) apply(ch Change) (*Applied, error) {
 	if save && h != nil {
 		e := Entry{Version: res.Version, Time: time.Now().UTC().Format(time.RFC3339), How: ch.How,
 			User: ch.User, Plan: res.PlanID, From: ch.From}
-		if err := h.save(e, ch.Text); err != nil {
+		err := savePluginFiles(c)
+		if err == nil {
+			err = h.save(e, ch.Text, c.Pins())
+		}
+		if err != nil {
 			res.Warnings = append(res.Warnings, "the version wasn't saved to the history: "+err.Error())
 		}
 	}

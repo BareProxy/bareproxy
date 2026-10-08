@@ -22,6 +22,7 @@ type Status struct {
 	Sites         []SiteStatus     `json:"sites"`
 	Pools         []PoolStatus     `json:"pools"`
 	Certificates  []CertStatus     `json:"certificates"`
+	Plugins       []PluginStatus   `json:"plugins"`
 	Requests      RequestStatus    `json:"requests"`
 	Mismatch      string           `json:"mismatch,omitempty"` // why the config file doesn't hold the running config
 }
@@ -62,6 +63,19 @@ type BackendStatus struct {
 	Failures int    `json:"failures"`
 	Reason   string `json:"reason,omitempty"`
 	Until    string `json:"until,omitempty"`
+}
+
+// PluginStatus is one plugin: its file, how many instances work, and the
+// metrics it defined.
+type PluginStatus struct {
+	Name      string           `json:"name"`
+	Line      int              `json:"line"`
+	File      string           `json:"file"`
+	SHA256    string           `json:"sha256"`
+	Pinned    bool             `json:"pinned,omitempty"` // run from the history's copy
+	Working   int              `json:"working"`
+	Instances int              `json:"instances"`
+	Metrics   map[string]int64 `json:"metrics,omitempty"`
 }
 
 type CertStatus struct {
@@ -136,7 +150,7 @@ func (s *Server) Status() *Status {
 	rt := s.Current()
 	c := rt.Cfg
 	st := &Status{Version: Version, ConfigFile: c.File, ConfigVersion: rt.Version, Mismatch: s.ConfigMismatch(),
-		Listeners: []ListenerStatus{}, Sites: []SiteStatus{}, Pools: []PoolStatus{}, Certificates: []CertStatus{}}
+		Listeners: []ListenerStatus{}, Sites: []SiteStatus{}, Pools: []PoolStatus{}, Certificates: []CertStatus{}, Plugins: []PluginStatus{}}
 	started := rt.Mem.started
 	st.Started, st.UptimeSeconds = stamp(started), time.Since(started).Seconds()
 	for _, p := range sortedPorts(c) {
@@ -165,6 +179,17 @@ func (s *Server) Status() *Status {
 				InFlight: b.InFlight, Failures: b.Fails, Reason: b.Reason})
 		}
 		st.Pools = append(st.Pools, ps)
+	}
+	for _, name := range c.PluginOrder {
+		ps, p := c.Plugins[name], rt.Plugins[name]
+		pst := PluginStatus{Name: name, Line: ps.Line, File: ps.File, SHA256: ps.SHA, Pinned: ps.Pinned}
+		if p != nil {
+			pst.Working, pst.Instances = p.Health()
+			if m := p.Metrics(); len(m) > 0 {
+				pst.Metrics = m
+			}
+		}
+		st.Plugins = append(st.Plugins, pst)
 	}
 	s.mu.Lock()
 	drains := slices.DeleteFunc(slices.Clone(s.cs.drains), func(d drainEntry) bool { return time.Now().After(d.until) })

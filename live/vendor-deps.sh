@@ -2,13 +2,15 @@
 # Copyright 2026 BareProxy.com
 # SPDX-License-Identifier: Apache-2.0
 #
-# vendor-deps.sh fetches the one outside dependency, golang.org/x/crypto (for
-# acme/autocert), and the modules it needs, then writes go.mod, go.sum and
+# vendor-deps.sh fetches the outside dependencies, golang.org/x/crypto (for
+# acme/autocert) and github.com/tetratelabs/wazero (the WebAssembly runtime
+# for plugins), and the modules they need, then writes go.mod, go.sum and
 # src/vendor/ so the repo builds with no network.
 #
 # Why it looks like this: proxy.golang.org isn't reachable from the build
-# machine, so the modules come from GitHub's mirror of the Go repositories
-# (github.com/golang/<name>) at their release tags. The script packs each one
+# machine, so the modules come from GitHub: the Go team's mirror of the Go
+# repositories (github.com/golang/<name>) and wazero's own repository, at
+# their release tags. The script packs each one
 # as a standard module zip (files under <module>@<version>/, no .git, no
 # nested modules), serves them from a local file proxy and runs go get with
 # GONOSUMDB=golang.org/x, so go.sum is computed from those zips. Once the
@@ -23,21 +25,22 @@ work=$(mktemp -d)
 trap 'chmod -R u+w "$work"; rm -rf "$work"' EXIT
 proxy=$work/proxy
 
-# name, tag, and what the build needs: the whole module, or its go.mod only
-# (sys and term are in the module graph, but no package of theirs is used).
-deps='crypto v0.57.0 full
-net v0.58.0 full
-text v0.42.0 full
-sys v0.48.0 mod
-term v0.46.0 mod'
+# module, GitHub repository, tag, and what the build needs: the whole module,
+# or its go.mod only (term is in the module graph, but no package of it is used).
+deps='golang.org/x/crypto golang/crypto v0.57.0 full
+golang.org/x/net golang/net v0.58.0 full
+golang.org/x/text golang/text v0.42.0 full
+golang.org/x/sys golang/sys v0.48.0 full
+golang.org/x/term golang/term v0.46.0 mod
+github.com/tetratelabs/wazero tetratelabs/wazero v1.12.0 full'
 
-while read -r name ver kind; do
-	mod=golang.org/x/$name
+while read -r mod gh ver kind; do
+	name=${gh#*/}
 	out=$proxy/$mod/@v
 	mkdir -p "$out"
 	repo=$work/git/$name
 	if [ "$kind" = full ]; then
-		git -c advice.detachedHead=false clone -q --depth 1 --branch "$ver" "https://github.com/golang/$name" "$repo"
+		git -c advice.detachedHead=false clone -q --depth 1 --branch "$ver" "https://github.com/$gh" "$repo"
 		cp "$repo/go.mod" "$out/$ver.mod"
 		python3 - "$repo" "$mod@$ver" "$out/$ver.zip" <<'PY'
 import os, sys, zipfile
@@ -57,18 +60,18 @@ with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as z:
             z.write(p, prefix + "/" + os.path.relpath(p, src))
 PY
 	else
-		git clone -q --depth 1 --branch "$ver" --filter=blob:none --no-checkout "https://github.com/golang/$name" "$repo"
+		git clone -q --depth 1 --branch "$ver" --filter=blob:none --no-checkout "https://github.com/$gh" "$repo"
 		git -C "$repo" show HEAD:go.mod >"$out/$ver.mod"
 	fi
 	when=$(TZ=UTC git -C "$repo" log -1 --date=format-local:%Y-%m-%dT%H:%M:%SZ --format=%cd)
 	printf '{"Version":"%s","Time":"%s"}\n' "$ver" "$when" >"$out/$ver.info"
 	echo "$ver" >"$out/list"
-	echo "$mod $ver ($kind) from github.com/golang/$name commit $(git -C "$repo" rev-parse HEAD)"
+	echo "$mod $ver ($kind) from github.com/$gh commit $(git -C "$repo" rev-parse HEAD)"
 done <<<"$deps"
 
 cd "$src"
-export GOPROXY=file://$proxy GONOSUMDB=golang.org/x GOFLAGS="-mod=mod -buildvcs=false" GOTOOLCHAIN=local GOMODCACHE=$work/modcache
-go get golang.org/x/crypto/acme/autocert@v0.57.0
+export GOPROXY=file://$proxy GONOSUMDB=golang.org/x,github.com/tetratelabs/wazero GOFLAGS="-mod=mod -buildvcs=false" GOTOOLCHAIN=local GOMODCACHE=$work/modcache
+go get golang.org/x/crypto/acme/autocert@v0.57.0 github.com/tetratelabs/wazero@v1.12.0
 go mod tidy
 rm -rf vendor
 go mod vendor

@@ -2,3 +2,9 @@ BareProxy
 Copyright 2026 BareProxy.com
 
 This product includes software developed at BareProxy.com (https://bareproxy.com/).
+
+This product includes wazero (https://github.com/tetratelabs/wazero),
+under the Apache License 2.0, with this notice:
+
+wazero
+Copyright 2020-2023 wazero authors

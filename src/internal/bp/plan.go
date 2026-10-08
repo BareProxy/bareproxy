@@ -64,7 +64,7 @@ func MakePlan(old, new *Config) *PlanResult {
 			res.Changes = append(res.Changes, l.line)
 		}
 	}
-	res.Settings, res.Warnings = settings(res.old, res.new), []string{}
+	res.Settings, res.Warnings = append(settings(res.old, res.new), pluginChanges(res.old, res.new)...), []string{}
 	for _, w := range Warnings(res.new) {
 		res.Warnings = append(res.Warnings, fmt.Sprintf("line %d: %s", w.Line, w.Msg))
 	}
@@ -73,7 +73,9 @@ func MakePlan(old, new *Config) *PlanResult {
 
 // PlanID is a short hash of both configs' text.
 func PlanID(old, new *Config) string {
-	text := func(c *Config) string { return strings.Join(cmp.Or(c, &Config{}).Lines, "\n") }
+	text := func(c *Config) string {
+		return strings.Join(cmp.Or(c, &Config{}).Lines, "\n") + "\x00" + pluginPrint(c)
+	}
 	sum := sha256.Sum256([]byte(text(old) + "\x00" + text(new)))
 	return hex.EncodeToString(sum[:])[:12]
 }
@@ -842,9 +844,9 @@ func blocks(c *Config) map[string]map[string]cfgLine {
 				out[name] = map[string]cfgLine{"": {text, i + 1}}
 			}
 			cur = out[name]
-		case key == "backend":
+		case key == "backend" || key == "allow-http" || key == "read":
 			cur[text] = cfgLine{text, i + 1}
-		case key != "route":
+		case key != "route" && key != "use": // use lines: see pluginChanges
 			cur[key] = cfgLine{text, i + 1}
 		}
 	}

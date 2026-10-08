@@ -1,0 +1,12 @@
+# go test -run XXX -bench BenchmarkPlugin -benchtime 3s -count 3 ./internal/bp, 2026-10-08, go version go1.27.1 linux/amd64, Intel(R) Xeon(R) Processor @ 2.10GHz, 2 CPUs
+# One request answered by a respond rule: no plugin; the test plugin (Go, built for wasip1) doing nothing; and the test plugin adding a request header and writing a note. One instance.
+BenchmarkPluginNone-2      	  743233	      4717 ns/op	    2287 B/op	      22 allocs/op
+BenchmarkPluginNone-2      	  718377	      4777 ns/op	    2287 B/op	      22 allocs/op
+BenchmarkPluginNone-2      	  732746	      4600 ns/op	    2287 B/op	      22 allocs/op
+BenchmarkPluginEmpty-2     	   81144	     42390 ns/op	   10815 B/op	     146 allocs/op
+BenchmarkPluginEmpty-2     	   79862	     41732 ns/op	   10817 B/op	     146 allocs/op
+BenchmarkPluginEmpty-2     	   87270	     44265 ns/op	   10803 B/op	     146 allocs/op
+BenchmarkPluginHeaders-2   	   40698	     93110 ns/op	   16356 B/op	     185 allocs/op
+BenchmarkPluginHeaders-2   	   37923	     86750 ns/op	   17023 B/op	     186 allocs/op
+BenchmarkPluginHeaders-2   	   35913	     88875 ns/op	   15869 B/op	     189 allocs/op
+ok  	bareproxy/internal/bp	37.601s

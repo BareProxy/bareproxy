@@ -2,9 +2,9 @@
 
 BareProxy is a small web server and reverse proxy that explains every routing decision. It terminates TLS, routes each request by host and path, and either serves it from a folder or proxies it to a pool of backends. For any request, `explain` says what would happen before it arrives, and `why` says what did happen after. `plan` says what a config change would do before it goes live.
 
-Most sites and applications use a small part of nginx. The question behind this project is how little machinery it takes to provide the part of nginx that most applications use. BareProxy is one Go binary, built with Go's standard library and, for automatic certificates, the Go team's own `golang.org/x/crypto`. The core does TLS, routing, static files, backend health, safe config changes and request tracing. Everything else will come as plugins: WebAssembly modules loaded at run time, sandboxed, and written in any language. The [plugin design](docs/plugins.md) and the [plugin program](docs/plugin-program.md) say how and in what order.
+Most sites and applications use a small part of nginx. The question behind this project is how little machinery it takes to provide the part of nginx that most applications use. BareProxy is one Go binary, built with Go's standard library, the Go team's own `golang.org/x/crypto` for automatic certificates, and wazero for plugins. The core does TLS, routing, static files, backend health, safe config changes and request tracing. Everything else comes as plugins: WebAssembly modules loaded at run time, sandboxed, written in any language, using the Proxy-Wasm interface that Envoy and Istio use. This release has the plugin host; the plugins themselves come next. The [plugin design](docs/plugins.md) and the [plugin program](docs/plugin-program.md) say how and in what order.
 
-This is version 0.1.0, released on 8 October 2026. It follows the 0.1.0-alpha of 5 October and the 0.1.0-dev first cut of 2 October. Binaries are built for Linux, macOS and Windows with Go 1.27. Linux is where it has been run in earnest and measured; see Known limits for the others. It hasn't had an outside security review yet, so don't put it in front of anything that matters.
+This is version 0.2.0, released on 8 October 2026. It adds the plugin host to 0.1.0 of the same day, which followed the 0.1.0-alpha of 5 October and the 0.1.0-dev first cut of 2 October. Binaries are built for Linux, macOS and Windows with Go 1.27. Linux is where it has been run in earnest and measured; see Known limits for the others. It hasn't had an outside security review yet, so don't put it in front of anything that matters.
 
 The whole project is open source under the Apache License 2.0. Copyright 2026 BareProxy.com.
 
@@ -68,7 +68,7 @@ The Linux binaries are static, so they need no libraries on the machine. The mac
 
 ## Build and test
 
-The one outside module is vendored (see Dependencies below), so nothing is downloaded. The release binaries are built with Go 1.27.1.
+The outside modules are vendored (see Dependencies below), so nothing is downloaded. The release binaries are built with Go 1.27.1. The plugin tests build a test plugin (`src/internal/plugin/testdata/fixture`) with the same Go toolchain for `GOOS=wasip1 GOARCH=wasm`, which every Go install can do.
 
 ```
 cd src
@@ -91,7 +91,7 @@ Releases go out on their own. The test workflow runs `go vet`, `go test` (with `
 
 ### Dependencies
 
-BareProxy uses one module from outside Go's standard library: `golang.org/x/crypto` v0.57.0, for `acme/autocert`. It brings in `golang.org/x/net` v0.58.0 (for `idna`) and `golang.org/x/text` v0.42.0. All three come from the Go team and are vendored in `src/vendor/`, so a fresh clone builds and tests with no network.
+BareProxy uses two modules from outside Go's standard library: `golang.org/x/crypto` v0.57.0, for `acme/autocert`, and `github.com/tetratelabs/wazero` v1.12.0, the WebAssembly runtime for plugins (pure Go, Apache 2.0). They bring in `golang.org/x/net` v0.58.0 (for `idna`), `golang.org/x/text` v0.42.0 and `golang.org/x/sys` v0.48.0. All of them are vendored in `src/vendor/`, so a fresh clone builds and tests with no network. CI checks `go.sum` against Go's checksum database on every push.
 
 The Go module proxy (proxy.golang.org) wasn't reachable when they were added. `live/vendor-deps.sh` took them from GitHub's mirror of the Go repositories at those release tags, packed them as standard module zips and ran `go get` with `GONOSUMDB=golang.org/x`, so `go.sum` was computed from those copies. Once the proxy is reachable, check them against the official copies:
 
@@ -188,6 +188,40 @@ Version 3 is running (it was 2).
 
 The rollback is a new version (3) that holds the text of version 1, and the config file holds that text again; the reply says so whenever an apply or a rollback rewrites the file.
 
+## Plugins
+
+A plugin is a WebAssembly module written to the Proxy-Wasm ABI (0.2.1, or 0.2.0). It's declared once in a `plugin` block and run by the sites that `use` it, in the order they name it:
+
+```
+plugin crawlers /etc/bareproxy/plugins/crawlers.wasm
+  config /etc/bareproxy/plugins/crawlers.json
+  timeout 5ms
+  on-error open
+
+site example.com
+  use crawlers
+  route /* -> files /var/www/example/public
+```
+
+| Setting | Default | What it does |
+|---|---|---|
+| `config FILE` | none | Handed to the plugin's `proxy_on_configure` as it is |
+| `memory SIZE` | 64MB | The most memory the module may use (1MB to 4GB) |
+| `timeout DURATION` | 5ms | The longest one call into the plugin may run; a call past it stops the instance |
+| `pause DURATION` | 30s | The longest a plugin may keep a request waiting (on an outgoing call, say) |
+| `instances N` | up to 4 | Copies of the module; each runs one call at a time |
+| `on-error open\|closed` | closed | When the plugin fails: go on without it, or answer 502 |
+| `allow-http HOST:PORT ...` | none | Addresses the plugin may call with `proxy_http_call` |
+| `read DIR` | none | A folder it may read with `bareproxy_read_file` |
+| `store SIZE` | off | A key-value store of its own on disk, in the state folder |
+| `body-limit SIZE` | 8MB | The largest request or response body it is handed |
+
+**What runs when.** A site's plugins see a request after the site is found and before the path is normalized and routed, so a plugin can change the method, the path and the headers, and the core routes what it gets. A plugin can answer the request itself, and the plugins after it don't run. On the way back the plugins see the response headers, then, if a plugin asks for it, the whole body, last plugin first. The body isn't handed over when it is over the body limit, partial (206), compressed, a stream of events, or flushed while it is sent; those go out as they are, with a note in the record. `proxy_on_log` runs once the response is sent.
+
+**The sandbox.** A plugin gets WASI with no files, no environment and no arguments (clocks, random numbers, and its output going to BareProxy's log, at most 50 lines a second), the Proxy-Wasm host functions, and BareProxy's own functions through `proxy_call_foreign_function`: `bareproxy_note` (a line in the request's record and in `why`), `bareproxy_store_get`, `_put` and `_delete`, and `bareproxy_read_file`. Shared queues and gRPC calls aren't built. An outgoing call goes only to an address an `allow-http` line names. A plugin that traps or runs past its time limit loses its instance; the request follows `on-error`, and a new instance starts in the background, more slowly after repeated failures.
+
+**The core's promises hold.** `check` compiles each module and refuses one that isn't a Proxy-Wasm plugin or imports something BareProxy doesn't provide. `plan` lists a plugin file or plugin config file that changed under the same config text, and a changed plugin order. The history keeps the plugin files and plugin config files each version ran, so `rollback` runs the exact module that ran before, not whatever is at the path now (`status` says "run from the history's copy"). Every request leaves one record, and `why` shows what each plugin did, how long it took and its notes. `explain` lists a site's plugins but doesn't run them. `status` shows each plugin's working instances and the metrics it defined.
+
 ## Live test
 
 `live/live-test.sh` builds the bareproxy.com Hugo site and adds bait files. It then starts BareProxy over HTTPS with two test API backends and one dead backend, and checks the following, printing everything it sees:
@@ -213,8 +247,8 @@ HUGO=/path/to/hugo SITE=/path/to/bareproxy.com-main ./live/live-test.sh
 - **Load test at the design's full size** (`results/load-test.log`). `live/load-test.sh` sends 2,000 requests per second for 60 seconds: 800 over HTTP/1.1, 800 over HTTP/2 with TLS, and 400 WebSocket messages on 20 connections (half of them over TLS). During the run, 20 applies add and remove backends, move a route between pools and change a response. Result: 120,020 requests and messages, 0 failed, 0 connections reset, 0 WebSocket messages lost, and after each apply the next requests already followed the new config. On a quiet machine the p99 latency was 2.5 ms over HTTP/1.1, 2.7 ms over HTTP/2 and 2.3 ms for a WebSocket echo. All 14 full runs on 5 October passed, some of them while other builds and tests kept the machine busy. `live/load-experiments.sh` (`results/load-experiments.log`) runs five cases the applies stay clear of: a route moved to a new pool, a changed health line and a replaced only backend lose no requests (each lost 1 to 2.5 requests per apply before the fix in this build), and a WebSocket connection through a removed backend closes when the drain time ends.
 - **Memory.** The peak under the load test is 46 MiB with the default 8 MB record store, 25 MiB with the store off and 111 MiB with the old 32 MB default (`results/memory-test.log`).
 - **Browser demo.** 114 checks pass in headless Chromium (`results/demo-check.log`). They compare the demo's check, explain and plan results with the native commands.
-- **Code size.** The core package and the command are 5,225 lines of Go (4,767 in the core, 458 in the command). File serving (`files.go`, 235 lines) has a budget of its own in the design, so 4,990 lines count against the 5,000-line budget. Blank lines and comments aren't counted. The alpha first shipped at 6,422 lines; trims on 5 October took it down, and automatic certificates added about 150.
-- **Binary size.** 8.9 MB for linux/amd64 and 8.3 MB for linux/arm64, static and stripped (8,917,152 and 8,257,696 bytes). The first build of the alpha, before automatic certificates, was 8.4 MB.
+- **Code size.** Blank lines and comments aren't counted. Without plugins, the core package and the command are 5,225 lines of Go (4,767 in the core, 458 in the command), and with file serving's own budget (`files.go`, 235 lines) taken out, 4,990 lines count against the core's 5,000-line budget. The alpha first shipped at 6,422 lines; trims on 5 October took it down, and automatic certificates added about 150. The plugin host in 0.2.0 is 2,416 lines: 1,464 in `internal/plugin`, 740 in `plugins_config.go` and `plugins_run.go`, and 212 of hook-ups in the core's files. That is over the 2,000 lines the design set for it, and trimming it is on the list.
+- **Binary size.** 11.6 MB for linux/amd64 with the plugin host (11,632,800 bytes), static and stripped; 8.9 MB before it (8,917,152 bytes), and 8.4 MB for the first build of the alpha, before automatic certificates.
 - **Speed work.** For a proxied request, the server's CPU time fell from about 80 to 72 microseconds in the speed runs, and the memory it allocates from 43.7 KB to 10.3 KB: the copy buffers come from a pool, each attempt copies the request without cloning its headers, and the server matches routes without writing explain's notes.
 - **Against nginx.** Measured on 5 October 2026 on this build, on a shared 2-CPU cloud machine (Intel Xeon at 2.1 GHz under KVM) with nothing else running: each server on one core and the wrk load generator on the other, plain HTTP with keep-alive and 50 connections, 10-second runs, 3 per case, best run shown. Logging was off for both servers; BareProxy kept its default 8 MB in-memory record store. The full tables, with logging to a file, the setup and the caveats, are in `results/bench-summary.md`. Per core, nginx handled 1.9 to 3.2 times as many requests (computed from the best runs). On the proxied API, BareProxy went from 10,430 to 12,055 requests per second since the morning's measurement of the first alpha build, while nginx stayed at about 35,400.
 
@@ -247,7 +281,8 @@ These settings are in the grammar, but they aren't built yet. The config check w
 - **Requests Go's server can't parse leave no record.** It answers them itself (a bad request line or header, an oversized header, an unknown HTTP version) with 400, 431, 501 or 505. `OPTIONS *` does reach BareProxy: it gets 200 with no body, a `BareProxy-Id` and one record (outcome `local`, rule `OPTIONS *`).
 - **WebSocket tunnels aren't inspected.** After an upgrade the connection is a plain tunnel, so routing rules don't see what travels inside it. When an apply removes a backend, the tunnels through it close at the end of the pool's `drain` time, in use or not. WebSocket was tested over HTTP/1.1, plain and with TLS, not over HTTP/2.
 - **macOS and Windows are lightly tested.** The test suite runs on Linux and macOS on every push, and each release's binaries pass a smoke test on macOS and Windows, but only Linux has run under load or in front of a real site. Outside Linux, `history` doesn't record the user who made a change. Windows has no SIGHUP, so reload with `apply`, and its admin socket is a Unix socket file, which needs Windows 10 version 1803 or later.
-- **Plugins aren't built yet.** The core is the whole product in this release. [docs/plugins.md](docs/plugins.md) is the design and [docs/plugin-program.md](docs/plugin-program.md) the list.
+- **No plugin is built yet.** This release has the plugin host, tested with a test plugin written in Go straight to the ABI. The plugins come next ([docs/plugin-program.md](docs/plugin-program.md)).
+- **A plugin costs more than its budget.** With the test plugin (Go, built for `wasip1`), a request costs about 42 microseconds more with a plugin that does nothing and about 85 more with one that adds a header and a note, on a 2.1 GHz Xeon (`results/plugin-bench.log`); the request alone costs about 5. The design budget is 10. Most of the time is inside the plugin: Go's runtime starts each call. Plugins in Rust or C should cost much less; that is measured when the first one is built.
 
 ## License
 

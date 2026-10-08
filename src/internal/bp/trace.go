@@ -21,45 +21,46 @@ import (
 // Record is the one record every request leaves. Fields that don't apply
 // are left out of the JSON.
 type Record struct {
-	ID          string    `json:"id"`
-	Time        string    `json:"time"`
-	Config      int       `json:"config"`
-	Client      string    `json:"client"`
-	TLS         string    `json:"tls,omitempty"`
-	SNI         string    `json:"sni,omitempty"`
-	Proto       string    `json:"proto"`
-	TraceID     string    `json:"trace_id,omitempty"`
-	Method      string    `json:"method"`
-	Scheme      string    `json:"scheme"`
-	Host        string    `json:"host"`
-	Path        string    `json:"path"`
-	NormPath    string    `json:"norm_path,omitempty"`
-	Query       string    `json:"query,omitempty"`
-	Site        string    `json:"site,omitempty"`
-	SiteLine    int       `json:"site_line,omitempty"`
-	Line        int       `json:"line,omitempty"`
-	Rule        string    `json:"rule,omitempty"`
-	Location    string    `json:"location,omitempty"`
-	Upstream    string    `json:"upstream_path,omitempty"`
-	Pool        string    `json:"pool,omitempty"`
-	PoolLine    int       `json:"pool_line,omitempty"`
-	PoolUp      int       `json:"pool_up,omitempty"`
-	PoolSize    int       `json:"pool_size,omitempty"`
-	Skipped     []Skip    `json:"skipped,omitempty"`
-	Attempts    []Attempt `json:"attempts,omitempty"`
-	Folder      string    `json:"folder,omitempty"`
-	Checked     []string  `json:"checked,omitempty"`
-	File        string    `json:"file,omitempty"`
-	Sent        string    `json:"sent,omitempty"`
-	Encoding    string    `json:"encoding,omitempty"`
-	ContentType string    `json:"content_type,omitempty"`
-	ErrorPage   string    `json:"error_page,omitempty"`
-	Status      int       `json:"status"`
-	BytesIn     int64     `json:"bytes_in"`
-	BytesOut    int64     `json:"bytes_out"`
-	MS          float64   `json:"ms"`
-	Outcome     string    `json:"outcome"`
-	Reason      string    `json:"reason,omitempty"`
+	ID          string      `json:"id"`
+	Time        string      `json:"time"`
+	Config      int         `json:"config"`
+	Client      string      `json:"client"`
+	TLS         string      `json:"tls,omitempty"`
+	SNI         string      `json:"sni,omitempty"`
+	Proto       string      `json:"proto"`
+	TraceID     string      `json:"trace_id,omitempty"`
+	Method      string      `json:"method"`
+	Scheme      string      `json:"scheme"`
+	Host        string      `json:"host"`
+	Path        string      `json:"path"`
+	NormPath    string      `json:"norm_path,omitempty"`
+	Query       string      `json:"query,omitempty"`
+	Site        string      `json:"site,omitempty"`
+	SiteLine    int         `json:"site_line,omitempty"`
+	Plugins     []PluginRun `json:"plugins,omitempty"`
+	Line        int         `json:"line,omitempty"`
+	Rule        string      `json:"rule,omitempty"`
+	Location    string      `json:"location,omitempty"`
+	Upstream    string      `json:"upstream_path,omitempty"`
+	Pool        string      `json:"pool,omitempty"`
+	PoolLine    int         `json:"pool_line,omitempty"`
+	PoolUp      int         `json:"pool_up,omitempty"`
+	PoolSize    int         `json:"pool_size,omitempty"`
+	Skipped     []Skip      `json:"skipped,omitempty"`
+	Attempts    []Attempt   `json:"attempts,omitempty"`
+	Folder      string      `json:"folder,omitempty"`
+	Checked     []string    `json:"checked,omitempty"`
+	File        string      `json:"file,omitempty"`
+	Sent        string      `json:"sent,omitempty"`
+	Encoding    string      `json:"encoding,omitempty"`
+	ContentType string      `json:"content_type,omitempty"`
+	ErrorPage   string      `json:"error_page,omitempty"`
+	Status      int         `json:"status"`
+	BytesIn     int64       `json:"bytes_in"`
+	BytesOut    int64       `json:"bytes_out"`
+	MS          float64     `json:"ms"`
+	Outcome     string      `json:"outcome"`
+	Reason      string      `json:"reason,omitempty"`
 }
 
 // Skip is a backend passed over because it wasn't up.
@@ -268,6 +269,13 @@ func RenderWhy(rec *Record) string {
 	b.WriteString("\n")
 	if rec.Site != "" {
 		fmt.Fprintf(&b, "Site %s (line %d)\n", rec.Site, rec.SiteLine)
+	}
+	for _, pl := range rec.Plugins {
+		fmt.Fprintf(&b, "Plugin %s: %s, %s\n", pl.Name, pl.Action, fmtMS(pl.MS))
+		note("  error: %s\n", pl.Error)
+		for _, n := range pl.Notes {
+			fmt.Fprintf(&b, "  note: %s\n", n)
+		}
 	}
 	note("Normalized path: %s\n", rec.NormPath)
 	if rec.Rule != "" {

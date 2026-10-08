@@ -1,0 +1,26 @@
+# go test -count=1 -v ./internal/plugin/ and the plugin tests of ./internal/bp, 2026-10-08, go version go1.27.1 linux/amd64, Intel(R) Xeon(R) Processor @ 2.10GHz, 2 CPUs
+--- PASS: TestCompileRefusesWhatIsNotAPlugin (0.91s)
+--- PASS: TestRequestHeadersAndNotes (0.05s)
+--- PASS: TestLocalResponse (0.04s)
+--- PASS: TestResponsePhase (0.03s)
+--- PASS: TestOutgoingCall (0.05s)
+--- PASS: TestStoreAndRead (0.06s)
+--- PASS: TestTicks (0.06s)
+--- PASS: TestFailuresBreakTheInstanceOnly (0.36s)
+--- PASS: TestMemoryCap (0.24s)
+--- PASS: TestRefusedConfigStopsStart (0.03s)
+--- PASS: TestPairs (0.00s)
+--- PASS: TestNoRestartStorm (3.04s)
+--- PASS: TestSleepDoesNotHold (0.13s)
+PASS
+ok  	bareproxy/internal/plugin	5.147s
+--- PASS: TestPluginAnswersBeforeRouting (1.05s)
+--- PASS: TestPluginChangesRequestAndResponse (0.08s)
+--- PASS: TestPluginFailureFollowsOnError (0.20s)
+--- PASS: TestPluginFilesInPlanHistoryAndRollback (1.11s)
+--- PASS: TestPluginConfigProblems (0.19s)
+--- PASS: TestPluginReplacesTheResponse (0.17s)
+--- PASS: TestTwoPluginsOnOneSite (0.23s)
+--- PASS: TestKeptPluginKeepsItsFolders (0.14s)
+PASS
+ok  	bareproxy/internal/bp	3.192s

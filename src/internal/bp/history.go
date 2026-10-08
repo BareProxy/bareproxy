@@ -68,6 +68,20 @@ func (h *history) path(n int) string {
 	return filepath.Join(h.dir, "versions", fmt.Sprintf("%d.conf", n))
 }
 
+// pinsPath holds the exact plugin files version n ran, when it ran any.
+func (h *history) pinsPath(n int) string {
+	return filepath.Join(h.dir, "versions", fmt.Sprintf("%d.plugins.json", n))
+}
+
+// pins returns the plugin files version n ran.
+func (h *history) pins(n int) map[string]Pin {
+	var pins map[string]Pin
+	if b, err := os.ReadFile(h.pinsPath(n)); err == nil {
+		json.Unmarshal(b, &pins)
+	}
+	return pins
+}
+
 // last returns the newest version number, or 0 when the history is empty or
 // isn't kept.
 func (h *history) last() int {
@@ -95,15 +109,29 @@ func (h *history) before(n int) int {
 	return h.entries[i-1].Version
 }
 
-// save stores a new version and drops the oldest past the last 100.
-func (h *history) save(e Entry, text string) error {
+// save stores a new version and drops the oldest past the last 100. A
+// version that runs plugins also keeps which plugin files it ran; the files
+// themselves are kept in the state folder while a kept version names them.
+func (h *history) save(e Entry, text string, pins map[string]Pin) error {
 	if err := writeFileAtomic(h.path(e.Version), []byte(text), 0o640); err != nil {
 		return err
 	}
+	if len(pins) > 0 {
+		b, _ := json.MarshalIndent(pins, "", "  ")
+		if err := writeFileAtomic(h.pinsPath(e.Version), b, 0o640); err != nil {
+			return err
+		}
+	}
 	h.entries = append(h.entries, e)
+	dropped := false
 	for len(h.entries) > keepVersions {
 		os.Remove(h.path(h.entries[0].Version))
+		os.Remove(h.pinsPath(h.entries[0].Version))
 		h.entries = h.entries[1:]
+		dropped = true
+	}
+	if dropped {
+		h.dropPluginFiles()
 	}
 	var b bytes.Buffer
 	enc := json.NewEncoder(&b)
@@ -137,4 +165,24 @@ func writeFileAtomic(path string, data []byte, perm fs.FileMode) error {
 		os.Remove(f.Name())
 	}
 	return err
+}
+
+// dropPluginFiles removes the plugin files no kept version names.
+func (h *history) dropPluginFiles() {
+	dir := filepath.Join(h.dir, "plugins", "files")
+	files, err := os.ReadDir(dir)
+	if err != nil {
+		return
+	}
+	keep := map[string]bool{}
+	for _, e := range h.entries {
+		for _, p := range h.pins(e.Version) {
+			keep[p.SHA], keep[p.ConfigSHA] = true, true
+		}
+	}
+	for _, f := range files {
+		if !keep[f.Name()] {
+			os.Remove(filepath.Join(dir, f.Name()))
+		}
+	}
 }
