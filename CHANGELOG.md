@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.4.0 (8 October 2026)
+
+The first two plugins, numbers 1 and 2 in the [build order](docs/plugin-program.md).
+
+- **Maintenance and failover pages** (`plugins/maintenance`, released as `maintenance.wasm`): when the backend answers 502, 503 or 504, or BareProxy does because no backend is up, visitors get a page of the site's own, with the status kept and `Retry-After`. With `maintenance on`, everyone gets the maintenance page (503) except addresses on an allow list; paths can be left alone with `skip`. See its README.
+- **CORS** (`plugins/cors`, released as `cors.wasm`): preflights answered at the proxy, never reaching the app; `Access-Control-*` headers added to responses from one list of exact origins, with sections per path prefix; the app's own CORS headers dropped so the list is the only one; `Vary: Origin` whenever the answer depends on the origin. It refuses `*` with credentials, `null` and wildcard origins. A refused call is noted in the record with its origin. See its README.
+- `plugins/kit`, what plugins share: config files in BareProxy's style, address ranges, path prefixes, notes for the record.
+- `check` and `plan` start each plugin once, without its store, folders or outgoing calls, so a plugin config the plugin refuses is an error there, naming the plugin's config file and its reason (`plugin cors refused its config cors.conf: line 2: ...`). Before, it showed only when the config went live.
+- Tests: unit tests in each plugin (`cargo test` in `plugins/`), and server tests that run the built plugins inside BareProxy against failing backends, no backend, maintenance mode, preflights and real calls (`BP_PLUGINS_DIST`). CI runs both.
+
 ## 0.3.0 (8 October 2026)
 
 Plugins in Rust. No plugin is built yet; the first ones will be written this way.

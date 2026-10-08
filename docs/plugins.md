@@ -1,6 +1,6 @@
 # BareProxy Plugins: Design Note
 
-Status: accepted on 8 October 2026; the plugin host is built in 0.2.0, and plugins in Rust are set up in 0.3.0. No plugin is built yet; [plugin-program.md](plugin-program.md) lists them and their order. This note now describes what was built. Where the build differs from the first version of the note, it says so.
+Status: accepted on 8 October 2026; the plugin host is built in 0.2.0, plugins in Rust are set up in 0.3.0, and the first two plugins ship in 0.4.0; [plugin-program.md](plugin-program.md) lists them and their order. This note now describes what was built. Where the build differs from the first version of the note, it says so.
 
 ## The decision
 
@@ -76,7 +76,7 @@ site example.com
 
 The README's Plugins section lists every setting and its default. Two defaults differ from the first version of this note: memory is 64 MB (Go's runtime in a plugin wants more than 16), and `on-error` is `closed` in every phase, so a broken auth or crawler plugin fails safe.
 
-`check` loads each module and refuses one that isn't a Proxy-Wasm plugin (no `proxy_abi_version_0_2_1` or `_0_2_0` export, no allocator, no `proxy_on_context_create`), is built for ABI 0.1.0, or imports a function BareProxy doesn't provide. It names the line, as for every other config error.
+`check` loads each module and refuses one that isn't a Proxy-Wasm plugin (no `proxy_abi_version_0_2_1` or `_0_2_0` export, no allocator, no `proxy_on_context_create`), is built for ABI 0.1.0, or imports a function BareProxy doesn't provide. It names the line, as for every other config error. Since 0.4.0 it also starts each plugin once, with one instance and without its store, folders or outgoing calls, and runs `proxy_on_configure`; a plugin that refuses its config is an error naming the plugin's config file and what the plugin logged about it. So a plugin checks its config in `proxy_on_configure` and leaves the store, files and calls for later.
 
 ## Instances, limits and failures
 

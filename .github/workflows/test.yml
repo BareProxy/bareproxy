@@ -56,9 +56,9 @@ jobs:
           git diff --exit-code -- vendor || { echo "vendor/ doesn't match go.mod; run go mod vendor" >&2; exit 1; }
 
   plugins:
-    # The Rust plugins: formatting, lints and a build to WebAssembly, then
-    # the plugin host's tests again, with the Rust test plugin as well as
-    # the Go one.
+    # The Rust plugins: formatting, lints, their unit tests and a build to
+    # WebAssembly, then the plugin host's tests again, with the Rust test
+    # plugin as well as the Go one, and the shipped plugins in a server.
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -69,11 +69,15 @@ jobs:
       - run: rustup target add wasm32-unknown-unknown && rustup component add rustfmt clippy
       - run: cargo fmt --check && cargo clippy --locked --release --target wasm32-unknown-unknown -- -D warnings
         working-directory: plugins
+      - name: The plugins' unit tests
+        run: cargo test --locked
+        working-directory: plugins
       - run: bash plugins/build.sh plugins/dist
-      - name: go test with the Rust test plugin
+      - name: go test with the Rust test plugin and the shipped plugins
         working-directory: src
         env:
           BP_RUST_FIXTURE: ${{ github.workspace }}/plugins/dist/testplugin.wasm
+          BP_PLUGINS_DIST: ${{ github.workspace }}/plugins/dist
         run: sh ../live/ci-test.sh -count=1 ./internal/plugin/... ./internal/bp/...
 
   builds:

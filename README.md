@@ -2,9 +2,9 @@
 
 BareProxy is a small web server and reverse proxy that explains every routing decision. It terminates TLS, routes each request by host and path, and either serves it from a folder or proxies it to a pool of backends. For any request, `explain` says what would happen before it arrives, and `why` says what did happen after. `plan` says what a config change would do before it goes live.
 
-Most sites and applications use a small part of nginx. The question behind this project is how little machinery it takes to provide the part of nginx that most applications use. BareProxy is one Go binary, built with Go's standard library, the Go team's own `golang.org/x/crypto` for automatic certificates, and wazero for plugins. The core does TLS, routing, static files, backend health, safe config changes and request tracing. Everything else comes as plugins: WebAssembly modules loaded at run time, sandboxed, written in any language, using the Proxy-Wasm interface that Envoy and Istio use. This release has the plugin host; the plugins themselves come next. The [plugin design](docs/plugins.md) and the [plugin program](docs/plugin-program.md) say how and in what order.
+Most sites and applications use a small part of nginx. The question behind this project is how little machinery it takes to provide the part of nginx that most applications use. BareProxy is one Go binary, built with Go's standard library, the Go team's own `golang.org/x/crypto` for automatic certificates, and wazero for plugins. The core does TLS, routing, static files, backend health, safe config changes and request tracing. Everything else comes as plugins: WebAssembly modules loaded at run time, sandboxed, written in any language, using the Proxy-Wasm interface that Envoy and Istio use. This release ships the first two plugins, maintenance and failover pages and CORS, with nineteen more planned. The [plugin design](docs/plugins.md) and the [plugin program](docs/plugin-program.md) say how and in what order.
 
-This is version 0.3.0, released on 8 October 2026. It sets up plugins in Rust and makes plugin calls cheaper; 0.2.0, the same day, added the plugin host to 0.1.0, which followed the 0.1.0-alpha of 5 October and the 0.1.0-dev first cut of 2 October. Binaries are built for Linux, macOS and Windows with Go 1.27. Linux is where it has been run in earnest and measured; see Known limits for the others. It hasn't had an outside security review yet, so don't put it in front of anything that matters.
+This is version 0.4.0, released on 8 October 2026. It ships the first two plugins, and `check` now starts each plugin once to see that it takes its config. 0.3.0, the same day, set up plugins in Rust; 0.2.0 added the plugin host to 0.1.0, which followed the 0.1.0-alpha of 5 October and the 0.1.0-dev first cut of 2 October. Binaries are built for Linux, macOS and Windows with Go 1.27. Linux is where it has been run in earnest and measured; see Known limits for the others. It hasn't had an outside security review yet, so don't put it in front of anything that matters.
 
 The whole project is open source under the Apache License 2.0. Copyright 2026 BareProxy.com.
 
@@ -68,7 +68,7 @@ The Linux binaries are static, so they need no libraries on the machine. The mac
 
 ## Build and test
 
-The outside modules are vendored (see Dependencies below), so nothing is downloaded. The release binaries are built with Go 1.27.1. The plugin tests build a test plugin (`src/internal/plugin/testdata/fixture`) with the same Go toolchain for `GOOS=wasip1 GOARCH=wasm`, which every Go install can do. With `BP_RUST_FIXTURE` set to the Rust test plugin (`plugins/dist/testplugin.wasm`, built by `plugins/build.sh`), they run again with it; CI does.
+The outside modules are vendored (see Dependencies below), so nothing is downloaded. The release binaries are built with Go 1.27.1. The plugin tests build a test plugin (`src/internal/plugin/testdata/fixture`) with the same Go toolchain for `GOOS=wasip1 GOARCH=wasm`, which every Go install can do. With `BP_RUST_FIXTURE` set to the Rust test plugin (`plugins/dist/testplugin.wasm`, built by `plugins/build.sh`), they run again with it, and with `BP_PLUGINS_DIST` set to `plugins/dist`, the plugins BareProxy ships run inside a real server (`src/internal/bp/shipped_plugins_test.go`); CI does both. `cargo test` in `plugins/` runs the plugins' own unit tests.
 
 ```
 cd src
@@ -221,7 +221,18 @@ site example.com
 
 **The sandbox.** A plugin gets WASI with no files, no environment and no arguments (clocks, random numbers, and its output going to BareProxy's log, at most 50 lines a second), the Proxy-Wasm host functions, and BareProxy's own functions through `proxy_call_foreign_function`: `bareproxy_note` (a line in the request's record and in `why`), `bareproxy_store_get`, `_put` and `_delete`, and `bareproxy_read_file`. Shared queues and gRPC calls aren't built. An outgoing call goes only to an address an `allow-http` line names. A plugin that traps or runs past its time limit loses its instance; the request follows `on-error`, and a new instance starts in the background, more slowly after repeated failures.
 
-**The core's promises hold.** `check` compiles each module and refuses one that isn't a Proxy-Wasm plugin or imports something BareProxy doesn't provide. `plan` lists a plugin file or plugin config file that changed under the same config text, and a changed plugin order. The history keeps the plugin files and plugin config files each version ran, so `rollback` runs the exact module that ran before, not whatever is at the path now (`status` says "run from the history's copy"). Every request leaves one record, and `why` shows what each plugin did, how long it took and its notes. `explain` lists a site's plugins but doesn't run them. `status` shows each plugin's working instances and the metrics it defined.
+**The core's promises hold.** `check` compiles each module and refuses one that isn't a Proxy-Wasm plugin or imports something BareProxy doesn't provide. It also starts each plugin once, without its store, folders or outgoing calls, so a plugin config the plugin refuses shows up in `check` and `plan`, with the plugin's reason, before anything goes live. `plan` lists a plugin file or plugin config file that changed under the same config text, and a changed plugin order. The history keeps the plugin files and plugin config files each version ran, so `rollback` runs the exact module that ran before, not whatever is at the path now (`status` says "run from the history's copy"). Every request leaves one record, and `why` shows what each plugin did, how long it took and its notes. `explain` lists a site's plugins but doesn't run them. `status` shows each plugin's working instances and the metrics it defined.
+
+### Plugins that ship with BareProxy
+
+Each release attaches these next to the binaries, as `NAME.wasm`, with their checksums in `SHA256SUMS`. Each one's README is its manual.
+
+| Plugin | File | What it does |
+|---|---|---|
+| [Maintenance and failover pages](plugins/maintenance/README.md) | `maintenance.wasm` | A page of the site's own when the backend answers 502, 503 or 504, or none is up; a maintenance switch with an allow list |
+| [CORS](plugins/cors/README.md) | `cors.wasm` | Preflights answered at the proxy and `Access-Control-*` headers added, from one list of origins, per site and per path |
+
+The rest are on the way, easiest first ([docs/plugin-program.md](docs/plugin-program.md)).
 
 ### Writing a plugin in Rust
 
@@ -232,7 +243,7 @@ rustup target add wasm32-unknown-unknown
 plugins/build.sh            # every plugin into plugins/dist/NAME.wasm, with SHA256SUMS
 ```
 
-`plugins/testplugin` is the Rust test plugin: it does what the Go one does, and CI runs the plugin host's tests with both. Each release attaches every other plugin's `.wasm` file next to the binaries. Plugins in other languages work the same way; anything with a Proxy-Wasm SDK that builds to WebAssembly will do.
+`plugins/testplugin` is the Rust test plugin: it does what the Go one does, and CI runs the plugin host's tests with both. `plugins/kit` holds what the plugins share: reading a config file in BareProxy's style (one setting a line, `#` comments, blocks of text up to `end`), address ranges, path prefixes and notes for the record. A plugin keeps its decisions in plain Rust apart from the SDK calls, so `cargo test` covers them without a host. Each release attaches every plugin but the test plugin as a `.wasm` file next to the binaries. Plugins in other languages work the same way; anything with a Proxy-Wasm SDK that builds to WebAssembly will do.
 
 ## Live test
 
@@ -293,7 +304,7 @@ These settings are in the grammar, but they aren't built yet. The config check w
 - **Requests Go's server can't parse leave no record.** It answers them itself (a bad request line or header, an oversized header, an unknown HTTP version) with 400, 431, 501 or 505. `OPTIONS *` does reach BareProxy: it gets 200 with no body, a `BareProxy-Id` and one record (outcome `local`, rule `OPTIONS *`).
 - **WebSocket tunnels aren't inspected.** After an upgrade the connection is a plain tunnel, so routing rules don't see what travels inside it. When an apply removes a backend, the tunnels through it close at the end of the pool's `drain` time, in use or not. WebSocket was tested over HTTP/1.1, plain and with TLS, not over HTTP/2.
 - **macOS and Windows are lightly tested.** The test suite runs on Linux and macOS on every push, and each release's binaries pass a smoke test on macOS and Windows, but only Linux has run under load or in front of a real site. Outside Linux, `history` doesn't record the user who made a change. Windows has no SIGHUP, so reload with `apply`, and its admin socket is a Unix socket file, which needs Windows 10 version 1803 or later.
-- **No plugin is built yet.** This release has the plugin host, tested with a test plugin written in Go straight to the ABI. The plugins come next ([docs/plugin-program.md](docs/plugin-program.md)).
+- **Two plugins so far.** Maintenance and failover pages and CORS ship with this release; the other nineteen in [docs/plugin-program.md](docs/plugin-program.md) aren't built yet.
 - **A plugin costs more than its budget.** On a 2.1 GHz Xeon, a request answered by a `respond` rule costs about 4 microseconds. A Rust plugin that does nothing adds about 15, and one that adds a header and writes a note about 24; the same in Go adds about 25 and 58 (`results/plugin-bench.log`). The design budget is 10. A request makes six calls into a plugin, and most of what is left in Rust is the host's cost per call: wazero starts a goroutine for each one to enforce the time limit. So Rust is the language for BareProxy's plugins, and a plugin should do its work in as few callbacks as it can.
 
 ## License

@@ -1,0 +1,11 @@
+[package]
+name = "kit"
+description = "What BareProxy's plugins share: config lines, address ranges, notes for the record"
+publish = false
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+proxy-wasm.workspace = true

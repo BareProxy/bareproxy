@@ -1,0 +1,15 @@
+[package]
+name = "maintenance"
+description = "BareProxy plugin: a page of your own when the backend is down, and a maintenance switch"
+publish = false
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+proxy-wasm.workspace = true
+kit = { path = "../kit" }

@@ -4,6 +4,7 @@
 package bp
 
 import (
+	"cmp"
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
@@ -238,6 +239,28 @@ func (p *parser) loadPlugins() {
 			continue
 		}
 		ps.Module, ps.SHA, ps.wasm = m, m.SHA, wasm
+		// A trial start, so check and plan see a config the plugin refuses,
+		// with the plugin's reason. It runs without the plugin's store,
+		// folders and outgoing calls: a plugin checks its config in
+		// proxy_on_configure and leaves those for later.
+		var said []string
+		tp, err := plugin.Start(m, plugin.Settings{Name: name, Config: ps.Config, Timeout: max(ps.Timeout, time.Second),
+			Instances: 1, BodyMax: ps.BodyLimit, Logf: func(f string, a ...any) { said = append(said, fmt.Sprintf(f, a...)) }})
+		if err != nil {
+			prefix := "plugin " + name + ": "
+			for i, l := range said {
+				said[i] = strings.TrimPrefix(l, prefix)
+			}
+			if len(said) > 0 && strings.Contains(err.Error(), "refused its config") {
+				p.errf(ps.Line, "plugin %s refused its config %s: %s", name, cmp.Or(ps.ConfigFile, "(none)"), strings.Join(said, "; "))
+			} else if len(said) > 0 {
+				p.errf(ps.Line, "plugin %s didn't start: %v (%s)", name, err, strings.Join(said, "; "))
+			} else {
+				p.errf(ps.Line, "plugin %s didn't start: %v", name, err)
+			}
+			continue
+		}
+		tp.Close()
 	}
 }
 
