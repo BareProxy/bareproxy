@@ -30,7 +30,9 @@ is started by a finished `test` run, not by the push itself.
   lower than the newest tag.
 - **build.** Runs `live/release.sh dist` from that exact commit: every archive
   plus SHA256SUMS, with `CGO_ENABLED=0` and the vendored modules, so nothing is
-  downloaded. Writes the notes.
+  downloaded. Then `plugins/build.sh` builds the Rust plugins (vendored crates)
+  and every one but the test plugin goes into the release as `NAME.wasm`, its
+  checksum added to SHA256SUMS. Writes the notes.
 - **check-unix.** On Linux x86-64, Linux ARM and macOS runners: checks each
   archive against SHA256SUMS, unpacks it and runs `live/smoke.sh`. Also checks
   the Intel macOS binary is an x86-64 Mach-O.
@@ -53,6 +55,7 @@ Notes on the release come from the `## X.Y.Z` section of `CHANGELOG.md`, followe
 | macOS, Apple silicon | bareproxy_darwin_arm64.tar.gz |
 | macOS, Intel | bareproxy_darwin_amd64.tar.gz |
 | Windows, x86-64 | bareproxy_windows_amd64.zip |
+| Each plugin in `plugins/` but the test plugin | NAME.wasm |
 | Checksums | SHA256SUMS |
 
 Archive names carry no version on purpose. Links like
