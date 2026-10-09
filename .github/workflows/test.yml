@@ -67,8 +67,18 @@ jobs:
           go-version: "1.27.x"
           cache: false
       - run: rustup target add wasm32-unknown-unknown && rustup component add rustfmt clippy
-      - run: cargo fmt --check && cargo clippy --locked --release --target wasm32-unknown-unknown -- -D warnings
+      - name: Formatting and lints
         working-directory: plugins
+        # On failure the output also goes up as annotations, readable
+        # without the full log.
+        run: |
+          rustc --version
+          set -o pipefail
+          { cargo fmt --check && cargo clippy --locked --release --target wasm32-unknown-unknown -- -D warnings; } 2>&1 | tee lint.log || {
+            grep -E '^(error|warning|Diff in)|-->' lint.log | head -30 | sed 's/^/::error::/'
+            echo "::error::$(rustc --version)"
+            exit 1
+          }
       - name: The plugins' unit tests
         run: cargo test --locked
         working-directory: plugins
