@@ -342,6 +342,9 @@ func (p *Plugin) replace(old *instance) {
 	}()
 }
 
+// TickLimit is the least time a proxy_on_tick call may run.
+const TickLimit = time.Second
+
 // setTick starts, changes or stops the instance's timer. The caller holds in.mu.
 func (in *instance) setTick(ms uint32) {
 	if in.tick != nil {
@@ -361,9 +364,14 @@ func (in *instance) setTick(ms uint32) {
 			case <-stop:
 				return
 			case <-t.C:
+				// A tick is background work, such as reloading a file, so it
+				// gets at least TickLimit, whatever the limit for requests.
 				in.mu.Lock()
 				in.effective = rootID
+				old := in.limit
+				in.limit = max(cmp.Or(old, in.p.S.Timeout), TickLimit)
 				in.call("proxy_on_tick", rootID)
+				in.limit = old
 				in.mu.Unlock()
 			}
 		}

@@ -11,8 +11,10 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
+	"time"
 )
 
 // The plugins BareProxy ships (plugins/ in the repository), run in a real
@@ -38,6 +40,12 @@ func shipped(t *testing.T, name string) []byte {
 // when backend is "") and the rest to files in public/.
 func shippedServer(t *testing.T, name, conf, backend string) (*liveServer, error) {
 	t.Helper()
+	return shippedServerWith(t, name, conf, backend, "")
+}
+
+// shippedServerWith is shippedServer with more lines for the plugin block.
+func shippedServerWith(t *testing.T, name, conf, backend, pluginLines string) (*liveServer, error) {
+	t.Helper()
 	l := &liveServer{dir: t.TempDir(), port: freePort(t)}
 	l.conf = filepath.Join(l.dir, "bareproxy.conf")
 	writeFile(t, filepath.Join(l.dir, "public", "page.txt"), "a static page\n")
@@ -53,7 +61,7 @@ func shippedServer(t *testing.T, name, conf, backend string) (*liveServer, error
 
 plugin p p.wasm
   config p.conf
-
+%s
 site http://example.com:%d
   use p
   route /api/* -> api
@@ -61,7 +69,7 @@ site http://example.com:%d
 
 pool api
   backend %s
-`, l.port, strings.TrimPrefix(backend, "http://")))
+`, pluginLines, l.port, strings.TrimPrefix(backend, "http://")))
 	s, err := Start(l.conf)
 	if err != nil {
 		return nil, err
@@ -418,4 +426,130 @@ func TestHeaderRules(t *testing.T) {
 
 func TestHeaderRulesConfigRefused(t *testing.T) {
 	configRefused(t, "headers", "response set cache-control\n", "line 1: set cache-control needs a value")
+}
+
+const redirectFile = `# old path          new address
+/p/123              /posts/hello
+/about-us           /about/          308
+/shop/old-cat/*     /shop/new-cat/*
+/blog/*             https://blog.example.com/*   302
+`
+
+// redirectServer starts BareProxy with the redirects plugin reading
+// lists/redirects.txt, with two instances and a 1-second reload.
+func redirectServer(t *testing.T, file string) *liveServer {
+	t.Helper()
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, "redirects.txt"), file)
+	l := mustShippedServer2(t, "redirects", "file redirects.txt\nreload 1s\nreport /.redirects\n",
+		"  read "+dir+"\n  instances 2\n")
+	l.dir = dir // where the list is
+	return l
+}
+
+func mustShippedServer2(t *testing.T, name, conf, lines string) *liveServer {
+	t.Helper()
+	l, err := shippedServerWith(t, name, conf, "", lines)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return l
+}
+
+func TestRedirectsFromFile(t *testing.T) {
+	l := redirectServer(t, redirectFile)
+	for _, c := range []struct {
+		path, loc string
+		code      int
+		line      string
+	}{
+		{"/p/123?utm=x", "/posts/hello?utm=x", 301, "line 2"},
+		{"/p/123/", "/posts/hello", 301, "line 2"},
+		{"/about-us", "/about/", 308, "line 3"},
+		{"/shop/old-cat/shoes/red", "/shop/new-cat/shoes/red", 301, "line 4"},
+		{"/blog/2020/post", "https://blog.example.com/2020/post", 302, "line 5"},
+	} {
+		resp, _, rec := send(t, l, "GET", c.path)
+		if resp.StatusCode != c.code || resp.Header.Get("Location") != c.loc ||
+			!strings.Contains(notes(rec), "redirects.txt "+c.line+": ") || rec.Plugins[0].Action != fmt.Sprintf("answered %d", c.code) {
+			t.Errorf("%s: %d %v %+v", c.path, resp.StatusCode, resp.Header, rec.Plugins)
+		}
+	}
+	if resp, body, _ := send(t, l, "GET", "/page.txt"); resp.StatusCode != 200 || body != "a static page\n" {
+		t.Errorf("a path not on the list: %d %q", resp.StatusCode, body)
+	}
+
+	// Hits from both instances come together in the report within a tick.
+	for range 6 {
+		send(t, l, "GET", "/p/123")
+	}
+	time.Sleep(1500 * time.Millisecond)
+	_, body, _ := send(t, l, "GET", "/.redirects")
+	if !strings.Contains(body, "4 lines") || !strings.Contains(body, "8\t2\t/p/123\t/posts/hello\n") ||
+		!strings.Contains(body, "Never used: 0 lines") {
+		t.Errorf("report:\n%s", body)
+	}
+	if got := l.s.Current().Plugins["p"].Metrics()["redirects"]; got != 11 {
+		t.Errorf("metric redirects = %d, want 11", got)
+	}
+}
+
+func TestRedirectsReload(t *testing.T) {
+	l := redirectServer(t, redirectFile)
+	// A changed file is picked up on its own.
+	writeFile(t, filepath.Join(l.dir, "redirects.txt"), redirectFile+"/new-line /somewhere\n")
+	waitFor(t, func() bool { r, _, _ := send(t, l, "GET", "/new-line"); return r.StatusCode == 301 })
+	// A broken one is refused, and the list as it was keeps working.
+	writeFile(t, filepath.Join(l.dir, "redirects.txt"), "/new-line /elsewhere\n/broken\n")
+	time.Sleep(2500 * time.Millisecond)
+	for range 4 { // both instances
+		if r, _, _ := send(t, l, "GET", "/new-line"); r.Header.Get("Location") != "/somewhere" {
+			t.Fatalf("the broken file replaced the list: %v", r.Header)
+		}
+	}
+}
+
+func waitFor(t *testing.T, ok func() bool) {
+	t.Helper()
+	for deadline := time.Now().Add(5 * time.Second); !ok(); time.Sleep(100 * time.Millisecond) {
+		if time.Now().After(deadline) {
+			t.Fatal("timed out")
+		}
+	}
+}
+
+func TestRedirectsFileChecked(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, "p.wasm"), string(shipped(t, "redirects")))
+	writeFile(t, filepath.Join(dir, "p.conf"), "file redirects.txt\n")
+	writeFile(t, filepath.Join(dir, "lists", "redirects.txt"), "/a /b\n/a /c\n")
+	conf := "plugin p p.wasm\n  config p.conf\n  read lists\nsite http://a.test:1\n  use p\n  route /* -> respond 200 x\n"
+	for _, c := range []struct{ conf, want string }{
+		{conf, "redirects.txt line 2: /a is on line 1 already"},
+		{strings.Replace(conf, "  read lists\n", "", 1), "can't read redirects.txt: it isn't in a folder the plugin line names with read"},
+	} {
+		cfg, probs := Parse(filepath.Join(dir, "bareproxy.conf"), c.conf)
+		cfg.Close()
+		full := "line 1: error: plugin p refused its config " + filepath.Join(dir, "p.conf") + ": " + c.want
+		if !slices.ContainsFunc(probs, func(p Problem) bool { return p.String() == full }) {
+			t.Errorf("problems %q, want %q", probs, full)
+		}
+	}
+}
+
+// A hundred thousand redirects load at the start, reload on a tick and
+// cost a lookup each.
+func TestRedirectsLargeFile(t *testing.T) {
+	var b strings.Builder
+	for i := range 100_000 {
+		fmt.Fprintf(&b, "/old/page-%d /new/page-%d\n", i, i)
+	}
+	start := time.Now()
+	l := redirectServer(t, b.String())
+	t.Logf("started with 100,000 redirects in %v", time.Since(start))
+	if r, _, _ := send(t, l, "GET", "/old/page-99999"); r.Header.Get("Location") != "/new/page-99999" {
+		t.Fatalf("lookup: %v", r.Header)
+	}
+	writeFile(t, filepath.Join(l.dir, "redirects.txt"), b.String()+"/added /here\n")
+	waitFor(t, func() bool { r, _, _ := send(t, l, "GET", "/added"); return r.StatusCode == 301 })
 }

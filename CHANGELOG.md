@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.6.0 (9 October 2026)
+
+The fourth plugin.
+
+- **Redirects from a file** (`plugins/redirects`, released as `redirects.wasm`), number 4 in the build order: one redirect a line in a plain file in a folder the plugin may read, exact paths and `/*` prefixes, to a path or a full URL, with a status and the query kept or dropped per line. The file is read into a hash table that points into its text, so a request costs a few lookups and 100,000 lines load in under half a second. A changed file is reloaded on its own; a broken one is refused, with its line in the log, and the old list keeps working. Every redirect is a note in the request's record with the line that matched, a `redirects` counter in `status`, and a count per line on an optional report page that also lists the lines never used. See its README.
+- `check` and `plan` start each plugin with its `read` folders now, so a file the plugin loads at the start, such as a redirect list, is checked too: a broken line is an error naming the file and the line, before anything goes live.
+- A plugin's timer tick (`proxy_on_tick`) gets at least a second, whatever the plugin's `timeout`, since ticks do background work such as reloading a file. Requests keep the plugin's `timeout`.
+
 ## 0.5.0 (8 October 2026)
 
 The third plugin, and plugin answers that the plugins before them see.

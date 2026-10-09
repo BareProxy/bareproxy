@@ -240,12 +240,19 @@ func (p *parser) loadPlugins() {
 		}
 		ps.Module, ps.SHA, ps.wasm = m, m.SHA, wasm
 		// A trial start, so check and plan see a config the plugin refuses,
-		// with the plugin's reason. It runs without the plugin's store,
-		// folders and outgoing calls: a plugin checks its config in
-		// proxy_on_configure and leaves those for later.
+		// with the plugin's reason. It has the plugin's folders, so a file
+		// the plugin loads at the start (a redirect list, say) is checked
+		// too, but no store and no outgoing calls: a plugin leaves those
+		// for after proxy_on_configure.
 		var said []string
-		tp, err := plugin.Start(m, plugin.Settings{Name: name, Config: ps.Config, Timeout: max(ps.Timeout, time.Second),
-			Instances: 1, BodyMax: ps.BodyLimit, Logf: func(f string, a ...any) { said = append(said, fmt.Sprintf(f, a...)) }})
+		ts := plugin.Settings{Name: name, Config: ps.Config, Timeout: max(ps.Timeout, time.Second),
+			Instances: 1, BodyMax: ps.BodyLimit, Logf: func(f string, a ...any) { said = append(said, fmt.Sprintf(f, a...)) }}
+		for _, dir := range ps.Read { // its own handles, which Close closes
+			if root, err := os.OpenRoot(dir); err == nil {
+				ts.Read = append(ts.Read, root)
+			}
+		}
+		tp, err := plugin.Start(m, ts)
 		if err != nil {
 			prefix := "plugin " + name + ": "
 			for i, l := range said {

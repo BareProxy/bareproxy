@@ -28,7 +28,7 @@ import (
 )
 
 // Version is this build's version.
-const Version = "0.5.0"
+const Version = "0.6.0"
 
 // Runtime is one running config version with its live pools.
 type Runtime struct {

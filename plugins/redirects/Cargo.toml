@@ -1,0 +1,16 @@
+[package]
+name = "redirects"
+description = "BareProxy plugin: thousands of redirects from one plain file, looked up in a table, reloaded on change, counted"
+publish = false
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+proxy-wasm.workspace = true
+kit = { path = "../kit" }
+hashbrown = "0.16"
