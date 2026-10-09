@@ -146,11 +146,11 @@ pub struct Hit {
 fn fx(s: &str) -> u64 {
     const K: u64 = 0x51_7c_c1_b7_27_22_0a_95;
     let mut h = 0u64;
-    let mut chunks = s.as_bytes().chunks_exact(8);
-    for c in &mut chunks {
-        h = (h.rotate_left(5) ^ u64::from_le_bytes(c.try_into().unwrap())).wrapping_mul(K);
+    let (chunks, rest) = s.as_bytes().as_chunks::<8>();
+    for c in chunks {
+        h = (h.rotate_left(5) ^ u64::from_le_bytes(*c)).wrapping_mul(K);
     }
-    for &b in chunks.remainder() {
+    for &b in rest {
         h = (h.rotate_left(5) ^ b as u64).wrapping_mul(K);
     }
     h
