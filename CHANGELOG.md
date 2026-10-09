@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.6.1 (9 October 2026)
+
+- Redirects from a file: each instance shares its hit counts every 5 seconds, whatever `reload` is, so the report is at most 5 seconds behind. In 0.6.0 they were shared at each reload, every 30 seconds by default, and a report answered by another instance could miss the latest hits. The file is still checked every `reload`.
+- CI: when the plugins' formatting or lints fail, the messages go up as annotations, with the Rust version.
+
 ## 0.6.0 (9 October 2026)
 
 The fourth plugin.

@@ -66,7 +66,7 @@ Each redirected request is answered by the plugin, and its record carries the li
 
 ## The report
 
-`report /.redirects` adds a plain-text page with each line's hits since the plugin started, most first, and how many lines were never used. `/.redirects?unused` lists those lines, the ones that can probably go. Each instance shares its counts with the others at every reload tick, so the page can be up to one tick behind. The counts start again when BareProxy restarts or the plugin's config changes; the trace log keeps every redirect for good, with its line.
+`report /.redirects` adds a plain-text page with each line's hits since the plugin started, most first, and how many lines were never used. `/.redirects?unused` lists those lines, the ones that can probably go. Each instance shares its counts with the others every 5 seconds, so the page can be up to 5 seconds behind. The counts start again when BareProxy restarts or the plugin's config changes; the trace log keeps every redirect for good, with its line.
 
 ## Size
 

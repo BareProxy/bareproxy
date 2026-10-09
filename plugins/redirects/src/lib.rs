@@ -20,6 +20,10 @@ use table::{Config, Table};
 /// The largest hit list an instance shares with the others.
 const MAX_HITS: usize = 1 << 20;
 
+/// How often an instance shares its hits, and so how far the report can
+/// lag behind. The file is checked every `reload` seconds, on these ticks.
+const SHARE_EVERY: u64 = 5;
+
 proxy_wasm::main! {{
     proxy_wasm::set_log_level(LogLevel::Warn);
     proxy_wasm::set_root_context(|_| -> Box<dyn RootContext> { Box::new(Root { st: None }) });
@@ -37,6 +41,8 @@ struct State {
     /// changed since they were last shared.
     hits: HashMap<String, u64>,
     dirty: bool,
+    /// When the file was last checked, in seconds since 1970.
+    checked: u64,
     id: u64,
     metric: Option<u32>,
 }
@@ -70,13 +76,15 @@ fn utf8(file: &str, raw: &[u8]) -> Result<String, String> {
     })
 }
 
-fn now(ctx: &dyn Context) -> String {
-    let secs = ctx
-        .get_current_time()
+fn secs(ctx: &dyn Context) -> u64 {
+    ctx.get_current_time()
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_secs())
-        .unwrap_or(0);
-    table::utc(secs)
+        .unwrap_or(0)
+}
+
+fn now(ctx: &dyn Context) -> String {
+    table::utc(secs(ctx))
 }
 
 /// Adds one to a shared-data counter and returns the new value.
@@ -115,8 +123,7 @@ impl RootContext for Root {
                 return false;
             }
         };
-        let every = if cfg.reload > 0 { cfg.reload } else { 30 };
-        self.set_tick_period(Duration::from_secs(every));
+        self.set_tick_period(Duration::from_secs(SHARE_EVERY.min(cfg.reload.max(1))));
         let id = count(self, "instances");
         let metric = hostcalls::define_metric(MetricType::Counter, "redirects").ok();
         self.st = Some(Rc::new(RefCell::new(State {
@@ -125,6 +132,7 @@ impl RootContext for Root {
             raw,
             refused: None,
             loaded: now(self),
+            checked: secs(self),
             hits: HashMap::new(),
             dirty: false,
             id,
@@ -136,7 +144,9 @@ impl RootContext for Root {
     fn on_tick(&mut self) {
         let Some(st) = self.st.clone() else { return };
         let mut s = st.borrow_mut();
-        if s.cfg.reload > 0 {
+        let t = secs(self);
+        if s.cfg.reload > 0 && t >= s.checked + s.cfg.reload {
+            s.checked = t;
             let file = s.cfg.file.clone();
             match read(&file) {
                 Ok(raw) if raw == s.raw => {}
@@ -227,7 +237,7 @@ impl HttpContext for Http {
         {
             let hits = self.all_hits(&s);
             let unused = query.split('&').any(|p| p == "unused");
-            let every = if s.cfg.reload > 0 { s.cfg.reload } else { 30 };
+            let every = SHARE_EVERY.min(s.cfg.reload.max(1));
             let body = table::report(&s.table, &s.cfg.file, &s.loaded, &hits, unused, every);
             self.send_http_response(
                 200,

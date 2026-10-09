@@ -553,3 +553,20 @@ func TestRedirectsLargeFile(t *testing.T) {
 	writeFile(t, filepath.Join(l.dir, "redirects.txt"), b.String()+"/added /here\n")
 	waitFor(t, func() bool { r, _, _ := send(t, l, "GET", "/added"); return r.StatusCode == 301 })
 }
+
+// With the default 30-second reload, hits are still shared every 5 seconds.
+func TestRedirectsReportWithin5s(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, "redirects.txt"), redirectFile)
+	l := mustShippedServer2(t, "redirects", "file redirects.txt\nreport /.redirects\n", "  read "+dir+"\n  instances 2\n")
+	for range 4 {
+		send(t, l, "GET", "/about-us")
+	}
+	time.Sleep(5500 * time.Millisecond)
+	for range 2 { // both instances answer the report the same
+		if _, body, _ := send(t, l, "GET", "/.redirects"); !strings.Contains(body, "4\t3\t/about-us\t/about/\n") ||
+			!strings.Contains(body, "brought together every 5s") {
+			t.Errorf("report:\n%s", body)
+		}
+	}
+}
