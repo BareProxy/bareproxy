@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.8.0 (13 October 2026)
+
+The sixth plugin.
+
+- **Request signing** (`plugins/signing`, released as `signing.wasm`), number 6 in the build order. Signed requests: every request that goes on gets `X-BareProxy-Timestamp`, `X-BareProxy-Path` (the path as it arrived, which the signature covers, since BareProxy may clean the path up or a route strip a prefix), `X-BareProxy-Signed-Headers` and `X-BareProxy-Signature`, an HMAC-SHA256 the app checks with its copy of the key; the same headers from a client are removed. Signed links: paths under `link-path` need `?expires=...&sig=...`, checked in constant time against one or more keys, so keys can be changed without breaking links already sent; a changed, foreign or expired link gets 403 and the reason in the record. The README has the scheme, checks in Python and Go, and recipes for links in a shell and Python; the server tests check the signatures with Go's own `crypto/hmac`.
+- The plugins' crates now include RustCrypto's `hmac` 0.12 and `sha2` 0.10 and what they need, vendored in `plugins/vendor/` (all MIT or Apache 2.0).
+
 ## 0.7.0 (13 October 2026)
 
 The fifth plugin.

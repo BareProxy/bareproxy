@@ -2,10 +2,10 @@
 # WebAssembly (wasm32-unknown-unknown). build.sh builds them all into dist/.
 [workspace]
 resolver = "3"
-members = ["testplugin", "kit", "maintenance", "cors", "headers", "redirects", "geo"]
+members = ["testplugin", "kit", "maintenance", "cors", "headers", "redirects", "geo", "signing"]
 
 [workspace.package]
-version = "0.7.0"
+version = "0.8.0"
 edition = "2024"
 license = "Apache-2.0"
 repository = "https://github.com/BareProxy/bareproxy"
@@ -13,6 +13,8 @@ repository = "https://github.com/BareProxy/bareproxy"
 [workspace.dependencies]
 proxy-wasm = "=0.2.5"
 log = "0.4"
+hmac = "0.12"
+sha2 = { version = "0.10", default-features = false }
 
 # Small, fast modules: one codegen unit, link-time optimization, and an
 # abort on panic (which a plugin host sees as a trap).

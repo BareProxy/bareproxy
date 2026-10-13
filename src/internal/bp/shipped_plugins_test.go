@@ -4,6 +4,9 @@
 package bp
 
 import (
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -12,6 +15,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -695,4 +699,113 @@ func TestGeoDatabaseChecked(t *testing.T) {
 	if !slices.ContainsFunc(probs, func(p Problem) bool { return p.String() == full }) {
 		t.Errorf("problems %q, want %q", probs, full)
 	}
+}
+
+const signKey = "0123456789abcdef0123456789abcdef"
+
+// hmacB64 is the signing plugin's signature, made here independently, as
+// an app or a script would: HMAC-SHA256, base64url without padding.
+func hmacB64(key, msg string) string {
+	m := hmac.New(sha256.New, []byte(key))
+	m.Write([]byte(msg))
+	return base64.RawURLEncoding.EncodeToString(m.Sum(nil))
+}
+
+func signServer(t *testing.T, conf string) (*liveServer, *http.Header, *string) {
+	t.Helper()
+	l := &liveServer{dir: t.TempDir(), port: freePort(t)}
+	l.conf = filepath.Join(l.dir, "bareproxy.conf")
+	writeFile(t, filepath.Join(l.dir, "private", "report.txt"), "the report\n")
+	writeFile(t, filepath.Join(l.dir, "sign.wasm"), string(shipped(t, "signing")))
+	writeFile(t, filepath.Join(l.dir, "sign.conf"), conf)
+	seen, path := &http.Header{}, new(string)
+	b := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		*seen, *path = r.Header.Clone(), r.URL.RequestURI()
+		fmt.Fprintln(w, "from the app")
+	}))
+	t.Cleanup(b.Close)
+	writeFile(t, l.conf, fmt.Sprintf(`global
+  admin off
+  trace-log off
+  state state
+
+plugin sign sign.wasm
+  config sign.conf
+
+site http://example.com:%d
+  use sign
+  route /api/* -> app strip
+  route /private/* -> files .
+
+pool app
+  backend %s
+`, l.port, strings.TrimPrefix(b.URL, "http://")))
+	s, err := Start(l.conf)
+	if err != nil {
+		t.Fatal(err)
+	}
+	l.s = s
+	t.Cleanup(s.Stop)
+	return l, seen, path
+}
+
+func TestSignedRequests(t *testing.T) {
+	l, seen, path := signServer(t, "key app "+signKey+"\nsign key app\nsign-headers x-user\n")
+	resp, body, _ := send(t, l, "GET", "/api/orders?page=2", "X-User", "ann", "X-BareProxy-Signature", "v1=forged")
+	if resp.StatusCode != 200 || body != "from the app\n" {
+		t.Fatalf("%d %q", resp.StatusCode, body)
+	}
+	// The app got the stripped path; the signature covers the path as it arrived.
+	if *path != "/orders?page=2" || seen.Get("X-BareProxy-Path") != "/api/orders?page=2" {
+		t.Errorf("path %q, signed path %q", *path, seen.Get("X-BareProxy-Path"))
+	}
+	ts := seen.Get("X-BareProxy-Timestamp")
+	if n, err := strconv.ParseInt(ts, 10, 64); err != nil || time.Since(time.Unix(n, 0)).Abs() > time.Minute {
+		t.Errorf("timestamp %q", ts)
+	}
+	msg := "v1\n" + ts + "\nGET\n" + seen.Get("X-BareProxy-Path") + "\nx-user:ann"
+	if got, want := seen.Get("X-BareProxy-Signature"), "v1="+hmacB64(signKey, msg); got != want {
+		t.Errorf("signature %q, want %q", got, want)
+	}
+	if seen.Get("X-BareProxy-Signed-Headers") != "x-user" {
+		t.Errorf("signed headers %q", seen.Get("X-BareProxy-Signed-Headers"))
+	}
+}
+
+func TestSignedLinks(t *testing.T) {
+	l, _, _ := signServer(t, "key new "+signKey+"\nkey old fedcba9876543210fedcba9876543210\nlinks key new old\nlink-path /private/\n")
+	link := func(key, path string, exp int64) string {
+		return fmt.Sprintf("%s?expires=%d&sig=%s", path, exp, hmacB64(key, fmt.Sprintf("v1\n%d\n%s", exp, path)))
+	}
+	soon := time.Now().Add(time.Hour).Unix()
+	if resp, body, _ := send(t, l, "GET", link(signKey, "/private/report.txt", soon)); resp.StatusCode != 200 || body != "the report\n" {
+		t.Errorf("good link: %d %q", resp.StatusCode, body)
+	}
+	if resp, _, _ := send(t, l, "GET", link("fedcba9876543210fedcba9876543210", "/private/report.txt", soon)); resp.StatusCode != 200 {
+		t.Errorf("old key: %d", resp.StatusCode)
+	}
+	for _, c := range []struct{ target, why string }{
+		{"/private/report.txt", "no signed link"},
+		{link(signKey, "/private/other.txt", soon)[len("/private/other.txt"):], "doesn't match"},
+		{link("not-the-key-not-the-key-not-the-key", "/private/report.txt", soon), "doesn't match"},
+		{link(signKey, "/private/report.txt", time.Now().Add(-2*time.Hour).Unix()), "the link expired 2h ago"},
+	} {
+		target := c.target
+		if strings.HasPrefix(target, "?") {
+			target = "/private/report.txt" + target
+		}
+		resp, body, rec := send(t, l, "GET", target)
+		if resp.StatusCode != 403 || body != "This link isn't valid, or has expired.\n" || !strings.Contains(notes(rec), c.why) {
+			t.Errorf("%s: %d %q %+v", target, resp.StatusCode, body, rec.Plugins)
+		}
+	}
+	// Paths not under link-path need nothing.
+	if resp, _, _ := send(t, l, "GET", "/api/x"); resp.StatusCode != 200 {
+		t.Errorf("unsigned path: %d", resp.StatusCode)
+	}
+}
+
+func TestSigningConfigRefused(t *testing.T) {
+	configRefused(t, "signing", "key app short\nsign key app\n",
+		"line 1: key app is too short: use at least 32 characters, such as the output of openssl rand -hex 32")
 }
