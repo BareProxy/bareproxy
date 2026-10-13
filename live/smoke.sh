@@ -19,10 +19,18 @@ trap 'kill "$pid" 2>/dev/null || true; wait 2>/dev/null || true; rm -rf "$work"'
 pid=
 cd "$work"
 
-fail() { echo "smoke: $*" >&2; [ -f run/bareproxy.log ] && cat run/bareproxy.log >&2; exit 1; }
+fail() {
+  echo "smoke: $*" >&2
+  [ -n "${GITHUB_ACTIONS:-}" ] && echo "::error::smoke: $*"
+  [ -f run/bareproxy.log ] && cat run/bareproxy.log >&2
+  exit 1
+}
 
-"$bin" version | grep -q '^bareproxy ' || fail "version printed nothing"
-"$bin" version
+# Not "version | grep -q": grep -q can exit before version finishes
+# writing, and with pipefail the broken pipe fails the test now and then.
+version=$("$bin" version)
+echo "$version"
+case "$version" in bareproxy\ *) ;; *) fail "version printed nothing" ;; esac
 
 mkdir -p public run
 echo '<h1>smoke ok</h1>' >public/index.html
