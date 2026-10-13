@@ -241,22 +241,7 @@ impl Config {
     /// The client's address: the connection's, or with forwarded-from, the
     /// last address in X-Forwarded-For that isn't one of the proxies.
     pub fn client(&self, source: &str, forwarded: Option<&str>) -> Option<IpAddr> {
-        let src: IpAddr = source.parse().ok()?;
-        if self.forwarded_from.is_empty() || !self.forwarded_from.iter().any(|n| n.contains(src)) {
-            return Some(src);
-        }
-        let Some(f) = forwarded else { return Some(src) };
-        let mut last = src;
-        for part in f.rsplit(',') {
-            let Ok(ip) = part.trim().parse::<IpAddr>() else {
-                return Some(last);
-            };
-            if !self.forwarded_from.iter().any(|n| n.contains(ip)) {
-                return Some(ip);
-            }
-            last = ip;
-        }
-        Some(last)
+        kit::client_addr(source, forwarded, &self.forwarded_from)
     }
 
     /// Whether a request from a country gets in, and if not, why.

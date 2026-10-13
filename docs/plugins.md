@@ -1,6 +1,6 @@
 # BareProxy Plugins: Design Note
 
-Status: accepted on 8 October 2026; the plugin host is built in 0.2.0, plugins in Rust are set up in 0.3.0, the first two plugins ship in 0.4.0, the third in 0.5.0, the fourth in 0.6.0, the fifth in 0.7.0, the sixth in 0.8.0, and the seventh in 0.9.0; [plugin-program.md](plugin-program.md) lists them and their order. This note now describes what was built. Where the build differs from the first version of the note, it says so.
+Status: accepted on 8 October 2026; the plugin host is built in 0.2.0, plugins in Rust are set up in 0.3.0, the first two plugins ship in 0.4.0, the third in 0.5.0, the fourth in 0.6.0, the fifth in 0.7.0, the sixth in 0.8.0, the seventh in 0.9.0, and the eighth in 0.10.0; [plugin-program.md](plugin-program.md) lists them and their order. This note now describes what was built. Where the build differs from the first version of the note, it says so.
 
 ## The decision
 
@@ -51,6 +51,7 @@ BareProxy's own functions come through `proxy_call_foreign_function`, which ever
 - `bareproxy_note`: a line for the request's record and `why` (20 notes a request at most)
 - `bareproxy_store_get`, `bareproxy_store_put` (4-byte little-endian key length, key, value), `bareproxy_store_delete`: a key-value store on disk, one per plugin, under its size cap (each key counts 4 KB besides its bytes)
 - `bareproxy_read_file`: a regular file under a folder the config names with `read`
+- `bareproxy_count` (since 0.10.0): adds to a counter kept by the host for a key, in windows of a given length aligned to the clock, shared by all of the plugin's instances (4-byte little-endian window in ms, 4-byte amount, key; it returns the current window's count, the last window's and the milliseconds into the current one, 8 bytes each). Old windows are swept; past 500,000 counters a plugin's new keys are refused. Shared data could do the counting, but its keys are never removed, so a counter per client address would only grow
 
 WASI is there because SDKs need it: clocks, random numbers, and stdout and stderr going to BareProxy's log. No files, no environment, no arguments, and no real sleep (a sleep returns at once, so a plugin can't hold its instance by sleeping). The first version of this note said "no clock beyond what Proxy-Wasm gives"; SDK runtimes need WASI's clock.
 

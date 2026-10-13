@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.10.0 (13 October 2026)
+
+The eighth plugin, and counters for plugins.
+
+- **Rate limiting and basic WAF** (`plugins/limits`, released as `limits.wasm`), number 8 in the build order. Limits: COUNT requests per TIME, per client address or for the site, on chosen paths or all, counted in sliding windows and answered with 429 and `Retry-After` past them; an allow list, and `X-Forwarded-For` believed only from named proxies. WAF rules: allowed methods (405), URL and header sizes (414, 431), blocked paths and user-agent words (403), and `common-rules on` for a short built-in list of dotfiles and scanners. No regular expressions. Every refusal says why in the record, and `status` counts `limited` and `blocked`. See its README. It replaces the Limit module of the earlier plan.
+- `bareproxy_count`, a new host function: counters in clock-aligned windows, kept by BareProxy and shared by all of a plugin's instances, with old windows swept and at most 500,000 counters a plugin. Shared data can't do this well, since its keys are never removed.
+- `plugins/kit`: `count` and `sliding` for windowed counts, and `client_addr` for the client's address behind trusted proxies (geo rules uses it now).
+
 ## 0.9.0 (13 October 2026)
 
 The seventh plugin.

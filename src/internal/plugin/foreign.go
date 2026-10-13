@@ -25,6 +25,9 @@ import (
 //	bareproxy_store_delete args: key.
 //	bareproxy_read_file   args: a path inside a folder the config names with
 //	                      read. Returns the file, or NOT_FOUND.
+//	bareproxy_count       args: 4-byte window in ms, 4-byte amount, key.
+//	                      A counter shared by the plugin's instances; see
+//	                      counters.go.
 func foreign(c *hcall, a []uint64) uint32 {
 	name, ok1 := c.str(a[0], a[1])
 	args, ok2 := c.read(a[2], a[3])
@@ -73,6 +76,12 @@ func foreign(c *hcall, a []uint64) uint32 {
 			return stInternal
 		}
 		return c.give(val, a[4], a[5])
+	case "bareproxy_count":
+		out, st := countCall(p, args)
+		if st != stOK {
+			return st
+		}
+		return c.give(out, a[4], a[5])
 	case "bareproxy_read_file":
 		rel := strings.TrimPrefix(filepath.ToSlash(string(args)), "/")
 		for _, root := range p.S.Read {

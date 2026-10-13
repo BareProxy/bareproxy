@@ -891,3 +891,76 @@ func TestSplitsForce(t *testing.T) {
 func TestSplitsConfigRefused(t *testing.T) {
 	configRefused(t, "splits", "variant stable 95\nvariant canary 5\nforce beta address 10.0.0.0/8\n", "line 3: no variant named beta")
 }
+
+const limitsConf = `forwarded-from 127.0.0.1
+allow 192.0.2.1
+methods GET HEAD POST
+block-path /wp-login.php
+common-rules on
+limit login 3 per 1m path /login
+`
+
+func TestLimitsCountAcrossInstances(t *testing.T) {
+	l := mustShippedServer2(t, "limits", limitsConf, "  instances 3\n")
+	for i := 1; i <= 3; i++ {
+		if resp, _, _ := send(t, l, "GET", "/login", "X-Forwarded-For", "203.0.113.9"); resp.StatusCode == 429 {
+			t.Fatalf("request %d limited", i)
+		}
+	}
+	// The fourth, on whichever instance, is over: the count is BareProxy's, not an instance's.
+	resp, body, rec := send(t, l, "GET", "/login", "X-Forwarded-For", "203.0.113.9")
+	if resp.StatusCode != 429 || body != "Too many requests. Please slow down.\n" {
+		t.Fatalf("4th: %d %q", resp.StatusCode, body)
+	}
+	if n, err := strconv.Atoi(resp.Header.Get("Retry-After")); err != nil || n < 1 || n > 60 {
+		t.Errorf("Retry-After %q", resp.Header.Get("Retry-After"))
+	}
+	if !strings.Contains(notes(rec), "limit login (line 6): 4 requests in the last 60s from 203.0.113.9, over 3; the window resets in") {
+		t.Errorf("record %+v", rec.Plugins)
+	}
+	// Another address has its own count, other paths aren't limited, and the allow list is never limited.
+	if resp, _, _ := send(t, l, "GET", "/login", "X-Forwarded-For", "198.51.100.7"); resp.StatusCode == 429 {
+		t.Error("another address was limited")
+	}
+	if resp, _, _ := send(t, l, "GET", "/page.txt", "X-Forwarded-For", "203.0.113.9"); resp.StatusCode != 200 {
+		t.Errorf("another path: %d", resp.StatusCode)
+	}
+	for range 5 {
+		if resp, _, _ := send(t, l, "GET", "/login", "X-Forwarded-For", "192.0.2.1"); resp.StatusCode == 429 {
+			t.Fatal("an allowed address was limited")
+		}
+	}
+	if m := l.s.Current().Plugins["p"].Metrics(); m["limited"] != 1 {
+		t.Errorf("metrics %v", m)
+	}
+}
+
+func TestLimitsWAF(t *testing.T) {
+	l := mustShippedServer2(t, "limits", limitsConf, "")
+	for _, c := range []struct {
+		method, path string
+		hdr          []string
+		code         int
+		note         string
+	}{
+		{"DELETE", "/page.txt", nil, 405, "WAF: method DELETE isn't one the site uses"},
+		{"GET", "/wp-login.php", nil, 403, "WAF: path /wp-login.php is blocked (line 4)"},
+		{"GET", "/.env", nil, 403, "WAF: path /.env is blocked (common-rules)"},
+		{"GET", "/.git/config", nil, 403, "WAF: path /.git/ is blocked (common-rules)"},
+		{"GET", "/page.txt", []string{"User-Agent", "sqlmap/1.8"}, 403, "WAF: user agent has sqlmap (common-rules)"},
+		{"GET", "/page.txt", []string{"User-Agent", "Mozilla/5.0"}, 200, ""},
+	} {
+		resp, _, rec := send(t, l, c.method, c.path, c.hdr...)
+		if resp.StatusCode != c.code || !strings.Contains(notes(rec), c.note) {
+			t.Errorf("%s %s: %d %v %+v", c.method, c.path, resp.StatusCode, resp.Header, rec.Plugins)
+		}
+		if c.code == 405 && resp.Header.Get("Allow") != "GET, HEAD, POST" {
+			t.Errorf("Allow %q", resp.Header.Get("Allow"))
+		}
+	}
+}
+
+func TestLimitsConfigRefused(t *testing.T) {
+	configRefused(t, "limits", "limit login 5 every 1m\n",
+		"line 1: write limit NAME COUNT per TIME [by address|site] [path PREFIX...], such as limit login 5 per 1m path /login")
+}

@@ -199,6 +199,53 @@ pub fn note(text: &str) {
 #[cfg(not(target_arch = "wasm32"))]
 pub fn note(_: &str) {}
 
+/// Adds n to a counter BareProxy keeps for the key, shared by all of the
+/// plugin's instances, in windows of `window_ms` aligned to the clock
+/// (bareproxy_count). Returns the current window's count, the last
+/// window's, and the milliseconds into the current window; None when
+/// BareProxy refuses (too many counters).
+pub fn count(key: &str, window_ms: u32, n: u32) -> Option<(u64, u64, u64)> {
+    let mut args = window_ms.to_le_bytes().to_vec();
+    args.extend_from_slice(&n.to_le_bytes());
+    args.extend_from_slice(key.as_bytes());
+    let b = proxy_wasm::hostcalls::call_foreign_function("bareproxy_count", Some(&args)).ok()??;
+    let at = |i: usize| {
+        b.get(i..i + 8)
+            .map(|x| u64::from_le_bytes(x.try_into().unwrap()))
+    };
+    Some((at(0)?, at(8)?, at(16)?))
+}
+
+/// A sliding count from a window's counts: the last window's, weighed by
+/// how much of it still falls in the last `window_ms`, plus the current.
+pub fn sliding(cur: u64, prev: u64, into_ms: u64, window_ms: u32) -> u64 {
+    let w = window_ms.max(1) as u64;
+    let left = w.saturating_sub(into_ms.min(w));
+    cur + (prev * left).div_ceil(w)
+}
+
+/// The client's address: the connection's, or when it comes from one of
+/// the `trusted` proxies, the last address in X-Forwarded-For that isn't
+/// one of them. From anyone else, X-Forwarded-For is ignored.
+pub fn client_addr(source: &str, forwarded: Option<&str>, trusted: &[Net]) -> Option<IpAddr> {
+    let src: IpAddr = source.parse().ok()?;
+    if trusted.is_empty() || !trusted.iter().any(|n| n.contains(src)) {
+        return Some(src);
+    }
+    let Some(f) = forwarded else { return Some(src) };
+    let mut last = src;
+    for part in f.rsplit(',') {
+        let Ok(ip) = part.trim().parse::<IpAddr>() else {
+            return Some(last);
+        };
+        if !trusted.iter().any(|n| n.contains(ip)) {
+            return Some(ip);
+        }
+        last = ip;
+    }
+    Some(last)
+}
+
 /// Reads a file inside a folder the plugin line names with read, through
 /// bareproxy_read_file.
 pub fn read_file(file: &str) -> Result<Vec<u8>, String> {
@@ -284,6 +331,38 @@ mod tests {
         assert!(under("/apix", "/api*"));
         assert!(under("/anything", "/"));
         assert!(under("/anything", "/*"));
+    }
+
+    #[test]
+    fn sliding_counts() {
+        assert_eq!(sliding(3, 0, 0, 60_000), 3);
+        assert_eq!(sliding(3, 10, 0, 60_000), 13);
+        assert_eq!(sliding(3, 10, 30_000, 60_000), 8);
+        assert_eq!(sliding(3, 10, 59_999, 60_000), 4);
+        assert_eq!(sliding(3, 10, 70_000, 60_000), 3);
+    }
+
+    #[test]
+    fn client_addresses() {
+        let cdn = [Net::parse("10.0.0.0/8").unwrap()];
+        let ip = |s: &str| s.parse::<IpAddr>().unwrap();
+        assert_eq!(
+            client_addr("203.0.113.9", Some("1.2.3.4"), &cdn),
+            Some(ip("203.0.113.9"))
+        );
+        assert_eq!(
+            client_addr("10.0.0.5", Some("6.6.6.6, 1.2.3.4, 10.0.0.9"), &cdn),
+            Some(ip("1.2.3.4"))
+        );
+        assert_eq!(
+            client_addr("10.0.0.5", Some("garbage, 10.0.0.9"), &cdn),
+            Some(ip("10.0.0.9"))
+        );
+        assert_eq!(client_addr("10.0.0.5", None, &cdn), Some(ip("10.0.0.5")));
+        assert_eq!(
+            client_addr("10.0.0.5", Some("1.2.3.4"), &[]),
+            Some(ip("10.0.0.5"))
+        );
     }
 
     #[test]

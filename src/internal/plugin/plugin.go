@@ -57,6 +57,7 @@ type Plugin struct {
 	starts   []time.Time   // instances started after a failure, in the last minute
 	inCall   atomic.Int32  // outgoing calls in flight
 	logs     rateLimit
+	counts   counters // bareproxy_count
 }
 
 type shared struct {
@@ -113,7 +114,7 @@ func Start(m *Module, s Settings) (*Plugin, error) {
 	}
 	tr := http.DefaultTransport.(*http.Transport).Clone()
 	tr.Proxy = nil
-	p := &Plugin{S: s, mod: m.Retain(), data: map[string]shared{}, done: make(chan struct{}),
+	p := &Plugin{S: s, mod: m.Retain(), data: map[string]shared{}, done: make(chan struct{}), counts: counters{now: time.Now},
 		client: &http.Client{Transport: tr, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}}
 	if s.StoreDir != "" {
 		st, err := openStore(s.StoreDir, s.StoreMax)
