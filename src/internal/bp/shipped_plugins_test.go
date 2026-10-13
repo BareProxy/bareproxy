@@ -809,3 +809,85 @@ func TestSigningConfigRefused(t *testing.T) {
 	configRefused(t, "signing", "key app short\nsign key app\n",
 		"line 1: key app is too short: use at least 32 characters, such as the output of openssl rand -hex 32")
 }
+
+func splitServer(t *testing.T, conf string) *liveServer {
+	t.Helper()
+	l := &liveServer{dir: t.TempDir(), port: freePort(t)}
+	l.conf = filepath.Join(l.dir, "bareproxy.conf")
+	writeFile(t, filepath.Join(l.dir, "split.wasm"), string(shipped(t, "splits")))
+	writeFile(t, filepath.Join(l.dir, "split.conf"), conf)
+	writeFile(t, l.conf, fmt.Sprintf(`global
+  admin off
+  trace-log off
+  state state
+
+plugin split split.wasm
+  config split.conf
+
+site http://example.com:%d
+  use split
+  route /* header X-Variant=canary -> respond 200 "canary"
+  route /* -> respond 200 "stable"
+`, l.port))
+	s, err := Start(l.conf)
+	if err != nil {
+		t.Fatal(err)
+	}
+	l.s = s
+	t.Cleanup(s.Stop)
+	return l
+}
+
+func TestSplitsShareAndCookie(t *testing.T) {
+	l := splitServer(t, "variant stable 50\nvariant canary 50\n")
+	counts := map[string]int{}
+	var canaryCookie string
+	for range 400 {
+		resp, body, rec := send(t, l, "GET", "/")
+		counts[body]++
+		sc := resp.Header.Get("Set-Cookie")
+		if !strings.HasPrefix(sc, "bp_variant="+strings.TrimSpace(body)+"; Path=/; Max-Age=2592000; SameSite=Lax; HttpOnly") ||
+			!strings.Contains(notes(rec), "assigned by share (50 of 100)") {
+			t.Fatalf("%q, Set-Cookie %q, %+v", body, sc, rec.Plugins)
+		}
+		if body == "canary\n" {
+			canaryCookie = strings.Split(sc, ";")[0]
+		}
+	}
+	if counts["canary\n"] < 150 || counts["stable\n"] < 150 {
+		t.Errorf("a 50/50 split gave %v", counts)
+	}
+	// The cookie keeps a visitor on their variant, and isn't set again.
+	for range 20 {
+		resp, body, rec := send(t, l, "GET", "/", "Cookie", canaryCookie)
+		if body != "canary\n" || resp.Header.Get("Set-Cookie") != "" || !strings.Contains(notes(rec), "kept by the bp_variant cookie") {
+			t.Fatalf("with the cookie: %q %v %+v", body, resp.Header, rec.Plugins)
+		}
+	}
+	if m := l.s.Current().Plugins["split"].Metrics(); m["variant.canary"]+m["variant.stable"] != 420 || m["variant.canary"] < 170 {
+		t.Errorf("metrics %v", m)
+	}
+}
+
+func TestSplitsForce(t *testing.T) {
+	l := splitServer(t, "variant stable 100\nvariant canary 0\nforce canary header x-beta yes\nforce canary query preview=canary\n")
+	// Nobody gets a variant with no share, and the header can't be sent from outside.
+	for range 20 {
+		if _, body, _ := send(t, l, "GET", "/", "X-Variant", "canary"); body != "stable\n" {
+			t.Fatalf("got %q", body)
+		}
+	}
+	resp, body, rec := send(t, l, "GET", "/", "X-Beta", "yes")
+	if body != "canary\n" || resp.Header.Get("Set-Cookie") != "" || !strings.Contains(notes(rec), "variant canary: forced by header x-beta (line 3)") {
+		t.Errorf("forced by header: %q %v %+v", body, resp.Header, rec.Plugins)
+	}
+	// A preview link sticks.
+	resp, body, _ = send(t, l, "GET", "/?preview=canary")
+	if body != "canary\n" || !strings.HasPrefix(resp.Header.Get("Set-Cookie"), "bp_variant=canary;") {
+		t.Errorf("preview link: %q %v", body, resp.Header)
+	}
+}
+
+func TestSplitsConfigRefused(t *testing.T) {
+	configRefused(t, "splits", "variant stable 95\nvariant canary 5\nforce beta address 10.0.0.0/8\n", "line 3: no variant named beta")
+}

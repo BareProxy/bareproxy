@@ -1,6 +1,6 @@
 # BareProxy Plugin Program
 
-Status: set on 8 October 2026, with eleven candidates added and all 21 put in one build order, easiest first, the same day. The plugin host is built (0.2.0, Rust plugins in 0.3.0). Plugins 1 and 2 are built and ship in 0.4.0, plugin 3 in 0.5.0, plugin 4 in 0.6.0, plugin 5 in 0.7.0, and plugin 6 in 0.8.0. Each plugin is a WebAssembly module loaded at run time through BareProxy's Proxy-Wasm host; [plugins.md](plugins.md) is the design.
+Status: set on 8 October 2026, with eleven candidates added and all 21 put in one build order, easiest first, the same day. The plugin host is built (0.2.0, Rust plugins in 0.3.0). Plugins 1 and 2 are built and ship in 0.4.0, plugin 3 in 0.5.0, plugin 4 in 0.6.0, plugin 5 in 0.7.0, plugin 6 in 0.8.0, and plugin 7 in 0.9.0. Each plugin is a WebAssembly module loaded at run time through BareProxy's Proxy-Wasm host; [plugins.md](plugins.md) is the design.
 
 ## Build order
 
@@ -14,7 +14,7 @@ All 21 plugins in one order, easiest and quickest to ship first, so a new plugin
 | 4 | **Redirects from a file** (built, 0.6.0) | Thousands of redirects from one plain file the plugin reads, looked up in a table, reloaded on change, counted. | Before routing | About half a day: one file read into a table, reloaded on a timer. |
 | 5 | **Geo rules** (built, 0.7.0) | Allow, block or route by country from a local database file; the country passed on in a header ordinary route rules can match. | Before routing | About a day: a lookup, then a header. |
 | 6 | **Request signing** (built, 0.8.0) | Signed requests to backends, so an app can tell a request came through BareProxy, and signed URLs that expire. | Before routing | About a day: signatures with a key from the config, no outside calls. |
-| 7 | **A/B and canary splits** | A share of traffic sent to a new version, visitors kept on theirs by a cookie. The plugin sets a header and the core's routes pick the pool, so `plan` sees the routing. | Before routing, response headers | About a day. A guard that rolls back a bad canary (the earlier Guard module) would follow later. |
+| 7 | **A/B and canary splits** (built, 0.9.0) | A share of traffic sent to a new version, visitors kept on theirs by a cookie. The plugin sets a header and the core's routes pick the pool, so `plan` sees the routing. | Before routing, response headers | About a day. A guard that rolls back a bad canary (the earlier Guard module) would follow later. |
 | 8 | **Rate limiting and basic WAF** | Limits per client address and per path; simple bad-request rules (methods, header sizes, known attack paths). | Before routing | About a day: counters in shared data and simple rules. Replaces the earlier Limit module. |
 | 9 | **Link previews** | Open Graph tags added for preview fetchers to pages that lack them. | Response body | About a day: tags added to the head of HTML pages. |
 | 10 | **AI crawler control** | Allow, block or rate-limit each bot (GPTBot, ClaudeBot, PerplexityBot and the rest), with a log of who is scraping what. | Before routing, the record | A day or two. Checks a bot's published address ranges, fetched and refreshed on a timer, not just its user agent, which anyone can fake. |

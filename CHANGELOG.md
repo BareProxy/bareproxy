@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.9.0 (13 October 2026)
+
+The seventh plugin.
+
+- **A/B and canary splits** (`plugins/splits`, released as `splits.wasm`), number 7 in the build order: each visitor gets a variant by the shares in the config, keeps it through a cookie, or is sent to one on purpose by address, header, cookie or a preview link; the variant goes in a request header (`X-Variant` by default, always set by the plugin) and route rules such as `route /* header X-Variant=canary -> app-next` pick the pool, so `plan` and `explain` see the routing. A variant drained to 0 takes its visitors back. Every request's record says its variant and why, and `status` counts each variant. See its README.
+
 ## 0.8.0 (13 October 2026)
 
 The sixth plugin.
