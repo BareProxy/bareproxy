@@ -26,6 +26,9 @@ fail() {
   exit 1
 }
 
+# Any other step that fails says which, in the log and as an annotation.
+trap 'fail "the step on line $LINENO failed"' ERR
+
 # Not "version | grep -q": grep -q can exit before version finishes
 # writing, and with pipefail the broken pipe fails the test now and then.
 version=$("$bin" version)
