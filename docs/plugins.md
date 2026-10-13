@@ -1,6 +1,6 @@
 # BareProxy Plugins: Design Note
 
-Status: accepted on 8 October 2026; the plugin host is built in 0.2.0, plugins in Rust are set up in 0.3.0, the first two plugins ship in 0.4.0, the third in 0.5.0, and the fourth in 0.6.0; [plugin-program.md](plugin-program.md) lists them and their order. This note now describes what was built. Where the build differs from the first version of the note, it says so.
+Status: accepted on 8 October 2026; the plugin host is built in 0.2.0, plugins in Rust are set up in 0.3.0, the first two plugins ship in 0.4.0, the third in 0.5.0, the fourth in 0.6.0, and the fifth in 0.7.0; [plugin-program.md](plugin-program.md) lists them and their order. This note now describes what was built. Where the build differs from the first version of the note, it says so.
 
 ## The decision
 

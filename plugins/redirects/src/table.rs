@@ -373,8 +373,8 @@ pub fn report(
     every: u64,
 ) -> String {
     let mut out = format!(
-        "BareProxy redirects from {file}: {} lines, loaded {loaded}.\nHits since the plugin started{}.\n\n",
-        t.entries.len(),
+        "BareProxy redirects from {file}: {}, loaded {loaded}.\nHits since the plugin started{}.\n\n",
+        lines(t.entries.len()),
         if every > 0 {
             format!(", brought together every {every}s")
         } else {
@@ -389,7 +389,10 @@ pub fn report(
     used.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.line.cmp(&b.0.line)));
     let never = t.entries.len() - used.len();
     if unused {
-        out.push_str(&format!("Never used: {never} lines.\n\nline\tfrom\tto\n"));
+        out.push_str(&format!(
+            "Never used: {}.\n\nline\tfrom\tto\n",
+            lines(never)
+        ));
         for e in t
             .entries
             .iter()
@@ -404,9 +407,18 @@ pub fn report(
         out.push_str(&format!("{n}\t{}\t{}\t{}\n", e.line, t.from(e), t.to(e)));
     }
     out.push_str(&format!(
-        "\nNever used: {never} lines. Add ?unused to the address to list them.\n"
+        "\nNever used: {}. Add ?unused to the address to list them.\n",
+        lines(never)
     ));
     out
+}
+
+fn lines(n: usize) -> String {
+    if n == 1 {
+        "1 line".into()
+    } else {
+        format!("{n} lines")
+    }
 }
 
 /// A time in seconds since 1970 as "2026-10-09 14:05 UTC".
@@ -563,6 +575,7 @@ mod tests {
         assert!(r.contains("8 lines, loaded 2026-10-09 14:05 UTC"));
         assert!(r.contains("hits\tline\tfrom\tto\n8\t2\t/p/123\t/posts/hello\n2\t7\t/blog/*\thttps://blog.example.com/*\n"), "{r}");
         assert!(r.contains("Never used: 6 lines."));
+        assert_eq!(lines(1), "1 line");
         let u = report(&t, "redirects.txt", "x", &all, true, 30);
         assert!(
             u.contains("3\t/about-us\t/about/\n") && !u.contains("/p/123"),

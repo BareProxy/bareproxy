@@ -51,18 +51,8 @@ struct Root {
     st: Option<Rc<RefCell<State>>>,
 }
 
-/// Reads the file through bareproxy_read_file.
 fn read(file: &str) -> Result<Vec<u8>, String> {
-    match hostcalls::call_foreign_function("bareproxy_read_file", Some(file.as_bytes())) {
-        Ok(b) => Ok(b.unwrap_or_default()),
-        Err(Status::NotFound) => Err(format!(
-            "can't read {file}: it isn't in a folder the plugin line names with read"
-        )),
-        Err(Status::BadArgument) => Err(format!(
-            "can't read {file}: it's larger than the plugin's body-limit"
-        )),
-        Err(st) => Err(format!("can't read {file}: {st:?}")),
-    }
+    kit::read_file(file)
 }
 
 /// The file as text. A plain from_utf8 check, which is fast for the ASCII

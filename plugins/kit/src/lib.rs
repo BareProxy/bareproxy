@@ -199,6 +199,23 @@ pub fn note(text: &str) {
 #[cfg(not(target_arch = "wasm32"))]
 pub fn note(_: &str) {}
 
+/// Reads a file inside a folder the plugin line names with read, through
+/// bareproxy_read_file.
+pub fn read_file(file: &str) -> Result<Vec<u8>, String> {
+    use proxy_wasm::types::Status;
+    match proxy_wasm::hostcalls::call_foreign_function("bareproxy_read_file", Some(file.as_bytes()))
+    {
+        Ok(b) => Ok(b.unwrap_or_default()),
+        Err(Status::NotFound) => Err(format!(
+            "can't read {file}: it isn't in a folder the plugin line names with read"
+        )),
+        Err(Status::BadArgument) => Err(format!(
+            "can't read {file}: it's larger than the plugin's body-limit; raise body-limit on the plugin line"
+        )),
+        Err(st) => Err(format!("can't read {file}: {st:?}")),
+    }
+}
+
 /// The value of a property as text, or "" when there is none.
 pub fn property(ctx: &dyn proxy_wasm::traits::Context, path: &[&str]) -> String {
     ctx.get_property(path.to_vec())

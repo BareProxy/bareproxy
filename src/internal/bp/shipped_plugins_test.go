@@ -570,3 +570,129 @@ func TestRedirectsReportWithin5s(t *testing.T) {
 		}
 	}
 }
+
+// geoServer starts BareProxy with the geo plugin reading db (a file in
+// plugins/geo/testdata) and believing X-Forwarded-For from 127.0.0.1, with
+// a route that matches on the country header.
+func geoServer(t *testing.T, db, conf string) (*liveServer, *http.Header) {
+	t.Helper()
+	l := &liveServer{dir: t.TempDir(), port: freePort(t)}
+	l.conf = filepath.Join(l.dir, "bareproxy.conf")
+	src, err := os.ReadFile(filepath.Join("..", "..", "..", "plugins", "geo", "testdata", db))
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, filepath.Join(l.dir, "geoip", "country.mmdb"), string(src))
+	writeFile(t, filepath.Join(l.dir, "geo.wasm"), string(shipped(t, "geo")))
+	writeFile(t, filepath.Join(l.dir, "geo.conf"), "database country.mmdb\nforwarded-from 127.0.0.1\nreload 1s\n"+conf)
+	seen := &http.Header{}
+	b := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		*seen = r.Header.Clone()
+		fmt.Fprintln(w, "from the app")
+	}))
+	t.Cleanup(b.Close)
+	writeFile(t, l.conf, fmt.Sprintf(`global
+  admin off
+  trace-log off
+  state state
+
+plugin geo geo.wasm
+  config geo.conf
+  read geoip
+
+site http://example.com:%d
+  use geo
+  route /* header X-Country=SE -> respond 200 "hej from the Swedish route"
+  route /* -> app
+
+pool app
+  backend %s
+`, l.port, strings.TrimPrefix(b.URL, "http://")))
+	s, err := Start(l.conf)
+	if err != nil {
+		t.Fatal(err)
+	}
+	l.s = s
+	t.Cleanup(s.Stop)
+	return l, seen
+}
+
+func TestGeoCountryHeaderAndRoutes(t *testing.T) {
+	l, seen := geoServer(t, "GeoIP2-Country-Test.mmdb", "")
+	// The app gets the country, and a country the client sends itself is replaced.
+	resp, body, _ := send(t, l, "GET", "/x", "X-Forwarded-For", "2.125.160.216", "X-Country", "SE")
+	if resp.StatusCode != 200 || body != "from the app\n" || seen.Get("X-Country") != "GB" {
+		t.Errorf("GB: %d %q %v", resp.StatusCode, body, *seen)
+	}
+	// A route rule matches on the header the plugin set.
+	if _, body, rec := send(t, l, "GET", "/x", "X-Forwarded-For", "89.160.20.115"); body != "hej from the Swedish route\n" {
+		t.Errorf("SE: %q %+v", body, rec)
+	}
+	// IPv6, and an address the database doesn't know.
+	send(t, l, "GET", "/x", "X-Forwarded-For", "2001:218::1")
+	if seen.Get("X-Country") != "JP" {
+		t.Errorf("JP: %v", *seen)
+	}
+	send(t, l, "GET", "/x")
+	if seen.Get("X-Country") != "XX" {
+		t.Errorf("unknown: %v", *seen)
+	}
+}
+
+func TestGeoAllowAndBlock(t *testing.T) {
+	l, _ := geoServer(t, "GeoIP2-Country-Test.mmdb", "block CN\n\npath /checkout/\n  allow SE GB\n  unknown block\npage\n<p>Not here</p>\nend\n")
+	resp, body, rec := send(t, l, "GET", "/x", "X-Forwarded-For", "175.16.199.5")
+	if resp.StatusCode != 403 || body != "<p>Not here</p>\n" ||
+		!strings.Contains(notes(rec), "turned away: CN is on the block list for / (line 4) (address 175.16.199.5)") {
+		t.Errorf("CN: %d %q %+v", resp.StatusCode, body, rec.Plugins)
+	}
+	if resp, _, _ := send(t, l, "GET", "/checkout/pay", "X-Forwarded-For", "2.125.160.216"); resp.StatusCode != 200 {
+		t.Errorf("GB at checkout: %d", resp.StatusCode)
+	}
+	resp, _, rec = send(t, l, "GET", "/checkout/pay", "X-Forwarded-For", "2001:218::1")
+	if resp.StatusCode != 403 || !strings.Contains(notes(rec), "JP isn't on the allow list for /checkout/") {
+		t.Errorf("JP at checkout: %d %+v", resp.StatusCode, rec.Plugins)
+	}
+	if resp, _, _ := send(t, l, "GET", "/checkout/pay"); resp.StatusCode != 403 {
+		t.Errorf("unknown at checkout: %d", resp.StatusCode)
+	}
+	if resp, _, _ := send(t, l, "GET", "/x"); resp.StatusCode != 200 {
+		t.Errorf("unknown elsewhere: %d", resp.StatusCode)
+	}
+}
+
+func TestGeoReload(t *testing.T) {
+	l, seen := geoServer(t, "MaxMind-DB-test-ipv4-24.mmdb", "")
+	send(t, l, "GET", "/x", "X-Forwarded-For", "2.125.160.216")
+	if seen.Get("X-Country") != "XX" {
+		t.Fatalf("before: %v", *seen)
+	}
+	src, _ := os.ReadFile(filepath.Join("..", "..", "..", "plugins", "geo", "testdata", "GeoIP2-Country-Test.mmdb"))
+	writeFile(t, filepath.Join(l.dir, "geoip", "country.mmdb"), string(src))
+	waitFor(t, func() bool {
+		send(t, l, "GET", "/x", "X-Forwarded-For", "2.125.160.216")
+		return seen.Get("X-Country") == "GB"
+	})
+	// A broken file is refused; the database as it was keeps answering.
+	writeFile(t, filepath.Join(l.dir, "geoip", "country.mmdb"), "not a database")
+	time.Sleep(2500 * time.Millisecond)
+	send(t, l, "GET", "/x", "X-Forwarded-For", "2.125.160.216")
+	if seen.Get("X-Country") != "GB" {
+		t.Errorf("after a broken file: %v", *seen)
+	}
+}
+
+func TestGeoDatabaseChecked(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, "p.wasm"), string(shipped(t, "geo")))
+	writeFile(t, filepath.Join(dir, "p.conf"), "database country.mmdb\n")
+	writeFile(t, filepath.Join(dir, "geoip", "country.mmdb"), "not a database")
+	conf := "plugin p p.wasm\n  config p.conf\n  read geoip\nsite http://a.test:1\n  use p\n  route /* -> respond 200 x\n"
+	cfg, probs := Parse(filepath.Join(dir, "bareproxy.conf"), conf)
+	cfg.Close()
+	full := "line 1: error: plugin p refused its config " + filepath.Join(dir, "p.conf") +
+		": country.mmdb: this isn't a MaxMind DB file (.mmdb): it has no metadata marker"
+	if !slices.ContainsFunc(probs, func(p Problem) bool { return p.String() == full }) {
+		t.Errorf("problems %q, want %q", probs, full)
+	}
+}

@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.7.0 (13 October 2026)
+
+The fifth plugin.
+
+- **Geo rules** (`plugins/geo`, released as `geo.wasm`), number 5 in the build order: the country of each request's address from a local MaxMind DB file (GeoLite2, DB-IP Lite, IPinfo Lite), in a request header (`X-Country` by default, `XX` when unknown) that the app and route rules such as `route /* header X-Country=FR -> eu-app` can use. A country the client sends is always replaced. Allow and block lists by country for the site or a path, a page and 403 or 451 for those turned away, `X-Forwarded-For` believed only from proxies the config names, and a new database file picked up on its own. The plugin has its own MMDB reader, which queries the file where it lies and checks every read; it's tested against MaxMind's test databases. See its README.
+- `plugins/kit` reads files for all plugins (`kit::read_file`), with a message that says to raise `body-limit` when a file is larger than it.
+- Redirects from a file: the report says "1 line", not "1 lines".
+
 ## 0.6.1 (9 October 2026)
 
 - Redirects from a file: each instance shares its hit counts every 5 seconds, whatever `reload` is, so the report is at most 5 seconds behind. In 0.6.0 they were shared at each reload, every 30 seconds by default, and a report answered by another instance could miss the latest hits. The file is still checked every `reload`.
