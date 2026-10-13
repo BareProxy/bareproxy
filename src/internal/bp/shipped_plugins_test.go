@@ -111,7 +111,7 @@ func send(t *testing.T, l *liveServer, method, path string, hdr ...string) (*htt
 	}
 	b, _ := io.ReadAll(resp.Body)
 	resp.Body.Close()
-	js, _ := l.s.Current().Mem.Find(resp.Header.Get("BareProxy-Id"))
+	js := findRecord(l, resp.Header.Get("BareProxy-Id"))
 	var rec Record
 	if err := json.Unmarshal(js, &rec); err != nil {
 		t.Fatalf("no record for %s %s: %v", method, path, err)

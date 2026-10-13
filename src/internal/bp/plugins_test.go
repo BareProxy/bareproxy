@@ -15,6 +15,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"bareproxy/internal/plugin/plugintest"
 )
@@ -107,6 +108,18 @@ site http://example.com:%d
 %s`, pluginLines, l.port, api, pool)
 }
 
+// findRecord finds a request's record by its ID. The record is written as
+// the handler returns, which can be a moment after the client has read the
+// whole response, so it waits a little for it.
+func findRecord(l *liveServer, id string) []byte {
+	for deadline := time.Now().Add(2 * time.Second); ; time.Sleep(5 * time.Millisecond) {
+		js, _ := l.s.Current().Mem.Find(id)
+		if len(js) > 0 || time.Now().After(deadline) {
+			return js
+		}
+	}
+}
+
 // fetch gets a path and returns the response and the request's record.
 func fetch(t *testing.T, l *liveServer, path string) (*http.Response, string, *Record) {
 	t.Helper()
@@ -118,7 +131,7 @@ func fetch(t *testing.T, l *liveServer, path string) (*http.Response, string, *R
 	}
 	b, _ := io.ReadAll(resp.Body)
 	resp.Body.Close()
-	js, _ := l.s.Current().Mem.Find(resp.Header.Get("BareProxy-Id"))
+	js := findRecord(l, resp.Header.Get("BareProxy-Id"))
 	var rec Record
 	if err := json.Unmarshal(js, &rec); err != nil {
 		t.Fatalf("no record for %s: %v", path, err)

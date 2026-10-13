@@ -32,15 +32,33 @@ type liveServer struct {
 	s         *Server
 }
 
+// freePort finds a port nothing listens on. It hands out ports from
+// 20000 to 31999, below the ranges systems pick connections' own ports from
+// (from 32768 on Linux, 49152 on macOS), each once per test run: a port
+// the system picked itself could be taken by an outgoing connection between
+// this check and the server listening on it.
 func freePort(t *testing.T) int {
 	t.Helper()
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
+	for range 2000 {
+		p := 20000 + int(nextPort.Add(1))%12000
+		ln, err := net.Listen("tcp", fmt.Sprintf(":%d", p))
+		if err != nil {
+			continue
+		}
+		ln.Close()
+		return p
 	}
-	defer ln.Close()
-	return ln.Addr().(*net.TCPAddr).Port
+	t.Fatal("no free port")
+	return 0
 }
+
+// nextPort starts at a place that depends on the process, so test binaries
+// running side by side mostly use different ports.
+var nextPort = func() *atomic.Int32 {
+	var n atomic.Int32
+	n.Store(int32(os.Getpid()*37) % 12000)
+	return &n
+}()
 
 // text is a config with one site that answers body on every path.
 func (l *liveServer) text(body string) string { return l.textWith("", body, "") }
