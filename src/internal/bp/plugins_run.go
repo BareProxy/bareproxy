@@ -94,12 +94,16 @@ type pluginUse struct {
 }
 
 // wantsBody reports whether the plugin is handed a body: its config says so
-// (body request, body response) and it has the callback.
+// (body request, body response) and it has the callback. A plugin that
+// needs the response body for only some requests sets the property
+// bareproxy.response_body to "skip" on the others, before the response, so
+// their bodies stream (and files go out with sendfile) as without it.
 func (u *pluginUse) wantsBody(phase int) bool {
 	if phase == plugin.Request {
 		return u.spec.BodyRequest && u.p.Wants("proxy_on_request_body")
 	}
-	return u.spec.BodyResponse && u.p.Wants("proxy_on_response_body")
+	return u.spec.BodyResponse && u.p.Wants("proxy_on_response_body") &&
+		(u.st == nil || u.st.Prop("bareproxy.response_body") != "skip")
 }
 
 // pluginRun is a request's plugins, and the response as they see it.

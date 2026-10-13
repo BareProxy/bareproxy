@@ -1,6 +1,6 @@
 # BareProxy Plugins: Design Note
 
-Status: accepted on 8 October 2026; the plugin host is built in 0.2.0, plugins in Rust are set up in 0.3.0, the first two plugins ship in 0.4.0, the third in 0.5.0, the fourth in 0.6.0, the fifth in 0.7.0, the sixth in 0.8.0, the seventh in 0.9.0, and the eighth in 0.10.0; [plugin-program.md](plugin-program.md) lists them and their order. This note now describes what was built. Where the build differs from the first version of the note, it says so.
+Status: accepted on 8 October 2026; the plugin host is built in 0.2.0, plugins in Rust are set up in 0.3.0, the first two plugins ship in 0.4.0, the third in 0.5.0, the fourth in 0.6.0, the fifth in 0.7.0, the sixth in 0.8.0, the seventh in 0.9.0, the eighth in 0.10.0, and the ninth in 0.11.0; [plugin-program.md](plugin-program.md) lists them and their order. This note now describes what was built. Where the build differs from the first version of the note, it says so.
 
 ## The decision
 
@@ -30,7 +30,7 @@ This replaces the earlier plan of modules compiled into the binary. The trade is
 | Timer | `proxy_on_tick` | Periodic work, once a plugin sets a period |
 | Outgoing call | `proxy_on_http_call_response` | The response to a `proxy_http_call` |
 
-A plugin is handed a body only when its `body` line says so (`body request`, `body response` or both). Proxy-Wasm SDKs export every callback, so the module can't say which bodies a plugin reads, and without the line an SDK plugin would hold up every body. A plugin that pauses on the headers waits there only when no body follows for it; when one does, it gets the body next, as with Envoy.
+A plugin is handed a body only when its `body` line says so (`body request`, `body response` or both). Proxy-Wasm SDKs export every callback, so the module can't say which bodies a plugin reads, and without the line an SDK plugin would hold up every body. A plugin that pauses on the headers waits there only when no body follows for it; when one does, it gets the body next, as with Envoy. Since 0.11.0 a plugin that needs the response body for only some requests sets the request property `bareproxy.response_body` to `skip` on the others, before the response; their bodies then stream past it, and files go out with sendfile, as if it had no `body` line.
 
 A site's plugins run in the order its `use` lines name them, after the site is found by host and before the path is normalized and routed. A plugin that answers stops the ones after it, and its answer goes back through the response headers of the ones before it, last first, as a local reply does in Envoy (since 0.5.0; before, it went out past them). A plugin that replaces a response on its headers works the same way. A replacement on the response body goes out as it is, since every plugin has seen the headers by then. The response goes through the plugins last one first, as in Envoy. Static files go through the response points like proxied responses, so a plugin treats both the same way. A WebSocket upgrade (101) passes through untouched.
 

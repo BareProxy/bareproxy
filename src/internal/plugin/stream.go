@@ -44,6 +44,14 @@ const (
 // ErrNoInstance is returned when every instance of a plugin is broken.
 var ErrNoInstance = errors.New("no instance of the plugin is working")
 
+// Prop returns a string property of the request, such as one the plugin
+// set itself with proxy_set_property.
+func (s *Stream) Prop(name string) string {
+	s.in.mu.Lock()
+	defer s.in.mu.Unlock()
+	return s.props[name]
+}
+
 // NewStream makes a request's context. props are its string properties
 // (request.path, source.address and so on) and ints its integer ones.
 func (p *Plugin) NewStream(props map[string]string, ints map[string]int64) (*Stream, error) {

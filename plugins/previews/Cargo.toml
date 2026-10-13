@@ -1,0 +1,15 @@
+[package]
+name = "previews"
+description = "BareProxy plugin: Open Graph tags added for link-preview fetchers to HTML pages that lack them"
+publish = false
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+proxy-wasm.workspace = true
+kit = { path = "../kit" }

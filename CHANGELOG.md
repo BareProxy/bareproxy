@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.11.0 (13 October 2026)
+
+The ninth plugin, the last of the quick ones.
+
+- **Link previews** (`plugins/previews`, released as `previews.wasm`), number 9 in the build order: when a link-preview fetcher (Slack, WhatsApp, LinkedIn, X, iMessage and 15 more) asks for an HTML page without Open Graph tags, the plugin adds what's missing to its head: `og:title`, `og:description`, `og:image` (made a full URL), `og:url`, `og:type`, `og:site_name` and `twitter:card`, from the page itself or from fixed cards per path. Visitors' pages are never changed. See its README.
+- A plugin with `body response` can pass up a request's response body by setting the property `bareproxy.response_body` to `skip` before the response: the body then streams past it, and a file goes out with sendfile, as if the plugin had no `body` line. Link previews does this for everyone but fetchers, so it costs visitors nothing.
+
 ## 0.10.0 (13 October 2026)
 
 The eighth plugin, and counters for plugins.

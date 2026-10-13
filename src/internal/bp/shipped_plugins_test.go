@@ -964,3 +964,70 @@ func TestLimitsConfigRefused(t *testing.T) {
 	configRefused(t, "limits", "limit login 5 every 1m\n",
 		"line 1: write limit NAME COUNT per TIME [by address|site] [path PREFIX...], such as limit login 5 per 1m path /login")
 }
+
+const previewPage = `<!doctype html>
+<html><head>
+<title>Tea and Biscuits</title>
+</head>
+<body>
+<h1>Tea</h1>
+<p>Warm the pot first. Then put in one spoon of tea for each cup, and one for the pot.</p>
+<img src="/img/pot.jpg" alt="a teapot">
+</body></html>
+`
+
+func TestLinkPreviews(t *testing.T) {
+	l := mustShippedServer2(t, "previews", "site-name Example\n", "  body response\n")
+	writeFile(t, filepath.Join(l.dir, "public", "tea.html"), previewPage)
+
+	resp, body, rec := send(t, l, "GET", "/tea.html", "User-Agent", "Slackbot-LinkExpanding 1.0 (+https://api.slack.com/robots)")
+	host := fmt.Sprintf("http://example.com:%d", l.port)
+	for _, want := range []string{
+		`<meta property="og:title" content="Tea and Biscuits">`,
+		`<meta property="og:description" content="Warm the pot first. Then put in one spoon of tea for each cup, and one for the pot.">`,
+		`<meta property="og:image" content="` + host + `/img/pot.jpg">`,
+		`<meta property="og:url" content="` + host + `/tea.html">`,
+		`<meta property="og:site_name" content="Example">`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("missing %s in\n%s", want, body)
+		}
+	}
+	if resp.Header.Get("Content-Length") != strconv.Itoa(len(body)) || strings.Index(body, "og:title") > strings.Index(body, "</head>") {
+		t.Errorf("length %q for %d bytes", resp.Header.Get("Content-Length"), len(body))
+	}
+	if !strings.Contains(notes(rec), "link previews: added og:title, og:description, og:image, og:url, og:type, og:site_name, twitter:card for slackbot") {
+		t.Errorf("record %+v", rec.Plugins)
+	}
+
+	// A visitor gets the page as it is, and its body never goes to the plugin.
+	resp, body, rec = send(t, l, "GET", "/tea.html", "User-Agent", "Mozilla/5.0 Safari/605")
+	if body != previewPage || notes(rec) != "" {
+		t.Errorf("visitor got %q, %+v", body, rec.Plugins)
+	}
+
+	// Not HTML, or not 200: as it was.
+	if _, body, _ := send(t, l, "GET", "/page.txt", "User-Agent", "facebookexternalhit/1.1"); body != "a static page\n" {
+		t.Errorf("text file: %q", body)
+	}
+}
+
+// The body is held for the plugin only for fetchers: with a body limit
+// smaller than the page, a fetcher's request notes that the body was too big
+// to hand over, and a visitor's has nothing to note, since it streamed.
+func TestLinkPreviewsVisitorsStream(t *testing.T) {
+	l := mustShippedServer2(t, "previews", "", "  body response\n  body-limit 1KB\n")
+	writeFile(t, filepath.Join(l.dir, "public", "big.html"), "<html><head></head><body>"+strings.Repeat("<p>tea</p>", 500)+"</body></html>")
+	_, _, rec := send(t, l, "GET", "/big.html", "User-Agent", "WhatsApp/2.23")
+	if !strings.Contains(notes(rec), "over the body limit") {
+		t.Errorf("fetcher: %+v", rec.Plugins)
+	}
+	_, _, rec = send(t, l, "GET", "/big.html", "User-Agent", "Mozilla/5.0")
+	if notes(rec) != "" {
+		t.Errorf("visitor: %+v", rec.Plugins)
+	}
+}
+
+func TestLinkPreviewsConfigRefused(t *testing.T) {
+	configRefused(t, "previews", "image card.png\n", "line 1: card.png isn't a path or a full http:// or https:// URL")
+}
