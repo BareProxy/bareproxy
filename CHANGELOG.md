@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.12.0 (14 October 2026)
+
+The tenth plugin, the first of the three about AI bots.
+
+- **AI crawler control** (`plugins/crawlers`, released as `crawlers.wasm`), number 10 in the build order: AI bots let in, turned away or held to a rate (429 with `Retry-After`), by name, by group (training, search, assistant), for the site or a path. It knows 24 bots from OpenAI, Anthropic, Perplexity, Google, Common Crawl, Mistral AI, Amazon, Meta, ByteDance, DuckDuckGo, You.com and Ai2, and checks a bot's claim against the address list its operator publishes: 13 lists on 7 hosts, fetched through `allow-http` a second after the start and every 6 hours, by one instance for all, and kept in the store across restarts. A request that names a bot from an address outside its list is a fake, and is turned away by default. A bot let in carries `X-Bot` and `X-Bot-Check` for the app and route rules, and a client's own are dropped. `/robots.txt` is open to every bot. Every bot request is a note in its record, and a report page shows each bot's requests today and yesterday, what it read, and the state of each list. Lists of your own come from a URL, a file or the config, and a `bot` line adds a bot, such as Googlebot to turn fake Googlebots away. See its README.
+- `plugins/kit`: `store_get` and `store_put` for a plugin's store, `utc` for dates (moved from redirects), and address ranges as text and as their first and last address.
+
 ## 0.11.0 (13 October 2026)
 
 The ninth plugin, the last of the quick ones.

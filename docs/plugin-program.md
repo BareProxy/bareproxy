@@ -1,6 +1,6 @@
 # BareProxy Plugin Program
 
-Status: set on 8 October 2026, with eleven candidates added and all 21 put in one build order, easiest first, the same day. The plugin host is built (0.2.0, Rust plugins in 0.3.0). Plugins 1 and 2 are built and ship in 0.4.0, plugin 3 in 0.5.0, plugin 4 in 0.6.0, plugin 5 in 0.7.0, plugin 6 in 0.8.0, plugin 7 in 0.9.0, plugin 8 in 0.10.0, and plugin 9 in 0.11.0. Each plugin is a WebAssembly module loaded at run time through BareProxy's Proxy-Wasm host; [plugins.md](plugins.md) is the design.
+Status: set on 8 October 2026, with eleven candidates added and all 21 put in one build order, easiest first, the same day. The plugin host is built (0.2.0, Rust plugins in 0.3.0). Plugins 1 and 2 are built and ship in 0.4.0, plugin 3 in 0.5.0, plugin 4 in 0.6.0, plugin 5 in 0.7.0, plugin 6 in 0.8.0, plugin 7 in 0.9.0, plugin 8 in 0.10.0, plugin 9 in 0.11.0, and plugin 10 in 0.12.0. Each plugin is a WebAssembly module loaded at run time through BareProxy's Proxy-Wasm host; [plugins.md](plugins.md) is the design.
 
 ## Build order
 
@@ -17,7 +17,7 @@ All 21 plugins in one order, easiest and quickest to ship first, so a new plugin
 | 7 | **A/B and canary splits** (built, 0.9.0) | A share of traffic sent to a new version, visitors kept on theirs by a cookie. The plugin sets a header and the core's routes pick the pool, so `plan` sees the routing. | Before routing, response headers | About a day. A guard that rolls back a bad canary (the earlier Guard module) would follow later. |
 | 8 | **Rate limiting and basic WAF** (built, 0.10.0) | Limits per client address and per path; simple bad-request rules (methods, header sizes, known attack paths). | Before routing | About a day: counters in shared data and simple rules. Replaces the earlier Limit module. |
 | 9 | **Link previews** (built, 0.11.0) | Open Graph tags added for preview fetchers to pages that lack them. | Response body | About a day: tags added to the head of HTML pages. |
-| 10 | **AI crawler control** | Allow, block or rate-limit each bot (GPTBot, ClaudeBot, PerplexityBot and the rest), with a log of who is scraping what. | Before routing, the record | A day or two. Checks a bot's published address ranges, fetched and refreshed on a timer, not just its user agent, which anyone can fake. |
+| 10 | **AI crawler control** (built, 0.12.0) | Allow, block or rate-limit each bot (GPTBot, ClaudeBot, PerplexityBot and the rest), with a log of who is scraping what. | Before routing, the record | A day or two. Checks a bot's published address ranges, fetched and refreshed on a timer, not just its user agent, which anyone can fake. |
 | 11 | **Bot challenges** | A proof-of-work check for clients that look like scrapers, with a signed cookie once passed and no outside service. | Before routing | A day or two: a challenge page, a check and a signed cookie. |
 | 12 | **Markdown serving** | `.md` files rendered to HTML straight from the folder, with a template, no build step. | Response body | About two days. Reads files through `bareproxy_read_file`, limited to the folders the config names. |
 | 13 | **Cookie consent** | A consent banner on HTML pages, non-essential cookies held back until consent, Global Privacy Control respected. | Response headers and body | About two days. |
@@ -54,7 +54,7 @@ Before plugins, the plan was eight modules compiled into the binary. Limit, Auth
 ## What every plugin ships with
 
 - its own folder under `plugins/`, with a README that is its manual
-- tests for each thing it does, and failure tests aimed at its main promise (for AI crawler control: a faked user agent from an address outside the bot's ranges is treated as unknown)
+- tests for each thing it does, and failure tests aimed at its main promise (for AI crawler control: a faked user agent from an address outside the bot's ranges is a fake, never the bot)
 - its code in Rust, in a folder of `plugins/`, built by `plugins/build.sh`
 - a `.wasm` file built by CI and attached to each release, with its SHA-256 in SHA256SUMS
 - a license stated in its folder. The project is Apache 2.0 today; premium add-ons may come later under other licenses, and which plugins, if any, hasn't been decided

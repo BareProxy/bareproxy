@@ -137,6 +137,22 @@ impl Net {
         Some(Net { addr, bits })
     }
 
+    /// The range's first and last address as numbers, and whether it's
+    /// IPv4.
+    pub fn bounds(&self) -> (bool, u128, u128) {
+        let (v4, n, width) = match self.addr {
+            IpAddr::V4(a) => (true, u32::from(a) as u128, 32),
+            IpAddr::V6(a) => (false, u128::from(a), 128),
+        };
+        let host = width - self.bits as u32;
+        let mask = if host == 128 {
+            u128::MAX
+        } else {
+            (1u128 << host) - 1
+        };
+        (v4, n & !mask, (n & !mask) | mask)
+    }
+
     /// Whether the range holds the address.
     pub fn contains(&self, ip: IpAddr) -> bool {
         let ip = canon(ip);
@@ -154,6 +170,14 @@ impl Net {
             (IpAddr::V6(a), IpAddr::V6(b)) => keep(u128::from(a), 128) == keep(u128::from(b), 128),
             _ => false,
         }
+    }
+}
+
+/// A range as text, 192.0.2.0/24; a single address has its full length,
+/// 192.0.2.7/32.
+impl std::fmt::Display for Net {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}/{}", self.addr, self.bits)
     }
 }
 
@@ -185,6 +209,23 @@ pub fn under(path: &str, prefix: &str) -> bool {
         return path.starts_with(p);
     }
     path == p || path.starts_with(p) && path[p.len()..].starts_with('/')
+}
+
+/// A time in seconds since 1970 as "2026-10-09 14:05 UTC".
+pub fn utc(secs: u64) -> String {
+    let days = (secs / 86400) as i64;
+    let (h, m) = ((secs % 86400) / 3600, (secs % 3600) / 60);
+    // Howard Hinnant's days-to-civil.
+    let z = days + 719468;
+    let era = z.div_euclid(146097);
+    let doe = z - era * 146097;
+    let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = doy - (153 * mp + 2) / 5 + 1;
+    let mo = if mp < 10 { mp + 3 } else { mp - 9 };
+    let y = yoe + era * 400 + (mo <= 2) as i64;
+    format!("{y}-{mo:02}-{d:02} {h:02}:{m:02} UTC")
 }
 
 /// Writes a line into the request's record, shown by `why` and `explain`.
@@ -263,6 +304,23 @@ pub fn read_file(file: &str) -> Result<Vec<u8>, String> {
     }
 }
 
+/// A value from the plugin's store (bareproxy_store_get), or None when the
+/// key isn't there or the plugin line has no store.
+pub fn store_get(key: &str) -> Option<Vec<u8>> {
+    proxy_wasm::hostcalls::call_foreign_function("bareproxy_store_get", Some(key.as_bytes()))
+        .ok()
+        .flatten()
+}
+
+/// Puts a value in the plugin's store (bareproxy_store_put); false when it
+/// has no store or the store is full.
+pub fn store_put(key: &str, val: &[u8]) -> bool {
+    let mut args = (key.len() as u32).to_le_bytes().to_vec();
+    args.extend_from_slice(key.as_bytes());
+    args.extend_from_slice(val);
+    proxy_wasm::hostcalls::call_foreign_function("bareproxy_store_put", Some(&args)).is_ok()
+}
+
 /// The value of a property as text, or "" when there is none.
 pub fn property(ctx: &dyn proxy_wasm::traits::Context, path: &[&str]) -> String {
     ctx.get_property(path.to_vec())
@@ -319,6 +377,14 @@ mod tests {
         assert!(Net::parse("192.0.2.0/33").is_none());
         assert!(Net::parse("example.com").is_none());
         assert!(any_contains(&[n, one], "198.51.100.7"));
+        assert_eq!(n.bounds(), (true, 0xC000_0200, 0xC000_02FF));
+        assert_eq!(one.bounds(), (true, 0xC633_6407, 0xC633_6407));
+        assert_eq!(Net::parse("::/0").unwrap().bounds(), (false, 0, u128::MAX));
+        assert_eq!(n.to_string(), "192.0.2.0/24");
+        assert_eq!(
+            Net::parse("::ffff:192.0.2.7").unwrap().to_string(),
+            "192.0.2.7/32"
+        );
         assert!(!any_contains(&[n], "not an address"));
     }
 

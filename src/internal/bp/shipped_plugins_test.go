@@ -17,6 +17,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -1030,4 +1031,328 @@ func TestLinkPreviewsVisitorsStream(t *testing.T) {
 
 func TestLinkPreviewsConfigRefused(t *testing.T) {
 	configRefused(t, "previews", "image card.png\n", "line 1: card.png isn't a path or a full http:// or https:// URL")
+}
+
+// listServer serves the address lists the crawler tests fetch, and counts
+// the requests for each path. A body "status N" answers N, and "redirect
+// PATH" redirects there.
+type listServer struct {
+	mu    sync.Mutex
+	files map[string]string
+	hits  map[string]int
+	srv   *httptest.Server
+}
+
+func newListServer(t *testing.T, files map[string]string) *listServer {
+	t.Helper()
+	ls := &listServer{files: files, hits: map[string]int{}}
+	ls.srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		ls.mu.Lock()
+		defer ls.mu.Unlock()
+		ls.hits[r.URL.Path]++
+		body, ok := ls.files[r.URL.Path]
+		switch {
+		case !ok:
+			http.NotFound(w, r)
+		case strings.HasPrefix(body, "redirect "):
+			http.Redirect(w, r, strings.TrimPrefix(body, "redirect "), http.StatusFound)
+		case strings.HasPrefix(body, "status "):
+			code, _ := strconv.Atoi(strings.TrimPrefix(body, "status "))
+			w.WriteHeader(code)
+		default:
+			io.WriteString(w, body)
+		}
+	}))
+	t.Cleanup(ls.srv.Close)
+	return ls
+}
+
+func (ls *listServer) count(path string) int {
+	ls.mu.Lock()
+	defer ls.mu.Unlock()
+	return ls.hits[path]
+}
+
+const (
+	uaGPTBot     = "Mozilla/5.0 AppleWebKit/537.36 (KHTML, like Gecko); compatible; GPTBot/1.4; +https://openai.com/gptbot"
+	uaClaudeBot  = "Mozilla/5.0 AppleWebKit/537.36 (KHTML, like Gecko; compatible; ClaudeBot/1.0; +claudebot@anthropic.com)"
+	uaPerplexity = "Mozilla/5.0 AppleWebKit/537.36 (KHTML, like Gecko; compatible; PerplexityBot/1.0; +https://perplexity.ai/perplexitybot)"
+	uaBytespider = "Mozilla/5.0 (Linux; Android 5.0) AppleWebKit/537.36 (KHTML, like Gecko) Mobile Safari/537.36 (compatible; Bytespider; spider-feedback@bytedance.com)"
+	uaMeta       = "meta-externalagent/1.1 (+https://developers.facebook.com/docs/sharing/webmasters/crawler)"
+)
+
+var crawlerLists = map[string]string{
+	"/gptbot.json": `{"creationTime": "2026-09-22T02:00:07.000000", "prefixes": [{"ipv4Prefix": "20.171.206.0/24"}]}`,
+	"/claude.json": `{"creationTime": "2026-08-18T23:56:36Z", "prefixes": [{"ipv4Prefix": "160.79.104.0/23"}]}`,
+	"/pplx.json":   `{"prefixes": [{"ipv4Prefix": "18.97.1.228/30"}, {"ipv6Prefix": "2600:1f28:365:8000::/56"}]}`,
+}
+
+// crawlerConf's lines are named in the tests' notes: block training is
+// line 7, allow GPTBot 8, the limit 9 and the section's block 12.
+const crawlerConf = `ranges GPTBot LISTS/gptbot.json
+ranges ClaudeBot LISTS/claude.json
+ranges PerplexityBot LISTS/pplx.json
+ranges Bytespider bytespider.txt
+forwarded-from 127.0.0.1
+report /.crawlers
+block training
+allow GPTBot
+limit PerplexityBot 3 per 1m
+
+path /members/
+  block all
+`
+
+// crawlerServer starts BareProxy with the crawlers plugin in two
+// instances, with a store, fetching its lists from ls (LISTS in conf), a
+// folder of files for ranges lines, a route chosen by the bot header, and
+// an app that records the headers it gets.
+func crawlerServer(t *testing.T, conf string, ls *listServer, files map[string]string) (*liveServer, *http.Header) {
+	t.Helper()
+	l := &liveServer{dir: t.TempDir(), port: freePort(t)}
+	l.conf = filepath.Join(l.dir, "bareproxy.conf")
+	writeFile(t, filepath.Join(l.dir, "lists", "README"), "files for ranges lines\n")
+	for name, body := range files {
+		writeFile(t, filepath.Join(l.dir, "lists", name), body)
+	}
+	writeFile(t, filepath.Join(l.dir, "crawlers.wasm"), string(shipped(t, "crawlers")))
+	writeFile(t, filepath.Join(l.dir, "crawlers.conf"), strings.ReplaceAll(conf, "LISTS", ls.srv.URL))
+	seen := &http.Header{}
+	b := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		*seen = r.Header.Clone()
+		fmt.Fprintln(w, "from the app")
+	}))
+	t.Cleanup(b.Close)
+	writeFile(t, l.conf, fmt.Sprintf(`global
+  admin off
+  trace-log off
+  state state
+
+plugin p crawlers.wasm
+  config crawlers.conf
+  read lists
+  allow-http %s
+  instances 2
+  store 1MB
+
+site http://example.com:%d
+  use p
+  route /special header X-Bot=GPTBot -> respond 200 "hello GPTBot"
+  route /* -> app
+
+pool app
+  backend %s
+`, strings.TrimPrefix(ls.srv.URL, "http://"), l.port, strings.TrimPrefix(b.URL, "http://")))
+	s, err := Start(l.conf)
+	if err != nil {
+		t.Fatal(err)
+	}
+	l.s = s
+	t.Cleanup(s.Stop)
+	return l, seen
+}
+
+// crawlersReady waits until both instances' reports show every want.
+func crawlersReady(t *testing.T, l *liveServer, want ...string) {
+	t.Helper()
+	var body string
+	ready := func() bool {
+		for range 2 {
+			_, body, _ = send(t, l, "GET", "/.crawlers")
+			for _, w := range want {
+				if !strings.Contains(body, w) {
+					return false
+				}
+			}
+		}
+		return true
+	}
+	for deadline := time.Now().Add(8 * time.Second); !ready(); time.Sleep(100 * time.Millisecond) {
+		if time.Now().After(deadline) {
+			t.Fatalf("the lists didn't load; the report says:\n%s", body)
+		}
+	}
+}
+
+func TestCrawlersVerifiedFakeAndRules(t *testing.T) {
+	ls := newListServer(t, crawlerLists)
+	l, seen := crawlerServer(t, crawlerConf, ls, map[string]string{"bytespider.txt": "# from our logs\n111.225.148.0/22\n"})
+	crawlersReady(t, l, "(GPTBot): 1 range, fetched", "(ClaudeBot): 1 range, fetched", "(PerplexityBot): 2 ranges, fetched")
+
+	// GPTBot from its own addresses: let in, named for the app and the routes.
+	resp, body, rec := send(t, l, "GET", "/blog/post", "User-Agent", uaGPTBot, "X-Forwarded-For", "20.171.206.5")
+	if resp.StatusCode != 200 || body != "from the app\n" || seen.Get("X-Bot") != "GPTBot" || seen.Get("X-Bot-Check") != "verified" ||
+		!strings.Contains(notes(rec), "GPTBot (OpenAI, training): 20.171.206.5 is in the list from 127.0.0.1; let in by line 8, its 1st request let in this hour") {
+		t.Errorf("GPTBot: %d %q %v %+v", resp.StatusCode, body, *seen, rec.Plugins)
+	}
+	if _, body, _ := send(t, l, "GET", "/special", "User-Agent", uaGPTBot, "X-Forwarded-For", "20.171.206.9"); body != "hello GPTBot\n" {
+		t.Errorf("route by the bot header: %q", body)
+	}
+
+	// The promise: the same user agent from elsewhere isn't GPTBot.
+	resp, body, rec = send(t, l, "GET", "/blog/post", "User-Agent", uaGPTBot, "X-Forwarded-For", "203.0.113.9")
+	if resp.StatusCode != 403 || body != "Forbidden.\n" ||
+		!strings.Contains(notes(rec), "fake GPTBot: 203.0.113.9 isn't in the list from 127.0.0.1 (1 range); turned away (fake block)") {
+		t.Errorf("fake: %d %q %+v", resp.StatusCode, body, rec.Plugins)
+	}
+
+	for _, c := range []struct {
+		ua, addr, path string
+		code           int
+		body, note     string
+	}{
+		// A training bot, blocked by its group, verified or not.
+		{uaClaudeBot, "160.79.105.20", "/", 403, "This site doesn't allow ClaudeBot.\n",
+			"ClaudeBot (Anthropic, training): 160.79.105.20 is in the list from 127.0.0.1; turned away by line 7"},
+		{uaMeta, "157.240.1.1", "/", 403, "This site doesn't allow Meta-ExternalAgent.\n",
+			"Meta-ExternalAgent (Meta, training): 157.240.1.1 not verified, Meta publishes no address list; turned away by line 7"},
+		// Addresses from a file in a read folder.
+		{uaBytespider, "111.225.149.3", "/", 403, "This site doesn't allow Bytespider.\n", "111.225.149.3 is in the list in bytespider.txt"},
+		{uaBytespider, "198.51.100.7", "/", 403, "Forbidden.\n", "fake Bytespider: 198.51.100.7 isn't in the list in bytespider.txt (1 range)"},
+		// The path section turns away every bot, GPTBot too.
+		{uaGPTBot, "20.171.206.5", "/members/page", 403, "This site doesn't allow GPTBot.\n", "turned away by line 12"},
+		// robots.txt is open to all, so a turned-away bot can read why.
+		{uaClaudeBot, "160.79.105.20", "/robots.txt", 200, "from the app\n", "/robots.txt is open to every bot"},
+	} {
+		resp, body, rec := send(t, l, "GET", c.path, "User-Agent", c.ua, "X-Forwarded-For", c.addr)
+		if resp.StatusCode != c.code || body != c.body || !strings.Contains(notes(rec), c.note) {
+			t.Errorf("%.30s from %s: %d %q %+v", c.ua, c.addr, resp.StatusCode, body, rec.Plugins)
+		}
+	}
+
+	// A visitor can't send the bot headers to look like GPTBot, to the
+	// app or to the routes.
+	send(t, l, "GET", "/x", "X-Bot", "GPTBot", "X-Bot-Check", "verified")
+	if seen.Get("X-Bot") != "" || seen.Get("X-Bot-Check") != "" {
+		t.Errorf("a visitor's own bot headers reached the app: %v", *seen)
+	}
+	if _, body, rec := send(t, l, "GET", "/special", "X-Bot", "GPTBot"); body != "from the app\n" || notes(rec) != "" {
+		t.Errorf("a visitor's X-Bot chose a route: %q %+v", body, rec.Plugins)
+	}
+
+	m := l.s.Current().Plugins["p"].Metrics()
+	if m["bots"] != 8 || m["fakes"] != 2 || m["blocked"] != 4 {
+		t.Errorf("metrics %v", m)
+	}
+}
+
+func TestCrawlersLimitAndReport(t *testing.T) {
+	ls := newListServer(t, crawlerLists)
+	l, _ := crawlerServer(t, crawlerConf, ls, map[string]string{"bytespider.txt": "111.225.148.0/22\n"})
+	crawlersReady(t, l, "(PerplexityBot): 2 ranges, fetched")
+	for i := 1; i <= 3; i++ {
+		if resp, _, _ := send(t, l, "GET", fmt.Sprintf("/docs/%d", i), "User-Agent", uaPerplexity, "X-Forwarded-For", "2600:1f28:365:8000::5"); resp.StatusCode != 200 {
+			t.Fatalf("request %d: %d", i, resp.StatusCode)
+		}
+	}
+	// The fourth, on either instance, is over: the count is BareProxy's.
+	resp, body, rec := send(t, l, "GET", "/docs/4", "User-Agent", uaPerplexity, "X-Forwarded-For", "18.97.1.229")
+	if resp.StatusCode != 429 || body != "Too many requests from PerplexityBot. Please slow down.\n" ||
+		!strings.Contains(notes(rec), "PerplexityBot (Perplexity, search): 18.97.1.229 is in the list from 127.0.0.1; 4 requests in the last 1m, over 3 (line 9); the window resets in") {
+		t.Fatalf("4th: %d %q %+v", resp.StatusCode, body, rec.Plugins)
+	}
+	if n, err := strconv.Atoi(resp.Header.Get("Retry-After")); err != nil || n < 1 || n > 60 {
+		t.Errorf("Retry-After %q", resp.Header.Get("Retry-After"))
+	}
+	for range 2 {
+		send(t, l, "GET", "/blog/a", "User-Agent", uaGPTBot, "X-Forwarded-For", "20.171.206.5")
+	}
+	send(t, l, "GET", "/", "User-Agent", uaGPTBot, "X-Forwarded-For", "20.171.206.5")
+	send(t, l, "GET", "/", "User-Agent", uaGPTBot, "X-Forwarded-For", "192.0.2.1")
+	send(t, l, "GET", "/", "User-Agent", uaClaudeBot, "X-Forwarded-For", "160.79.104.1")
+
+	// Both instances' reads come together in the report within 5 seconds.
+	time.Sleep(5500 * time.Millisecond)
+	for range 2 {
+		_, body, rec := send(t, l, "GET", "/.crawlers")
+		for _, want := range []string{
+			"BareProxy AI crawler report for example.com, ",
+			"GPTBot\ttraining\t3\t0\t0\t1\t\t0\t0\t0\t0\n",
+			"ClaudeBot\ttraining\t0\t0\t1\t0\t\t0\t0\t0\t0\n",
+			"PerplexityBot\tsearch\t3\t1\t0\t0\t\t0\t0\t0\t0\n",
+			"GPTBot\t2 /blog/, 1 /\n",
+			"PerplexityBot\t3 /docs/\n",
+			"No list, so their claims can't be checked: Google-GeminiNotebook, MistralAI-Training, Meta-ExternalAgent,",
+			"OpenAI's list (OAI-SearchBot): not loaded yet; last try: openai.com:443 isn't on the plugin's allow-http line.",
+		} {
+			if !strings.Contains(body, want) {
+				t.Errorf("missing %q in the report:\n%s", want, body)
+			}
+		}
+		if !strings.Contains(notes(rec), "the crawler report went out") {
+			t.Errorf("report record %+v", rec.Plugins)
+		}
+	}
+	// To an address report-allow doesn't name, the path is an ordinary one.
+	if _, body, _ := send(t, l, "GET", "/.crawlers", "X-Forwarded-For", "203.0.113.9"); body != "from the app\n" {
+		t.Errorf("the report went to an outside address: %q", body)
+	}
+}
+
+// Two instances fetch each list once between them; a restart takes the
+// lists from the store, so claims are checked from the first request.
+func TestCrawlersListsSharedAndKept(t *testing.T) {
+	ls := newListServer(t, crawlerLists)
+	l, _ := crawlerServer(t, crawlerConf, ls, map[string]string{"bytespider.txt": "111.225.148.0/22\n"})
+	crawlersReady(t, l, "(GPTBot): 1 range, fetched", "(ClaudeBot): 1 range, fetched", "(PerplexityBot): 2 ranges, fetched")
+	time.Sleep(2 * time.Second)
+	for _, p := range []string{"/gptbot.json", "/claude.json", "/pplx.json"} {
+		if n := ls.count(p); n != 1 {
+			t.Errorf("%s fetched %d times", p, n)
+		}
+	}
+	l.s.Stop()
+	s, err := Start(l.conf)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(s.Stop)
+	l.s = s
+	resp, _, rec := send(t, l, "GET", "/", "User-Agent", uaGPTBot, "X-Forwarded-For", "20.171.206.5")
+	if resp.StatusCode != 200 || !strings.Contains(notes(rec), "is in the list from 127.0.0.1") {
+		t.Errorf("after a restart: %d %+v", resp.StatusCode, rec.Plugins)
+	}
+	if resp, _, _ := send(t, l, "GET", "/", "User-Agent", uaGPTBot, "X-Forwarded-For", "203.0.113.9"); resp.StatusCode != 403 {
+		t.Errorf("a fake after a restart: %d", resp.StatusCode)
+	}
+	time.Sleep(1500 * time.Millisecond)
+	if n := ls.count("/gptbot.json"); n != 1 {
+		t.Errorf("fetched again after a restart: %d times", n)
+	}
+}
+
+// A list that fails to load leaves its bots unverified, and the report
+// says why; a redirect on the list's own host is followed; with
+// unverified fake, claims that can't be checked are turned away.
+func TestCrawlersListFailures(t *testing.T) {
+	ls := newListServer(t, map[string]string{
+		"/gptbot.json": "status 503",
+		"/claude.json": `{"prefixes": []}`,
+		"/old.json":    "redirect /pplx.json",
+		"/pplx.json":   crawlerLists["/pplx.json"],
+	})
+	conf := strings.Replace(crawlerConf, "LISTS/pplx.json", "LISTS/old.json", 1)
+	l, _ := crawlerServer(t, conf, ls, map[string]string{"bytespider.txt": "111.225.148.0/22\n"})
+	crawlersReady(t, l, "(PerplexityBot): 2 ranges, fetched",
+		"(GPTBot): not loaded yet; last try: answered 503.",
+		"(ClaudeBot): not loaded yet; last try: the list has no address ranges in it.")
+	resp, _, rec := send(t, l, "GET", "/", "User-Agent", uaGPTBot, "X-Forwarded-For", "203.0.113.9")
+	if resp.StatusCode != 200 || !strings.Contains(notes(rec), "203.0.113.9 not verified, the list from 127.0.0.1 isn't loaded yet; let in by line 8") {
+		t.Errorf("unverified GPTBot: %d %+v", resp.StatusCode, rec.Plugins)
+	}
+
+	strict := strings.Replace(crawlerConf, "report /.crawlers\n", "report /.crawlers\nunverified fake\n", 1)
+	ls2 := newListServer(t, map[string]string{"/gptbot.json": "status 503"})
+	l2, _ := crawlerServer(t, strict, ls2, map[string]string{"bytespider.txt": "111.225.148.0/22\n"})
+	resp, _, rec = send(t, l2, "GET", "/", "User-Agent", uaGPTBot, "X-Forwarded-For", "20.171.206.5")
+	if resp.StatusCode != 403 || !strings.Contains(notes(rec), "fake GPTBot: 20.171.206.5 not verified, the list from 127.0.0.1 isn't loaded yet, and claims that can't be checked count as fakes; turned away") {
+		t.Errorf("unverified fake: %d %+v", resp.StatusCode, rec.Plugins)
+	}
+}
+
+func TestCrawlersConfigRefused(t *testing.T) {
+	configRefused(t, "crawlers", "allow GPTBot\nblock gptbot\n", "line 2: gptbot has a rule on line 1 already")
+	configRefused(t, "crawlers", "limit GPTBot 30 every 1m\n", "line 1: write limit NAME... COUNT per TIME, such as limit PerplexityBot 30 per 1m")
+	configRefused(t, "crawlers", "ranges Bytespider bytespider.txt\n",
+		"can't read bytespider.txt: it isn't in a folder the plugin line names with read")
 }

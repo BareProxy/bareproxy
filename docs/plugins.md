@@ -1,6 +1,6 @@
 # BareProxy Plugins: Design Note
 
-Status: accepted on 8 October 2026; the plugin host is built in 0.2.0, plugins in Rust are set up in 0.3.0, the first two plugins ship in 0.4.0, the third in 0.5.0, the fourth in 0.6.0, the fifth in 0.7.0, the sixth in 0.8.0, the seventh in 0.9.0, the eighth in 0.10.0, and the ninth in 0.11.0; [plugin-program.md](plugin-program.md) lists them and their order. This note now describes what was built. Where the build differs from the first version of the note, it says so.
+Status: accepted on 8 October 2026; the plugin host is built in 0.2.0, plugins in Rust are set up in 0.3.0, the first two plugins ship in 0.4.0, the third in 0.5.0, the fourth in 0.6.0, the fifth in 0.7.0, the sixth in 0.8.0, the seventh in 0.9.0, the eighth in 0.10.0, the ninth in 0.11.0, and the tenth in 0.12.0; [plugin-program.md](plugin-program.md) lists them and their order. This note now describes what was built. Where the build differs from the first version of the note, it says so.
 
 ## The decision
 
@@ -59,7 +59,7 @@ WASI is there because SDKs need it: clocks, random numbers, and stdout and stder
 
 ```
 plugin crawlers /etc/bareproxy/plugins/crawlers.wasm
-  config /etc/bareproxy/plugins/crawlers.json
+  config /etc/bareproxy/plugins/crawlers.conf
   memory 32MB
   timeout 5ms
   on-error open
