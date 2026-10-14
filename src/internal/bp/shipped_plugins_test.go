@@ -12,8 +12,10 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strconv"
 	"strings"
@@ -1355,4 +1357,211 @@ func TestCrawlersConfigRefused(t *testing.T) {
 	configRefused(t, "crawlers", "limit GPTBot 30 every 1m\n", "line 1: write limit NAME... COUNT per TIME, such as limit PerplexityBot 30 per 1m")
 	configRefused(t, "crawlers", "ranges Bytespider bytespider.txt\n",
 		"can't read bytespider.txt: it isn't in a folder the plugin line names with read")
+}
+
+const uaBrowser = "Mozilla/5.0 (X11; Linux x86_64; rv:131.0) Gecko/20100101 Firefox/131.0"
+
+// challengeServer starts BareProxy with the challenges plugin, believing
+// X-Forwarded-For from 127.0.0.1, with more lines for the plugin block.
+func challengeServer(t *testing.T, conf, lines string, files map[string]string) *liveServer {
+	t.Helper()
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, "README"), "files for always lines\n")
+	for name, body := range files {
+		writeFile(t, filepath.Join(dir, name), body)
+	}
+	return mustShippedServer2(t, "challenges", "forwarded-from 127.0.0.1\n"+conf, "  read "+dir+"\n"+lines)
+}
+
+var challengeData = regexp.MustCompile(`<script type="application/json" id="bp-challenge">([^<]*)</script>`)
+
+// solveChallenge reads the puzzle from a challenge page and answers it as
+// the page's script does: the first n whose SHA-256 of c:n starts with w
+// zero bits. It returns the query for the endpoint.
+func solveChallenge(t *testing.T, page string) (endpoint, query string) {
+	t.Helper()
+	m := challengeData.FindStringSubmatch(page)
+	if m == nil {
+		t.Fatalf("no puzzle in the page:\n%s", page)
+	}
+	var d struct {
+		C string `json:"c"`
+		T int64  `json:"t"`
+		W int    `json:"w"`
+		R string `json:"r"`
+		E string `json:"e"`
+	}
+	if err := json.Unmarshal([]byte(m[1]), &d); err != nil {
+		t.Fatal(err)
+	}
+	for n := 0; ; n++ {
+		h := sha256.Sum256([]byte(fmt.Sprintf("%s:%d", d.C, n)))
+		z := 0
+		for _, b := range h {
+			if b == 0 {
+				z += 8
+				continue
+			}
+			for b&0x80 == 0 {
+				z++
+				b <<= 1
+			}
+			break
+		}
+		if z >= d.W {
+			return d.E, fmt.Sprintf("t=%d&w=%d&n=%d&r=%s", d.T, d.W, n, url.QueryEscape(d.R))
+		}
+	}
+}
+
+func TestChallengesBrowserSolvesAndPasses(t *testing.T) {
+	l := challengeServer(t, "work 12\n", "  store 1MB\n", nil)
+	resp, body, rec := send(t, l, "GET", "/page.txt?x=1", "User-Agent", uaBrowser, "X-Forwarded-For", "203.0.113.5")
+	if resp.StatusCode != 403 || !strings.Contains(body, "One moment") || resp.Header.Get("Cache-Control") != "no-store" ||
+		resp.Header.Get("X-Robots-Tag") != "noindex" || !strings.Contains(notes(rec), "challenged: a browser with no pass; work 12") {
+		t.Fatalf("no challenge: %d %v %+v", resp.StatusCode, resp.Header, rec.Plugins)
+	}
+	ep, q := solveChallenge(t, body)
+	if ep != "/.bareproxy-challenge" {
+		t.Errorf("endpoint %q", ep)
+	}
+	resp, _, rec = send(t, l, "GET", ep+"?"+q, "User-Agent", uaBrowser, "X-Forwarded-For", "203.0.113.5")
+	cookie := resp.Header.Get("Set-Cookie")
+	if resp.StatusCode != 302 || resp.Header.Get("Location") != "/page.txt?x=1" || !strings.HasPrefix(cookie, "bp_pass=") ||
+		!strings.Contains(cookie, "; Path=/; Max-Age=604800; HttpOnly; SameSite=Lax") || strings.Contains(cookie, "Secure") ||
+		!strings.Contains(notes(rec), "challenge passed: work 12, pass until ") {
+		t.Fatalf("answer: %d %v %+v", resp.StatusCode, resp.Header, rec.Plugins)
+	}
+	pass := strings.SplitN(cookie, ";", 2)[0]
+	resp, body, rec = send(t, l, "GET", "/page.txt", "User-Agent", uaBrowser, "X-Forwarded-For", "203.0.113.77", "Cookie", "a=1; "+pass)
+	if resp.StatusCode != 200 || body != "a static page\n" || notes(rec) != "" {
+		t.Errorf("with the pass, from the same network: %d %q %+v", resp.StatusCode, body, rec.Plugins)
+	}
+	// A pass is for its network and its browser.
+	for _, hdr := range [][]string{
+		{"User-Agent", uaBrowser, "X-Forwarded-For", "198.51.100.5", "Cookie", pass},
+		{"User-Agent", uaBrowser + " Edge/1", "X-Forwarded-For", "203.0.113.5", "Cookie", pass},
+		{"User-Agent", uaBrowser, "X-Forwarded-For", "203.0.113.5", "Cookie", pass + "0"},
+	} {
+		if resp, _, _ := send(t, l, "GET", "/page.txt", hdr...); resp.StatusCode != 403 {
+			t.Errorf("the pass worked with %v: %d", hdr, resp.StatusCode)
+		}
+	}
+	// A wrong answer, and an answer for another network.
+	wrong := strings.Replace(q, "&n=", "&n=9", 1)
+	resp, body, rec = send(t, l, "GET", ep+"?"+wrong, "User-Agent", uaBrowser, "X-Forwarded-For", "203.0.113.5")
+	if resp.StatusCode != 403 || !strings.Contains(body, `<a href="/page.txt?x=1">Go back to the page</a>`) ||
+		!strings.Contains(notes(rec), "challenge failed: the answer doesn't solve the puzzle") {
+		t.Errorf("wrong answer: %d %q %+v", resp.StatusCode, body, rec.Plugins)
+	}
+	if resp, _, _ := send(t, l, "GET", ep+"?"+q, "User-Agent", uaBrowser, "X-Forwarded-For", "198.51.100.5"); resp.StatusCode != 403 {
+		t.Errorf("an answer from another network passed: %d", resp.StatusCode)
+	}
+	// The endpoint never sends anyone off the site.
+	evil := strings.Replace(q, "&r=", "&r=%2F%2Fevil.example%2F&x=", 1)
+	if resp, _, _ := send(t, l, "GET", ep+"?"+evil, "User-Agent", uaBrowser, "X-Forwarded-For", "203.0.113.5"); resp.Header.Get("Location") != "/" {
+		t.Errorf("the endpoint sent a browser to %q", resp.Header.Get("Location"))
+	}
+	if m := l.s.Current().Plugins["p"].Metrics(); m["challenged"] != 4 || m["passed"] != 2 || m["failed"] != 2 {
+		t.Errorf("metrics %v", m)
+	}
+}
+
+func TestChallengesWhoGetsOne(t *testing.T) {
+	l := challengeServer(t, "allow 192.0.2.0/24\nskip /feed.xml\ntrust-header X-Bot-Check=verified\n", "", nil)
+	writeFile(t, filepath.Join(l.dir, "public", "feed.xml"), "<rss/>\n")
+	for _, c := range []struct {
+		method, path string
+		hdr          []string
+		code         int
+		note         string
+	}{
+		{"GET", "/page.txt", []string{"User-Agent", "curl/8.5.0"}, 200, ""},
+		{"GET", "/page.txt", []string{"User-Agent", "Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)"}, 200, ""},
+		{"GET", "/page.txt", nil, 200, ""},
+		{"GET", "/robots.txt", []string{"User-Agent", uaBrowser}, 404, ""},
+		{"GET", "/feed.xml", []string{"User-Agent", uaBrowser}, 200, ""},
+		{"POST", "/page.txt", []string{"User-Agent", uaBrowser}, 405, ""},
+		{"GET", "/page.txt", []string{"User-Agent", uaBrowser, "X-Forwarded-For", "192.0.2.9"}, 200, ""},
+		{"GET", "/page.txt", []string{"User-Agent", uaBrowser, "X-Bot-Check", "verified"}, 200, "no challenge: x-bot-check is verified (trust-header)"},
+		{"GET", "/page.txt", []string{"User-Agent", uaBrowser, "X-Bot-Check", "fake"}, 403, "challenged: a browser with no pass"},
+		{"HEAD", "/page.txt", []string{"User-Agent", uaBrowser}, 403, "challenged"},
+	} {
+		resp, _, rec := send(t, l, c.method, c.path, c.hdr...)
+		if resp.StatusCode != c.code || (c.note == "" && notes(rec) != "") || !strings.Contains(notes(rec), c.note) {
+			t.Errorf("%s %s %v: %d %+v", c.method, c.path, c.hdr, resp.StatusCode, rec.Plugins)
+		}
+	}
+	// challenge all: every client without a pass, bots and tools too.
+	all := challengeServer(t, "challenge all\nstatus 429\n", "", nil)
+	if resp, _, rec := send(t, all, "GET", "/page.txt", "User-Agent", "curl/8.5.0"); resp.StatusCode != 429 ||
+		!strings.Contains(notes(rec), "challenged: no pass (challenge all)") {
+		t.Errorf("challenge all: %d %+v", resp.StatusCode, rec.Plugins)
+	}
+}
+
+// With after, a client loads a few pages before the challenge; images
+// and scripts don't count. Addresses on the always list get it at once.
+func TestChallengesAfterAndAlways(t *testing.T) {
+	l := challengeServer(t, "after 3 per 1m\nalways 198.51.100.0/24 hosting.txt\n", "  instances 2\n",
+		map[string]string{"hosting.txt": "# a hosting provider\n100.24.0.0/16\n"})
+	page := []string{"User-Agent", uaBrowser, "X-Forwarded-For", "203.0.113.5", "Accept", "text/html,application/xhtml+xml,*/*;q=0.8"}
+	image := []string{"User-Agent", uaBrowser, "X-Forwarded-For", "203.0.113.5", "Accept", "image/avif,image/webp,*/*", "Sec-Fetch-Mode", "no-cors"}
+	for i := 1; i <= 3; i++ {
+		if resp, _, _ := send(t, l, "GET", "/page.txt", page...); resp.StatusCode != 200 {
+			t.Fatalf("page load %d: %d", i, resp.StatusCode)
+		}
+		if resp, _, _ := send(t, l, "GET", "/page.txt", image...); resp.StatusCode != 200 {
+			t.Fatalf("image %d: %d", i, resp.StatusCode)
+		}
+	}
+	resp, _, rec := send(t, l, "GET", "/page.txt", page...)
+	if resp.StatusCode != 403 || !strings.Contains(notes(rec), "challenged: 4 page loads in the last 1m from 203.0.113.5/32 without a pass, over 3 (line 2); work 16") {
+		t.Errorf("the 4th page load: %d %+v", resp.StatusCode, rec.Plugins)
+	}
+	// Over the count, an image is challenged too, until the pass.
+	if resp, _, _ := send(t, l, "GET", "/page.txt", image...); resp.StatusCode != 403 {
+		t.Errorf("an image over the count: %d", resp.StatusCode)
+	}
+	if resp, _, _ := send(t, l, "GET", "/page.txt", "User-Agent", uaBrowser, "X-Forwarded-For", "203.0.113.6"); resp.StatusCode != 200 {
+		t.Errorf("another address shared the count: %d", resp.StatusCode)
+	}
+	for _, addr := range []string{"198.51.100.20", "100.24.7.9"} {
+		resp, _, rec := send(t, l, "GET", "/page.txt", "User-Agent", uaBrowser, "X-Forwarded-For", addr)
+		if resp.StatusCode != 403 || !strings.Contains(notes(rec), "challenged: "+addr+" is on the always list") {
+			t.Errorf("always %s: %d %+v", addr, resp.StatusCode, rec.Plugins)
+		}
+	}
+}
+
+// The key the plugin makes is shared by its instances and kept in its
+// store, so a pass works on every instance and after a restart.
+func TestChallengesKeyKept(t *testing.T) {
+	l := challengeServer(t, "work 10\n", "  instances 2\n  store 1MB\n", nil)
+	hdr := []string{"User-Agent", uaBrowser, "X-Forwarded-For", "203.0.113.5"}
+	_, body, _ := send(t, l, "GET", "/page.txt", hdr...)
+	ep, q := solveChallenge(t, body)
+	resp, _, _ := send(t, l, "GET", ep+"?"+q, hdr...)
+	pass := strings.SplitN(resp.Header.Get("Set-Cookie"), ";", 2)[0]
+	withPass := append(slices.Clone(hdr), "Cookie", pass)
+	for i := range 4 { // both instances
+		if resp, _, _ := send(t, l, "GET", "/page.txt", withPass...); resp.StatusCode != 200 {
+			t.Fatalf("request %d with the pass: %d", i, resp.StatusCode)
+		}
+	}
+	l.s.Stop()
+	s, err := Start(l.conf)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(s.Stop)
+	l.s = s
+	if resp, _, _ := send(t, l, "GET", "/page.txt", withPass...); resp.StatusCode != 200 {
+		t.Errorf("the pass after a restart: %d", resp.StatusCode)
+	}
+}
+
+func TestChallengesConfigRefused(t *testing.T) {
+	configRefused(t, "challenges", "work 30\n", "line 1: work takes a number of bits from 8 to 24")
+	configRefused(t, "challenges", "always hosting.txt\n", "can't read hosting.txt: it isn't in a folder the plugin line names with read")
 }

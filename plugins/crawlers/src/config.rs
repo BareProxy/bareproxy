@@ -6,6 +6,7 @@
 //! can be tested on their own.
 
 use crate::bots::{GROUPS, KNOWN, List};
+pub use kit::{Index, parse_list, short};
 use kit::{Item, Line, Net};
 use std::collections::HashMap;
 use std::net::IpAddr;
@@ -149,53 +150,6 @@ impl Loaded {
         let index = Index::new(&nets);
         Loaded { nets, when, index }
     }
-}
-
-/// Ranges sorted and merged, so a lookup takes a binary search however
-/// long the list. Amazon's lists name over a thousand single addresses.
-#[derive(Debug, Clone, PartialEq, Default)]
-pub struct Index {
-    v4: Vec<(u128, u128)>,
-    v6: Vec<(u128, u128)>,
-}
-
-impl Index {
-    pub fn new(nets: &[Net]) -> Index {
-        let (mut v4, mut v6) = (vec![], vec![]);
-        for n in nets {
-            let (is4, a, b) = n.bounds();
-            if is4 {
-                v4.push((a, b))
-            } else {
-                v6.push((a, b))
-            }
-        }
-        Index {
-            v4: merge(v4),
-            v6: merge(v6),
-        }
-    }
-
-    pub fn contains(&self, ip: IpAddr) -> bool {
-        let (list, n) = match ip.to_canonical() {
-            IpAddr::V4(a) => (&self.v4, u32::from(a) as u128),
-            IpAddr::V6(a) => (&self.v6, u128::from(a)),
-        };
-        let i = list.partition_point(|r| r.0 <= n);
-        i > 0 && list[i - 1].1 >= n
-    }
-}
-
-fn merge(mut v: Vec<(u128, u128)>) -> Vec<(u128, u128)> {
-    v.sort_unstable();
-    let mut out: Vec<(u128, u128)> = Vec::with_capacity(v.len());
-    for (a, b) in v {
-        match out.last_mut() {
-            Some(last) if a <= last.1.saturating_add(1) => last.1 = last.1.max(b),
-            _ => out.push((a, b)),
-        }
-    }
-    out
 }
 
 /// A URL, split.
@@ -964,58 +918,6 @@ pub fn has_word(text: &str, word: &str) -> bool {
     false
 }
 
-/// The address ranges in a list: entries named ipv4Prefix and ipv6Prefix,
-/// as the operators publish them in JSON (also when the JSON sits in an
-/// HTML page), or else plain text with one address or range a line, where
-/// # starts a comment. A list with no ranges is an error: adopting one
-/// would make every claim a fake. So is JSON or HTML with no entries.
-pub fn parse_list(text: &str) -> Result<Vec<Net>, String> {
-    let mut out = vec![];
-    let json_or_html = text.trim_start().starts_with(['{', '[', '<']);
-    if text.contains("ipv4Prefix") || text.contains("ipv6Prefix") || json_or_html {
-        for key in ["ipv4Prefix", "ipv6Prefix"] {
-            let mut rest = text;
-            while let Some(i) = rest.find(key) {
-                rest = &rest[i + key.len()..];
-                let mut s = rest;
-                // Past the quotes and the colon, which an HTML page writes
-                // as &quot;.
-                for _ in 0..4 {
-                    s = s.trim_start_matches(|c: char| {
-                        c == '"' || c == '\'' || c == ':' || c.is_whitespace()
-                    });
-                    match s.strip_prefix("&quot;").or_else(|| s.strip_prefix("&#34;")) {
-                        Some(t) => s = t,
-                        None => break,
-                    }
-                }
-                let end = s
-                    .find(|c: char| !(c.is_ascii_hexdigit() || ".:/\\".contains(c)))
-                    .unwrap_or(s.len());
-                if let Some(n) = Net::parse(&s[..end].replace('\\', "")) {
-                    out.push(n);
-                }
-            }
-        }
-    } else {
-        for (i, raw) in text.lines().enumerate() {
-            match kit::words(raw).as_slice() {
-                [] => {}
-                [w] => {
-                    out.push(Net::parse(w).ok_or_else(|| {
-                        format!("line {}: {w} isn't an address or a range", i + 1)
-                    })?)
-                }
-                _ => return Err(format!("line {}: write one address or range a line", i + 1)),
-            }
-        }
-    }
-    if out.is_empty() {
-        return Err("has no address ranges in it".into());
-    }
-    Ok(out)
-}
-
 /// A list as instances share it, and as the store keeps it: when it was
 /// loaded, then a range a line.
 pub fn encode_list(l: &Loaded) -> String {
@@ -1088,17 +990,6 @@ pub fn add_reads(into: &mut HashMap<String, HashMap<String, u64>>, text: &str, s
                 .entry(sec.to_string())
                 .or_default() += n;
         }
-    }
-}
-
-/// A short time from milliseconds: 1s, 1m, 2h, 1d.
-pub fn short(ms: u64) -> String {
-    let s = ms.div_ceil(1000);
-    match s {
-        _ if s >= 86400 && s.is_multiple_of(86400) => format!("{}d", s / 86400),
-        _ if s >= 3600 && s.is_multiple_of(3600) => format!("{}h", s / 3600),
-        _ if s >= 60 && s.is_multiple_of(60) => format!("{}m", s / 60),
-        _ => format!("{s}s"),
     }
 }
 
@@ -1472,46 +1363,6 @@ mod tests {
     }
 
     #[test]
-    fn lists_as_published() {
-        let json = "{\n  \"creationTime\": \"2026-09-22T02:00:07.000000\",\n  \"prefixes\": [\n    {\n      \"ipv4Prefix\": \"132.196.86.0/24\"\n    },\n    {\"ipv6Prefix\": \"2600:1f28:365:8000::/56\"},\n    {\"ipv4Prefix\":\"74.7.175.128\\/25\"}\n  ]\n}\n";
-        let n = parse_list(json).unwrap();
-        assert_eq!(n.len(), 3);
-        assert!(n[0].contains("132.196.86.200".parse().unwrap()));
-        // IPv4 entries first, then IPv6.
-        assert!(n[1].contains("74.7.175.200".parse().unwrap()));
-        assert!(n[2].contains("2600:1f28:365:80ff::1".parse().unwrap()));
-        // The same JSON shown in an HTML page, as Amazon does, with bare addresses.
-        let html = "<html><pre><code>{&quot;creationTime&quot;: &quot;2026-09-08&quot;, &quot;prefixes&quot;: [{&quot;ipv4Prefix&quot;: &quot;3.81.245.78&quot;}, {&quot;ipv4Prefix&quot;: &quot;3.81.253.213&quot;}]}</code></pre><p>Each entry has an ipv4Prefix and the like.</p></html>";
-        let n = parse_list(html).unwrap();
-        assert_eq!(n.len(), 2);
-        assert!(n[1].contains("3.81.253.213".parse().unwrap()));
-        assert!(!n[1].contains("3.81.253.214".parse().unwrap()));
-        let text = "# my scrapers\n192.0.2.0/24\n2001:db8::1   # one address\n\n";
-        assert_eq!(parse_list(text).unwrap().len(), 2);
-        assert_eq!(
-            parse_list("192.0.2.0/24\nexample.com\n").unwrap_err(),
-            "line 2: example.com isn't an address or a range"
-        );
-        assert_eq!(
-            parse_list("1.2.3.4 5.6.7.8").unwrap_err(),
-            "line 1: write one address or range a line"
-        );
-        assert_eq!(
-            parse_list("{\"prefixes\": []}").unwrap_err(),
-            "has no address ranges in it"
-        );
-        assert_eq!(
-            parse_list("<html><p>Moved</p></html>").unwrap_err(),
-            "has no address ranges in it"
-        );
-        assert_eq!(
-            parse_list("{\"ipv4Prefix\": \"\"}").unwrap_err(),
-            "has no address ranges in it"
-        );
-        assert_eq!(parse_list("").unwrap_err(), "has no address ranges in it");
-    }
-
-    #[test]
     fn lists_shared_and_kept() {
         let l = Loaded::new(
             vec![
@@ -1525,33 +1376,6 @@ mod tests {
         assert_eq!(decode_list(&text), Some(l));
         assert_eq!(decode_list("12\n"), None);
         assert_eq!(decode_list("x\n192.0.2.0/24\n"), None);
-    }
-
-    #[test]
-    fn index_lookups() {
-        // Two thousand single addresses, as Amazon lists them: every other
-        // one in 3.0.0.0 to 3.0.15.255.
-        let mut nets: Vec<Net> = (0..2000u32)
-            .map(|i| Net::parse(&format!("3.0.{}.{}", i / 128, i % 128 * 2)).unwrap())
-            .collect();
-        nets.push(Net::parse("192.0.2.0/25").unwrap());
-        nets.push(Net::parse("192.0.2.128/25").unwrap()); // merges with the one before
-        nets.push(Net::parse("2600:1f28:365:8000::/56").unwrap());
-        let ix = Index::new(&nets);
-        let has = |s: &str| ix.contains(s.parse().unwrap());
-        for n in &nets {
-            let (_, a, b) = n.bounds();
-            assert_eq!(Index::new(&[*n]).v4.len() + Index::new(&[*n]).v6.len(), 1);
-            assert!(a <= b);
-        }
-        assert!(has("3.0.0.0") && has("3.0.7.8") && has("3.0.15.158"));
-        assert!(!has("3.0.0.1") && !has("3.0.7.9") && !has("3.0.15.160"));
-        assert!(has("192.0.2.0") && has("192.0.2.200") && has("192.0.2.255"));
-        assert!(!has("192.0.3.0") && !has("192.0.1.255"));
-        assert!(has("::ffff:192.0.2.9"));
-        assert!(has("2600:1f28:365:80ff:ffff::1") && !has("2600:1f28:365:8100::"));
-        assert!(!has("0.0.0.0") && !has("255.255.255.255") && !has("::"));
-        assert!(ix.v4.contains(&(0xC000_0200, 0xC000_02FF)));
     }
 
     #[test]

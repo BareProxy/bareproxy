@@ -24,8 +24,18 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4e7648175b45a9a48536d676f68d918270699102aa8dab5496df06904c914600"
 
 [[package]]
+name = "challenges"
+version = "0.13.0"
+dependencies = [
+ "hmac",
+ "kit",
+ "proxy-wasm",
+ "sha2",
+]
+
+[[package]]
 name = "cors"
-version = "0.12.0"
+version = "0.13.0"
 dependencies = [
  "kit",
  "proxy-wasm",
@@ -42,7 +52,7 @@ dependencies = [
 
 [[package]]
 name = "crawlers"
-version = "0.12.0"
+version = "0.13.0"
 dependencies = [
  "kit",
  "proxy-wasm",
@@ -93,7 +103,7 @@ dependencies = [
 
 [[package]]
 name = "geo"
-version = "0.12.0"
+version = "0.13.0"
 dependencies = [
  "kit",
  "proxy-wasm",
@@ -112,7 +122,7 @@ dependencies = [
 
 [[package]]
 name = "headers"
-version = "0.12.0"
+version = "0.13.0"
 dependencies = [
  "kit",
  "proxy-wasm",
@@ -129,7 +139,7 @@ dependencies = [
 
 [[package]]
 name = "kit"
-version = "0.12.0"
+version = "0.13.0"
 dependencies = [
  "proxy-wasm",
 ]
@@ -142,7 +152,7 @@ checksum = "ce5d3ddc6d3fa000eb1536d85e147bfe31aacaba692ed6a876f95cb7c855be78"
 
 [[package]]
 name = "limits"
-version = "0.12.0"
+version = "0.13.0"
 dependencies = [
  "kit",
  "proxy-wasm",
@@ -156,7 +166,7 @@ checksum = "f9f8bd3e56ce4dfc153cf470fffbfa98c7620958b312ca5c3a4b8d5181fd13c6"
 
 [[package]]
 name = "maintenance"
-version = "0.12.0"
+version = "0.13.0"
 dependencies = [
  "kit",
  "proxy-wasm",
@@ -164,7 +174,7 @@ dependencies = [
 
 [[package]]
 name = "previews"
-version = "0.12.0"
+version = "0.13.0"
 dependencies = [
  "kit",
  "proxy-wasm",
@@ -182,7 +192,7 @@ dependencies = [
 
 [[package]]
 name = "redirects"
-version = "0.12.0"
+version = "0.13.0"
 dependencies = [
  "hashbrown",
  "kit",
@@ -202,7 +212,7 @@ dependencies = [
 
 [[package]]
 name = "signing"
-version = "0.12.0"
+version = "0.13.0"
 dependencies = [
  "hmac",
  "kit",
@@ -212,7 +222,7 @@ dependencies = [
 
 [[package]]
 name = "splits"
-version = "0.12.0"
+version = "0.13.0"
 dependencies = [
  "kit",
  "proxy-wasm",
@@ -226,7 +236,7 @@ checksum = "13c2bddecc57b384dee18652358fb23172facb8a2c51ccc10d74c157bdea3292"
 
 [[package]]
 name = "testplugin"
-version = "0.12.0"
+version = "0.13.0"
 dependencies = [
  "log",
  "proxy-wasm",

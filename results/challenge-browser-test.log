@@ -1,0 +1,10 @@
+/tmp/tmp.MaIFOiRusl/bareproxy.conf: ok, 1 site, 0 pools, 1 rule; listening on :50303 (http)
+Chromium 141.0.7390.37: on the real page 0.13s after asking for it
+  403 /?from=test
+  302 /.bareproxy-challenge?t=1791982826&w=16&n=50996&r=%2F%3Ffrom%3Dtest
+  200 /?from=test
+  200 /pic.svg
+cookies: [('bp_pass', True, 'Lax')]
+after a reload: 200 /?from=test, 304 /pic.svg
+without JavaScript: One moment | The puzzle needs JavaScript. Please turn it on and reload the page.
+ok

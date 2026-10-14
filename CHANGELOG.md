@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.13.0 (14 October 2026)
+
+The eleventh plugin.
+
+- **Bot challenges** (`plugins/challenges`, released as `challenges.wasm`), number 11 in the build order: a client whose User-Agent says browser, and that has no pass, gets a page with a small proof-of-work puzzle instead of the site. The browser solves it with the page's own JavaScript (SHA-256, 16 bits of work by default, a fraction of a second on a desktop) and sends the answer back. The plugin checks it with one SHA-256 and gives a pass: a cookie signed with HMAC-SHA256, tied to the browser and its network, for a week by default. Puzzles and passes are signed, not stored, so nothing is kept per visitor, and nothing leaves BareProxy. Bots that say who they are, tools such as curl, `/robots.txt`, chosen paths and allowed addresses go on. `after` lets an address load a few pages first, `always` challenges networks such as hosting providers' at once, and `trust-header X-Bot-Check=verified` lets the bots AI crawler control verified go on. The key comes from the config, or the plugin makes one from the host's random numbers and keeps it in its store. See its README; `live/challenge-browser-test.sh` runs a page through it in headless Chromium.
+- `plugins/kit`: address lists (the JSON the AI crawler operators, Google Cloud and AWS publish, or plain text) and their sorted lookup, moved there from AI crawler control, and `short` for times.
+
 ## 0.12.0 (14 October 2026)
 
 The tenth plugin, the first of the three about AI bots.
