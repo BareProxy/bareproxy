@@ -25,6 +25,10 @@ import (
 //	bareproxy_store_delete args: key.
 //	bareproxy_read_file   args: a path inside a folder the config names with
 //	                      read. Returns the file, or NOT_FOUND.
+//	bareproxy_stat_file   args: such a path. Returns its size and the time it
+//	                      last changed in Unix nanoseconds, 8 bytes each,
+//	                      little-endian, or NOT_FOUND. Nothing is opened, so
+//	                      a plugin can tell whether a file changed cheaply.
 //	bareproxy_count       args: 4-byte window in ms, 4-byte amount, key.
 //	                      A counter shared by the plugin's instances; see
 //	                      counters.go.
@@ -102,6 +106,18 @@ func foreign(c *hcall, a []uint64) uint32 {
 				return stBadArgument
 			}
 			return c.give(b, a[4], a[5])
+		}
+		return stNotFound
+	case "bareproxy_stat_file":
+		rel := strings.TrimPrefix(filepath.ToSlash(string(args)), "/")
+		for _, root := range p.S.Read { // the folders in the order read_file tries them
+			fi, err := root.Stat(rel)
+			if err != nil || !fi.Mode().IsRegular() {
+				continue
+			}
+			out := binary.LittleEndian.AppendUint64(nil, uint64(fi.Size()))
+			out = binary.LittleEndian.AppendUint64(out, uint64(fi.ModTime().UnixNano()))
+			return c.give(out, a[4], a[5])
 		}
 		return stNotFound
 	}

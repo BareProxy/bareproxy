@@ -1,6 +1,6 @@
 # BareProxy Plugin Program
 
-Status: set on 8 October 2026, with eleven candidates added and all 21 put in one build order, easiest first, the same day. The plugin host is built (0.2.0, Rust plugins in 0.3.0). Plugins 1 and 2 are built and ship in 0.4.0, plugin 3 in 0.5.0, plugin 4 in 0.6.0, plugin 5 in 0.7.0, plugin 6 in 0.8.0, plugin 7 in 0.9.0, plugin 8 in 0.10.0, plugin 9 in 0.11.0, plugin 10 in 0.12.0, and plugin 11 in 0.13.0. Each plugin is a WebAssembly module loaded at run time through BareProxy's Proxy-Wasm host; [plugins.md](plugins.md) is the design.
+Status: set on 8 October 2026, with eleven candidates added and all 21 put in one build order, easiest first, the same day. The plugin host is built (0.2.0, Rust plugins in 0.3.0). Plugins 1 and 2 are built and ship in 0.4.0, plugin 3 in 0.5.0, plugin 4 in 0.6.0, plugin 5 in 0.7.0, plugin 6 in 0.8.0, plugin 7 in 0.9.0, plugin 8 in 0.10.0, plugin 9 in 0.11.0, plugin 10 in 0.12.0, plugin 11 in 0.13.0, and plugin 12 in 0.14.0. Each plugin is a WebAssembly module loaded at run time through BareProxy's Proxy-Wasm host; [plugins.md](plugins.md) is the design.
 
 ## Build order
 
@@ -19,7 +19,7 @@ All 21 plugins in one order, easiest and quickest to ship first, so a new plugin
 | 9 | **Link previews** (built, 0.11.0) | Open Graph tags added for preview fetchers to pages that lack them. | Response body | About a day: tags added to the head of HTML pages. |
 | 10 | **AI crawler control** (built, 0.12.0) | Allow, block or rate-limit each bot (GPTBot, ClaudeBot, PerplexityBot and the rest), with a log of who is scraping what. | Before routing, the record | A day or two. Checks a bot's published address ranges, fetched and refreshed on a timer, not just its user agent, which anyone can fake. |
 | 11 | **Bot challenges** (built, 0.13.0) | A proof-of-work check for clients that look like scrapers, with a signed cookie once passed and no outside service. | Before routing | A day or two: a challenge page, a check and a signed cookie. |
-| 12 | **Markdown serving** | `.md` files rendered to HTML straight from the folder, with a template, no build step. | Response body | About two days. Reads files through `bareproxy_read_file`, limited to the folders the config names. |
+| 12 | **Markdown serving** (built, 0.14.0) | `.md` files rendered to HTML straight from the folder, with a template, no build step. | Before routing, timer | About two days. Reads files through `bareproxy_read_file`, limited to the folders the config names, and tells a changed file from `bareproxy_stat_file`, added for it. |
 | 13 | **Cookie consent** | A consent banner on HTML pages, non-essential cookies held back until consent, Global Privacy Control respected. | Response headers and body | About two days. |
 | 14 | **Uptime checks and status pages** | Checks on a timer, 90 days of history in the store, a public status page served by the plugin. | Timer, before routing | Two or three days. |
 | 15 | **OpenTelemetry export** | Request records sent as spans or logs over OTLP/HTTP, in batches, sampled. | The record, timer | Two or three days. Covers the earlier Export module. |

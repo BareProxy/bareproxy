@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.14.0 (14 October 2026)
+
+The twelfth plugin, and a host function for it.
+
+- **Markdown serving** (`plugins/markdown`, released as `markdown.wasm`), number 12 in the build order: Markdown files served as web pages straight from a folder the plugin line reads, with no build step. `/guide/setup` gets `guide/setup.md` and `/guide/` gets `guide/index.md` or `README.md`, rendered with pulldown-cmark (CommonMark with GitHub's tables, task lists, strikethrough, footnotes and alerts, heading ids and front matter) into a template of your own or a plain built-in page. Each page is rendered once and kept until its file or the template changes, which a stat shows; its ETag comes from the file's size and time of change, so a 304 needs no read. A client that asks for `text/markdown` gets the Markdown as written at the page's URL, and every page links to it. Links to `.md` files point to their pages, and `html off` shows raw HTML as text for folders others write to. Pages render in timer calls, which may run for a second, where a request's call may run for 5 ms, and a file whose rendering takes its instance down isn't tried again until it changes. See its README.
+- `bareproxy_stat_file`, a new host function: the size of a file in a folder the plugin line reads, and when it last changed, without opening it.
+- Fixed: shared data counted a key's length again on every write, so a plugin that keeps rewriting the same keys, as AI crawler control does every 5 seconds, would after some weeks have reached the 64 MB limit and had its writes refused.
+- `plugins/kit`: `stat_file`, and `size` and `bytes` for sizes in a config and in notes.
+
 ## 0.13.0 (14 October 2026)
 
 The eleventh plugin.

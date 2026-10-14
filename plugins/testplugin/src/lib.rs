@@ -12,7 +12,8 @@
 //!   call       call 127.0.0.1:PORT/called (PORT from the request's
 //!              x-call-port), wait, then add x-called with the call's status
 //!   store      put the path in the store, read it back into x-stored
-//!   read       put the file hello.txt into x-read, with the call's status
+//!   read       put the file hello.txt into x-read, with the call's status,
+//!              and its size and time of change into x-stat
 //!   count      count requests in shared data, into x-count
 //!   log        note "logged" in proxy_on_log
 //!   tick       set a 10 ms timer that counts ticks in shared data
@@ -193,6 +194,16 @@ impl HttpContext for Http {
                 "x-read",
                 &format!("{} {}", String::from_utf8_lossy(&v).trim(), st),
             );
+            let stat =
+                match hostcalls::call_foreign_function("bareproxy_stat_file", Some(b"hello.txt")) {
+                    Ok(Some(v)) if v.len() == 16 => {
+                        let n = |i: usize| u64::from_le_bytes(v[i..i + 8].try_into().unwrap());
+                        format!("{} {} 0", n(0), n(8))
+                    }
+                    Ok(_) => "0".to_string(),
+                    Err(st) => status_code(st).to_string(),
+                };
+            self.add_http_request_header("x-stat", &stat);
         }
         if self.has("deny") {
             self.send_http_response(

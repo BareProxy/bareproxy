@@ -496,17 +496,15 @@ func init() {
 			return stCASMismatch
 		}
 		// At most 64 MB in all, and 1 MB a value, kept in BareProxy's memory.
-		p.dataSize += len(key) + len(val) - len(cur.val)
+		// A key counts once, when it's new; a write counts its value's change.
+		grow := len(val) - len(cur.val)
 		if !found {
-			p.dataSize += len(key)
+			grow += len(key)
 		}
-		if len(val) > 1<<20 || p.dataSize > 64<<20 {
-			p.dataSize -= len(key) + len(val) - len(cur.val)
-			if !found {
-				p.dataSize -= len(key)
-			}
+		if len(val) > 1<<20 || p.dataSize+grow > 64<<20 {
 			return stBadArgument
 		}
+		p.dataSize += grow
 		p.data[key] = shared{val, cur.cas + 1}
 		return stOK
 	})

@@ -271,6 +271,12 @@ func onRequestHeaders(id, n, eos uint32) uint32 {
 	if modes["read"] {
 		v, st := foreign("bareproxy_read_file", []byte("hello.txt"))
 		addHeader(0, "x-read", strings.TrimSpace(string(v))+" "+strconv.Itoa(int(st)))
+		v, st = foreign("bareproxy_stat_file", []byte("hello.txt"))
+		stat := strconv.Itoa(int(st))
+		if len(v) == 16 {
+			stat = strconv.FormatUint(binary.LittleEndian.Uint64(v), 10) + " " + strconv.FormatUint(binary.LittleEndian.Uint64(v[8:]), 10) + " " + stat
+		}
+		addHeader(0, "x-stat", stat)
 	}
 	if modes["deny"] {
 		body := []byte("denied by plugin\n")

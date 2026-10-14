@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"maps"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -1564,4 +1565,286 @@ func TestChallengesKeyKept(t *testing.T) {
 func TestChallengesConfigRefused(t *testing.T) {
 	configRefused(t, "challenges", "work 30\n", "line 1: work takes a number of bits from 8 to 24")
 	configRefused(t, "challenges", "always hosting.txt\n", "can't read hosting.txt: it isn't in a folder the plugin line names with read")
+}
+
+// markdownServer starts BareProxy with the Markdown plugin reading the
+// site's own folder, public/, which files fill, with more lines for the
+// plugin block. /api/* answers "api" itself.
+func markdownServer(t *testing.T, conf, lines string, files map[string]string) *liveServer {
+	t.Helper()
+	l := &liveServer{dir: t.TempDir(), port: freePort(t)}
+	l.conf = filepath.Join(l.dir, "bareproxy.conf")
+	for name, body := range files {
+		writeFile(t, filepath.Join(l.dir, "public", name), body)
+	}
+	writeFile(t, filepath.Join(l.dir, "p.wasm"), string(shipped(t, "markdown")))
+	writeFile(t, filepath.Join(l.dir, "p.conf"), conf)
+	writeFile(t, l.conf, fmt.Sprintf(`global
+  admin off
+  trace-log off
+  state state
+
+plugin p p.wasm
+  config p.conf
+  read public
+%s
+site http://example.com:%d
+  use p
+  route /api/* -> respond 200 api
+  route /* -> files public
+`, lines, l.port))
+	s, err := Start(l.conf)
+	if err != nil {
+		t.Fatal(err)
+	}
+	l.s = s
+	t.Cleanup(s.Stop)
+	return l
+}
+
+// rewrite changes a file the plugin reads so its size and time of change
+// are new, as an editor saving it would.
+func rewrite(t *testing.T, l *liveServer, name, body string) {
+	t.Helper()
+	p := filepath.Join(l.dir, "public", name)
+	writeFile(t, p, body)
+	later := time.Now().Add(2 * time.Second)
+	os.Chtimes(p, later, later)
+}
+
+var markdownSite = map[string]string{
+	"index.md":        "# Docs\n\nWelcome to the docs.\n\n- [Setup](guide/setup.md)\n- [Notes](notes/README.md)\n",
+	"guide/index.md":  "# Guide\n\nStart with [setup](setup.md#install).\n",
+	"guide/setup.md":  "---\ntitle: Setting up\nauthor: Ann\n---\n# Setup\n\nInstall it.\n\n## Install\n\nRun it.\n\n## Check\n\n[Back](index.md)\n",
+	"notes/README.md": "Notes, with no heading.\n",
+	"style.css":       "body{}\n",
+	"café menu.md":    "# Café\n",
+}
+
+func TestMarkdownPagesRenderAndKeep(t *testing.T) {
+	l := markdownServer(t, "", "  instances 1\n", markdownSite)
+	resp, body, rec := send(t, l, "GET", "/")
+	if resp.StatusCode != 200 || resp.Header.Get("Content-Type") != "text/html; charset=utf-8" ||
+		!strings.Contains(body, "<title>Docs</title>") || !strings.Contains(body, `<h1 id="docs">Docs</h1>`) ||
+		!strings.Contains(body, `<a href="guide/setup">Setup</a>`) || !strings.Contains(body, `<a href="notes/">Notes</a>`) ||
+		!strings.Contains(body, `<meta name="description" content="Welcome to the docs.">`) ||
+		resp.Header.Get("Vary") != "Accept" || resp.Header.Get("Link") != `</index.md>; rel="alternate"; type="text/markdown"` ||
+		rec.Plugins[0].Action != "answered 200" || !strings.Contains(notes(rec), "rendered index.md (") {
+		t.Fatalf("front page: %d %v %+v\n%s", resp.StatusCode, resp.Header, rec.Plugins, body)
+	}
+	etag := resp.Header.Get("ETag")
+	resp, again, rec := send(t, l, "GET", "/")
+	if again != body || resp.Header.Get("ETag") != etag || notes(rec) != "index.md as rendered before" {
+		t.Errorf("again: %q, %q", resp.Header.Get("ETag"), notes(rec))
+	}
+
+	resp, body, _ = send(t, l, "GET", "/guide/setup")
+	if !strings.Contains(body, "<title>Setting up</title>") || !strings.Contains(body, `<h2 id="install">Install</h2>`) ||
+		!strings.Contains(body, `<a href="./">Back</a>`) || strings.Contains(body, "author: Ann") ||
+		resp.Header.Get("Link") != `</guide/setup.md>; rel="alternate"; type="text/markdown"` {
+		t.Errorf("a page with front matter:\n%s", body)
+	}
+	if _, body, _ = send(t, l, "GET", "/guide/"); !strings.Contains(body, `<a href="setup#install">setup</a>`) {
+		t.Errorf("a folder's index.md:\n%s", body)
+	}
+	if _, body, _ = send(t, l, "GET", "/notes/"); !strings.Contains(body, "<title>Notes</title>") ||
+		!strings.Contains(body, "<p>Notes, with no heading.</p>") {
+		t.Errorf("a folder's README.md, titled by its folder:\n%s", body)
+	}
+	if resp, body, _ := send(t, l, "GET", "/guide/?utm=x"); resp.StatusCode != 200 || !strings.Contains(body, "<title>Guide</title>") {
+		t.Errorf("a query: %d", resp.StatusCode)
+	}
+	if resp, body, _ := send(t, l, "GET", "/caf%C3%A9%20menu"); !strings.Contains(body, "<title>Café</title>") ||
+		resp.Header.Get("Link") != `</caf%C3%A9%20menu.md>; rel="alternate"; type="text/markdown"` {
+		t.Errorf("an encoded name: %d %v", resp.StatusCode, resp.Header)
+	}
+	// A folder without its slash: the files route sends it to the slash.
+	if resp, _, rec := send(t, l, "GET", "/guide"); resp.StatusCode != 301 || resp.Header.Get("Location") != "/guide/" ||
+		notes(rec) != "no guide.md in the folders the plugin line names with read, so the request went on" {
+		t.Errorf("/guide: %d %v %q", resp.StatusCode, resp.Header, notes(rec))
+	}
+	// The Markdown itself, other files and other methods are the route's.
+	if resp, body, rec := send(t, l, "GET", "/guide/setup.md"); resp.StatusCode != 200 ||
+		resp.Header.Get("Content-Type") != "text/markdown; charset=utf-8" || body != markdownSite["guide/setup.md"] || notes(rec) != "" {
+		t.Errorf("the .md file: %d %v %q", resp.StatusCode, resp.Header, notes(rec))
+	}
+	if resp, _, rec := send(t, l, "GET", "/style.css"); resp.StatusCode != 200 || notes(rec) != "" {
+		t.Errorf("style.css: %d %q", resp.StatusCode, notes(rec))
+	}
+	if resp, _, rec := send(t, l, "POST", "/guide/setup"); resp.StatusCode != 405 || rec.Plugins[0].Action != "went on" {
+		t.Errorf("POST: %d %+v", resp.StatusCode, rec.Plugins)
+	}
+	if resp, body, _ := send(t, l, "GET", "/api/x"); body != "api\n" {
+		t.Errorf("another route: %d %q", resp.StatusCode, body)
+	}
+	if resp, _, rec := send(t, l, "GET", "/missing"); resp.StatusCode != 404 || !strings.Contains(notes(rec), "no missing.md") {
+		t.Errorf("no file: %d %q", resp.StatusCode, notes(rec))
+	}
+	if resp, _, _ := send(t, l, "GET", "/.hidden"); resp.StatusCode != 404 {
+		t.Errorf("hidden name: %d", resp.StatusCode)
+	}
+	// HEAD gets the headers alone, with the page's length.
+	get, getBody, _ := send(t, l, "GET", "/guide/setup")
+	head, headBody, _ := send(t, l, "HEAD", "/guide/setup")
+	if head.StatusCode != 200 || headBody != "" || head.Header.Get("Content-Length") != strconv.Itoa(len(getBody)) ||
+		head.Header.Get("ETag") != get.Header.Get("ETag") {
+		t.Errorf("HEAD: %d %v (GET was %d bytes)", head.StatusCode, head.Header, len(getBody))
+	}
+
+	// A changed file is rendered again on the next request.
+	rewrite(t, l, "guide/setup.md", "# Setup, again\n\nNew words.\n")
+	resp, body, rec = send(t, l, "GET", "/guide/setup")
+	if !strings.Contains(body, "<title>Setup, again</title>") || !strings.Contains(notes(rec), "rendered guide/setup.md") ||
+		resp.Header.Get("ETag") == get.Header.Get("ETag") {
+		t.Errorf("after a change: %q\n%s", notes(rec), body)
+	}
+	m := l.s.Current().Plugins["p"].Metrics()
+	if m["rendered"] != 6 || m["pages"] != 10 || m["markdown"] != 0 {
+		t.Errorf("metrics %v", m)
+	}
+}
+
+func TestMarkdownConditionsAndNegotiation(t *testing.T) {
+	l := markdownServer(t, "", "", markdownSite)
+	resp, _, _ := send(t, l, "GET", "/guide/setup")
+	etag := resp.Header.Get("ETag")
+	// The ETag comes from the file's size and time of change, so every
+	// instance gives the same one, and none has to read the file for a 304.
+	for range 4 {
+		resp, body, rec := send(t, l, "GET", "/guide/setup", "If-None-Match", etag)
+		if resp.StatusCode != 304 || body != "" || resp.Header.Get("ETag") != etag ||
+			notes(rec) != "guide/setup.md hasn't changed since the client's copy (ETag)" {
+			t.Fatalf("If-None-Match: %d %v %q", resp.StatusCode, resp.Header, notes(rec))
+		}
+	}
+	// A client that asks for Markdown gets it as written, at the page's URL.
+	resp, body, rec := send(t, l, "GET", "/guide/setup", "Accept", "text/markdown, text/html;q=0.9")
+	mdTag := resp.Header.Get("ETag")
+	if resp.StatusCode != 200 || resp.Header.Get("Content-Type") != "text/markdown; charset=utf-8" ||
+		body != markdownSite["guide/setup.md"] || resp.Header.Get("Vary") != "Accept" || mdTag == etag ||
+		!strings.HasSuffix(notes(rec), "sent the Markdown, as the client asked for text/markdown") {
+		t.Errorf("Markdown: %d %v %q\n%s", resp.StatusCode, resp.Header, notes(rec), body)
+	}
+	if resp, _, _ := send(t, l, "GET", "/guide/setup", "Accept", "text/markdown", "If-None-Match", mdTag); resp.StatusCode != 304 {
+		t.Errorf("Markdown with its ETag: %d", resp.StatusCode)
+	}
+	browser := "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
+	if resp, _, _ := send(t, l, "GET", "/guide/setup", "Accept", browser, "If-None-Match", mdTag); resp.StatusCode != 200 ||
+		resp.Header.Get("Content-Type") != "text/html; charset=utf-8" {
+		t.Errorf("a browser with the Markdown's ETag: %d %v", resp.StatusCode, resp.Header)
+	}
+	// A change makes the old ETag stale.
+	rewrite(t, l, "guide/setup.md", "# Changed\n")
+	if resp, _, _ := send(t, l, "GET", "/guide/setup", "If-None-Match", etag); resp.StatusCode != 200 {
+		t.Errorf("a stale ETag: %d", resp.StatusCode)
+	}
+	if got := l.s.Current().Plugins["p"].Metrics()["markdown"]; got != 1 {
+		t.Errorf("metric markdown = %d", got)
+	}
+
+	// With accept off, everyone gets HTML, and nothing varies.
+	off := markdownServer(t, "accept off\n", "", markdownSite)
+	resp, _, _ = send(t, off, "GET", "/guide/setup", "Accept", "text/markdown")
+	if resp.Header.Get("Content-Type") != "text/html; charset=utf-8" || resp.Header.Get("Vary") != "" {
+		t.Errorf("accept off: %v", resp.Header)
+	}
+}
+
+func TestMarkdownTemplate(t *testing.T) {
+	files := maps.Clone(markdownSite)
+	files[".page.html"] = "<html lang=\"{{lang}}\"><title>{{title}} | Docs</title><nav>{{toc}}</nav><main>{{content}}</main><p>{{ author }}</p></html>\n"
+	l := markdownServer(t, "template .page.html\nlang fr\n", "  instances 1\n", files)
+	resp, body, _ := send(t, l, "GET", "/guide/setup")
+	if !strings.HasPrefix(body, `<html lang="fr"><title>Setting up | Docs</title><nav><ul>`) ||
+		!strings.Contains(body, `<li><a href="#install">Install</a></li>`) || !strings.HasSuffix(body, "<p>Ann</p></html>\n") {
+		t.Errorf("the template:\n%s", body)
+	}
+	etag := resp.Header.Get("ETag")
+	// The template is a hidden file, which the files route never serves.
+	if resp, _, _ := send(t, l, "GET", "/.page.html"); resp.StatusCode != 404 {
+		t.Errorf("the template file: %d", resp.StatusCode)
+	}
+	// A changed template counts at once, and changes the ETag.
+	rewrite(t, l, ".page.html", "<main class=\"v2\">{{content}}</main>\n")
+	resp, body, rec := send(t, l, "GET", "/guide/setup")
+	if !strings.HasPrefix(body, `<main class="v2"><h1 id="setup">`) || resp.Header.Get("ETag") == etag ||
+		!strings.Contains(notes(rec), "read the template .page.html again, as it changed") {
+		t.Errorf("a changed template: %q\n%s", notes(rec), body)
+	}
+	// A broken one is refused, and the one before stays.
+	rewrite(t, l, ".page.html", "<main>no place for the page</main>\n")
+	_, body, rec = send(t, l, "GET", "/guide/setup")
+	if !strings.HasPrefix(body, `<main class="v2">`) ||
+		!strings.Contains(notes(rec), "the template .page.html has no {{content}}, the place the page goes, so the one before stays") {
+		t.Errorf("a broken template: %q\n%s", notes(rec), body)
+	}
+	if _, _, rec = send(t, l, "GET", "/guide/setup"); strings.Contains(notes(rec), "template") {
+		t.Errorf("the broken template was noted twice: %q", notes(rec))
+	}
+}
+
+func TestMarkdownBigAndOddPages(t *testing.T) {
+	var b strings.Builder
+	b.WriteString("# A long page\n\n")
+	for i := 0; b.Len() < 200<<10; i++ {
+		fmt.Fprintf(&b, "## Part %d\n\nSome *words*, [a link](part.md), `code` and more words to fill a line.\n\n- one\n- two\n\n", i)
+	}
+	b.WriteString("## The end\n")
+	l := markdownServer(t, "largest 512KB\n", "  instances 1\n", map[string]string{
+		"long.md": b.String(),
+		"huge.md": strings.Repeat("A line of text.\n", 40<<10),
+		// Small, and slow: thousands of quotes inside quotes take longer to
+		// render than a request's call may run, so pages render in timer calls.
+		"nested.md": strings.Repeat(">", 5000) + " deep\n",
+	})
+	resp, body, rec := send(t, l, "GET", "/long")
+	if resp.StatusCode != 200 || !strings.Contains(body, `<h2 id="the-end">The end</h2>`) || !strings.HasSuffix(body, "</html>\n") ||
+		!strings.HasPrefix(notes(rec), "rendered long.md (201 KB) in ") {
+		t.Fatalf("a long page: %d %q (%d bytes)", resp.StatusCode, notes(rec), len(body))
+	}
+	if _, again, rec := send(t, l, "GET", "/long"); again != body || notes(rec) != "long.md as rendered before" {
+		t.Errorf("a long page again: %q", notes(rec))
+	}
+	if resp, body, rec := send(t, l, "GET", "/nested"); resp.StatusCode != 200 || strings.Count(body, "<blockquote>") != 5000 {
+		t.Errorf("deep nesting: %d %q", resp.StatusCode, notes(rec))
+	}
+	// Past largest, a page isn't rendered at all.
+	resp, body, rec = send(t, l, "GET", "/huge")
+	if resp.StatusCode != 500 || body != "This page is too large to show.\n" ||
+		notes(rec) != "huge.md is 640 KB, over largest 512 KB, so it wasn't rendered: raise largest (and memory on the plugin line)" {
+		t.Errorf("a huge page: %d %q %q", resp.StatusCode, body, notes(rec))
+	}
+	if working, all := l.s.Current().Plugins["p"].Health(); working != all {
+		t.Errorf("%d of %d instances working", working, all)
+	}
+}
+
+// A file whose rendering takes its instance down (here, out of memory) is
+// tried again only once it changes, so it can't keep the plugin down.
+func TestMarkdownStoppedRenderNotRetried(t *testing.T) {
+	l := markdownServer(t, "", "  instances 1\n  memory 8MB\n", map[string]string{
+		"deep.md": strings.Repeat(">", 300<<10) + " deep\n",
+		"ok.md":   "# Fine\n",
+	})
+	if resp, _, rec := send(t, l, "GET", "/deep"); resp.StatusCode != 502 || !strings.Contains(rec.Plugins[0].Error, "crashed") {
+		t.Fatalf("the first try: %d %+v", resp.StatusCode, rec.Plugins)
+	}
+	time.Sleep(3200 * time.Millisecond)
+	resp, body, rec := send(t, l, "GET", "/deep")
+	if resp.StatusCode != 500 || body != "This page can't be shown.\n" ||
+		notes(rec) != "rendering deep.md stopped part way before, out of time or memory, so it isn't tried again until the file changes" {
+		t.Errorf("after it stopped: %d %q %q %+v", resp.StatusCode, body, notes(rec), rec.Plugins)
+	}
+	if resp, _, _ := send(t, l, "GET", "/ok"); resp.StatusCode != 200 {
+		t.Errorf("another page: %d", resp.StatusCode)
+	}
+	rewrite(t, l, "deep.md", "> not so deep\n")
+	if resp, body, _ := send(t, l, "GET", "/deep"); resp.StatusCode != 200 || !strings.Contains(body, "not so deep") {
+		t.Errorf("once it changed: %d", resp.StatusCode)
+	}
+}
+
+func TestMarkdownConfigRefused(t *testing.T) {
+	configRefused(t, "markdown", "html maybe\n", "line 1: html takes on or off")
+	configRefused(t, "markdown", "lang en\ntemplate page.html\n", "line 2: can't read page.html: it isn't in a folder the plugin line names with read")
 }

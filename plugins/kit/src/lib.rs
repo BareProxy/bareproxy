@@ -115,6 +115,33 @@ pub fn seconds(line: &Line, w: &str) -> Result<u64, String> {
     }
 }
 
+/// A size, as BareProxy's own config writes them: 4096, 512KB, 1MB or 2GB
+/// (B, KB, MB and GB, in either case, 1 KB being 1,024 bytes).
+pub fn size(line: &Line, w: &str) -> Result<u64, String> {
+    let u = w.to_ascii_uppercase();
+    let (num, mul) = [("GB", 30), ("MB", 20), ("KB", 10), ("B", 0)]
+        .iter()
+        .find_map(|(suf, shift)| u.strip_suffix(suf).map(|n| (n.to_string(), 1u64 << shift)))
+        .unwrap_or((u.clone(), 1));
+    match num.parse::<u64>() {
+        Ok(n) if !num.is_empty() && n.checked_mul(mul).is_some() => Ok(n * mul),
+        _ => Err(line.err(format!(
+            "{w} isn't a size; write a number with B, KB, MB or GB, such as 512KB"
+        ))),
+    }
+}
+
+/// A size for people: 900 bytes, 12 KB, 3 MB (rounded up, as a file
+/// manager shows sizes).
+pub fn bytes(n: u64) -> String {
+    match n {
+        _ if n < 1024 => format!("{n} bytes"),
+        _ if n < 1 << 20 => format!("{} KB", n.div_ceil(1024)),
+        _ if n < 1 << 30 => format!("{} MB", n.div_ceil(1 << 20)),
+        _ => format!("{} GB", n.div_ceil(1 << 30)),
+    }
+}
+
 /// An address or a range of addresses: 192.0.2.7, 192.0.2.0/24, 2001:db8::/32.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Net {
@@ -417,6 +444,21 @@ pub fn read_file(file: &str) -> Result<Vec<u8>, String> {
     }
 }
 
+/// The size of a regular file inside a folder the plugin line names with
+/// read, and when it last changed in Unix nanoseconds, without reading it
+/// (bareproxy_stat_file, BareProxy 0.14.0 and later). None when there's no
+/// such file.
+pub fn stat_file(file: &str) -> Option<(u64, u64)> {
+    let b =
+        proxy_wasm::hostcalls::call_foreign_function("bareproxy_stat_file", Some(file.as_bytes()))
+            .ok()??;
+    let at = |i: usize| {
+        b.get(i..i + 8)
+            .map(|x| u64::from_le_bytes(x.try_into().unwrap()))
+    };
+    Some((at(0)?, at(8)?))
+}
+
 /// A value from the plugin's store (bareproxy_store_get), or None when the
 /// key isn't there or the plugin line has no store.
 pub fn store_get(key: &str) -> Option<Vec<u8>> {
@@ -444,6 +486,26 @@ pub fn property(ctx: &dyn proxy_wasm::traits::Context, path: &[&str]) -> String 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn sizes() {
+        let l = Line {
+            no: 3,
+            words: vec!["largest".into(), "x".into()],
+        };
+        assert_eq!(size(&l, "4096"), Ok(4096));
+        assert_eq!(size(&l, "512KB"), Ok(512 << 10));
+        assert_eq!(size(&l, "1mb"), Ok(1 << 20));
+        assert_eq!(size(&l, "2GB"), Ok(2 << 30));
+        assert_eq!(size(&l, "10B"), Ok(10));
+        for bad in ["", "MB", "1.5MB", "-1KB", "1TB", "99999999999GB"] {
+            assert!(size(&l, bad).unwrap_err().starts_with("line 3: "), "{bad}");
+        }
+        assert_eq!(bytes(900), "900 bytes");
+        assert_eq!(bytes(12 * 1024 - 5), "12 KB");
+        assert_eq!(bytes(3 << 20), "3 MB");
+        assert_eq!(bytes((1 << 20) + 1), "2 MB");
+    }
 
     #[test]
     fn parses_lines_and_blocks() {

@@ -1,0 +1,16 @@
+[package]
+name = "markdown"
+description = "BareProxy plugin: Markdown files served as web pages straight from a folder, with a template and no build step"
+publish = false
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+proxy-wasm.workspace = true
+kit = { path = "../kit" }
+pulldown-cmark.workspace = true

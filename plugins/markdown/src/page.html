@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="{{lang}}">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{title}}</title>
+<meta name="description" content="{{description}}">
+<link rel="alternate" type="text/markdown" href="{{source}}">
+<style>
+:root{color-scheme:light dark;--fg:#1f2328;--muted:#59636e;--bg:#fff;--soft:#f6f8fa;--line:#d1d9e0;--link:#0969da}
+@media (prefers-color-scheme:dark){:root{--fg:#e6edf3;--muted:#9198a1;--bg:#0d1117;--soft:#151b23;--line:#3d444d;--link:#4493f8}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--fg);font:16px/1.65 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;overflow-wrap:break-word}
+main{max-width:46rem;margin:0 auto;padding:2rem 1rem 4rem}
+h1,h2,h3,h4,h5,h6{line-height:1.25;margin:2rem 0 1rem}
+h1{font-size:2rem;margin-top:0}
+h2{font-size:1.5rem;padding-bottom:.3rem;border-bottom:1px solid var(--line)}
+h3{font-size:1.25rem}
+a{color:var(--link)}
+img{max-width:100%;height:auto}
+code,pre,kbd{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:.875em}
+code{background:var(--soft);padding:.15em .35em;border-radius:4px}
+pre{background:var(--soft);padding:1rem;border-radius:6px;overflow-x:auto;line-height:1.5}
+pre code{background:none;padding:0;font-size:1em}
+blockquote{margin:1rem 0;padding:0 1rem;color:var(--muted);border-left:4px solid var(--line)}
+table{border-collapse:collapse;display:block;max-width:100%;overflow-x:auto;margin:1rem 0}
+th,td{border:1px solid var(--line);padding:.4rem .75rem;text-align:left}
+th{background:var(--soft)}
+hr{border:0;border-top:1px solid var(--line);margin:2rem 0}
+li:has(>input[type=checkbox]){list-style:none}
+li>input[type=checkbox]{margin:0 .4em 0 -1.3em}
+dt{font-weight:600}
+dd{margin:0 0 1rem 1.5rem}
+[class^=markdown-alert]{color:var(--fg);--a:#0969da;border-left-color:var(--a)}
+[class^=markdown-alert]::before{display:block;margin-top:.5rem;font-weight:600;color:var(--a)}
+.markdown-alert-note::before{content:"Note"}
+.markdown-alert-tip{--a:#1a7f37}.markdown-alert-tip::before{content:"Tip"}
+.markdown-alert-important{--a:#8250df}.markdown-alert-important::before{content:"Important"}
+.markdown-alert-warning{--a:#9a6700}.markdown-alert-warning::before{content:"Warning"}
+.markdown-alert-caution{--a:#cf222e}.markdown-alert-caution::before{content:"Caution"}
+.footnote-definition{font-size:.9em;color:var(--muted);margin-top:.5rem}
+.footnote-definition p{display:inline}
+</style>
+</head>
+<body>
+<main>
+{{content}}
+</main>
+</body>
+</html>

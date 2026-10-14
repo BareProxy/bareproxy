@@ -148,6 +148,12 @@ func testRequestHeadersAndNotes(t *testing.T) {
 		}
 		s.Done(true)
 	}
+	// Shared data counts a key once, however often its value is written.
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if want := len("requests") + len("4"); p.dataSize != want {
+		t.Errorf("shared data size %d after 4 writes of one key, want %d", p.dataSize, want)
+	}
 }
 
 func TestLocalResponse(t *testing.T) { both(t, testLocalResponse) }
@@ -223,9 +229,13 @@ func testStoreAndRead(t *testing.T) {
 	if err != nil || h["x-stored"] != "/a/b" || h["x-read"] != "hi there 0" {
 		t.Errorf("headers %v, %v", h, err)
 	}
-	// With no store and no folder, both say not found.
+	fi, _ := os.Stat(filepath.Join(dir, "hello.txt"))
+	if want := fmt.Sprintf("9 %d 0", fi.ModTime().UnixNano()); h["x-stat"] != want {
+		t.Errorf("stat: %q, want %q", h["x-stat"], want)
+	}
+	// With no store and no folder, all three say not found.
 	p = start(t, "store read", Settings{})
-	if _, h, _ = request(t, p); h["x-stored"] != "" || h["x-read"] != " 1" {
+	if _, h, _ = request(t, p); h["x-stored"] != "" || h["x-read"] != " 1" || h["x-stat"] != "1" {
 		t.Errorf("without store and folder: %v", h)
 	}
 }

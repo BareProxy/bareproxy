@@ -2,10 +2,10 @@
 # WebAssembly (wasm32-unknown-unknown). build.sh builds them all into dist/.
 [workspace]
 resolver = "3"
-members = ["testplugin", "kit", "maintenance", "cors", "headers", "redirects", "geo", "signing", "splits", "limits", "previews", "crawlers", "challenges"]
+members = ["testplugin", "kit", "maintenance", "cors", "headers", "redirects", "geo", "signing", "splits", "limits", "previews", "crawlers", "challenges", "markdown"]
 
 [workspace.package]
-version = "0.13.0"
+version = "0.14.0"
 edition = "2024"
 license = "Apache-2.0"
 repository = "https://github.com/BareProxy/bareproxy"
@@ -15,6 +15,8 @@ proxy-wasm = "=0.2.5"
 log = "0.4"
 hmac = "0.12"
 sha2 = { version = "0.10", default-features = false }
+# CommonMark with tables, footnotes and task lists; only its HTML writer.
+pulldown-cmark = { version = "0.13.4", default-features = false, features = ["html"] }
 
 # Small, fast modules: one codegen unit, link-time optimization, and an
 # abort on panic (which a plugin host sees as a trap).
