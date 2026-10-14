@@ -1265,20 +1265,29 @@ func TestCrawlersLimitAndReport(t *testing.T) {
 	send(t, l, "GET", "/", "User-Agent", uaGPTBot, "X-Forwarded-For", "192.0.2.1")
 	send(t, l, "GET", "/", "User-Agent", uaClaudeBot, "X-Forwarded-For", "160.79.104.1")
 
-	// Both instances' reads come together in the report within 5 seconds.
-	time.Sleep(5500 * time.Millisecond)
+	// Both instances' reads come together in the report: each shares them
+	// every 5 seconds, on its timer, so on a busy machine a little later.
+	wants := []string{
+		"BareProxy AI crawler report for example.com, ",
+		"GPTBot\ttraining\t3\t0\t0\t1\t\t0\t0\t0\t0\n",
+		"ClaudeBot\ttraining\t0\t0\t1\t0\t\t0\t0\t0\t0\n",
+		"PerplexityBot\tsearch\t3\t1\t0\t0\t\t0\t0\t0\t0\n",
+		"GPTBot\t2 /blog/, 1 /\n",
+		"PerplexityBot\t3 /docs/\n",
+		"No list, so their claims can't be checked: Google-GeminiNotebook, MistralAI-Training, Meta-ExternalAgent,",
+		"OpenAI's list (OAI-SearchBot): not loaded yet; last try: openai.com:443 isn't on the plugin's allow-http line.",
+	}
+	complete := func(body string) bool {
+		return !slices.ContainsFunc(wants, func(w string) bool { return !strings.Contains(body, w) })
+	}
+	for deadline := time.Now().Add(15 * time.Second); ; time.Sleep(250 * time.Millisecond) {
+		if _, body, _ := send(t, l, "GET", "/.crawlers"); complete(body) || time.Now().After(deadline) {
+			break
+		}
+	}
 	for range 2 {
 		_, body, rec := send(t, l, "GET", "/.crawlers")
-		for _, want := range []string{
-			"BareProxy AI crawler report for example.com, ",
-			"GPTBot\ttraining\t3\t0\t0\t1\t\t0\t0\t0\t0\n",
-			"ClaudeBot\ttraining\t0\t0\t1\t0\t\t0\t0\t0\t0\n",
-			"PerplexityBot\tsearch\t3\t1\t0\t0\t\t0\t0\t0\t0\n",
-			"GPTBot\t2 /blog/, 1 /\n",
-			"PerplexityBot\t3 /docs/\n",
-			"No list, so their claims can't be checked: Google-GeminiNotebook, MistralAI-Training, Meta-ExternalAgent,",
-			"OpenAI's list (OAI-SearchBot): not loaded yet; last try: openai.com:443 isn't on the plugin's allow-http line.",
-		} {
+		for _, want := range wants {
 			if !strings.Contains(body, want) {
 				t.Errorf("missing %q in the report:\n%s", want, body)
 			}
