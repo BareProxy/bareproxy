@@ -103,13 +103,13 @@ For a bot's request, the plugin looks at the longest `path` section the path fal
 
 ## How a claim is checked
 
-OpenAI, Anthropic, Perplexity, Google, Common Crawl, Mistral AI and Amazon publish the addresses their bots crawl from. The plugin fetches each list a second after it starts, through `proxy_http_call`, and again every `refresh`. One instance fetches and the others take its copy. With a `store`, each list is saved; after a restart the saved copy is used at once, and the list is fetched again when its refresh time comes.
+OpenAI, Anthropic, Perplexity, Google, Common Crawl, Mistral AI and Amazon publish lists of the addresses their bots crawl from. The plugin fetches each list a second after it starts, through `proxy_http_call`, and again every `refresh`. One instance fetches and the others take its copy. With a `store`, each list is saved; after a restart the saved copy is used at once, and the list is fetched again when its refresh time comes.
 
 The lists are JSON with `ipv4Prefix` and `ipv6Prefix` entries. Amazon shows the same JSON inside a web page, and the plugin reads both. A list is looked up in sorted order, so Amazon's thousand-odd single addresses cost a binary search.
 
 A list that can't be fetched, or comes back with no addresses in it, is refused. The copy before it stays, BareProxy's log says why once, and the report shows the last try. A failed fetch is tried again after 10 minutes, then 20, doubling up to the refresh time. A list on a host the `allow-http` line doesn't name waits for the refresh time, since trying sooner can't help. A redirect is followed on the list's own host.
 
-Until a bot's list has loaded once, its claims can't be checked. Neither can the claims of bots whose operators publish nothing to fetch: Meta names its network but gives no list, and ByteDance says nothing at all. Those requests are unverified. With `unverified bot`, the default, they follow the bot's rules; with `unverified fake`, only bots whose address checked out get their rules.
+Until a bot's list has loaded once, its claims can't be checked. Neither can the claims of bots whose operators publish nothing to fetch: Meta names its network but gives no list, and ByteDance gives nothing either. Those requests are unverified. With `unverified bot`, the default, they follow the bot's rules; with `unverified fake`, only bots whose address checked out get their rules.
 
 ## Lists of your own
 
