@@ -28,7 +28,7 @@ import (
 )
 
 // Version is this build's version.
-const Version = "0.14.0"
+const Version = "0.15.0"
 
 // Runtime is one running config version with its live pools.
 type Runtime struct {
@@ -336,17 +336,19 @@ func (w *respWriter) Unwrap() http.ResponseWriter { return w.ResponseWriter }
 
 func (w *respWriter) Flush() {
 	if w.pl != nil {
-		switch {
-		case w.pl.replaced:
+		if w.pl.replaced {
 			return
-		case !w.pl.seen:
+		}
+		if !w.pl.seen {
 			w.WriteHeader(http.StatusOK)
 		}
-		if w.pl.buffering { // a response that flushes is streaming: it goes out as it comes
-			w.pl.bodyNote("the response streams (it flushed), so its body wasn't handed over")
-			if w.pl.release(w) != nil {
-				return
-			}
+		// A plugin holds the body to see it whole, so a flush waits: the
+		// body goes out at its end, or at the body limit. httputil's proxy
+		// flushes after every write when it doesn't know a response's
+		// length (a chunked one, or one it decompressed), which isn't
+		// streaming; a stream of events is never held.
+		if w.pl.buffering {
+			return
 		}
 	}
 	http.NewResponseController(w.ResponseWriter).Flush()

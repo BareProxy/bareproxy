@@ -1,6 +1,6 @@
 # BareProxy Plugins: Design Note
 
-Status: accepted on 8 October 2026; the plugin host is built in 0.2.0, plugins in Rust are set up in 0.3.0, the first two plugins ship in 0.4.0, the third in 0.5.0, the fourth in 0.6.0, the fifth in 0.7.0, the sixth in 0.8.0, the seventh in 0.9.0, the eighth in 0.10.0, the ninth in 0.11.0, the tenth in 0.12.0, the eleventh in 0.13.0, and the twelfth in 0.14.0; [plugin-program.md](plugin-program.md) lists them and their order. This note now describes what was built. Where the build differs from the first version of the note, it says so.
+Status: accepted on 8 October 2026; the plugin host is built in 0.2.0, plugins in Rust are set up in 0.3.0, the first two plugins ship in 0.4.0, the third in 0.5.0, the fourth in 0.6.0, the fifth in 0.7.0, the sixth in 0.8.0, the seventh in 0.9.0, the eighth in 0.10.0, the ninth in 0.11.0, the tenth in 0.12.0, the eleventh in 0.13.0, the twelfth in 0.14.0, and the thirteenth in 0.15.0; [plugin-program.md](plugin-program.md) lists them and their order. This note now describes what was built. Where the build differs from the first version of the note, it says so.
 
 ## The decision
 
@@ -36,7 +36,7 @@ A site's plugins run in the order its `use` lines name them, after the site is f
 
 A plugin can't change which site a request belongs to, or how the core matches rules. It can change the request before routing, and the core routes what it gets, by the same rules `explain` shows. A changed path is noted in the record.
 
-Whole bodies only: a plugin gets the body in one piece, up to its body limit (8 MB by default). A body over the limit, a partial (206) body, a compressed body, a stream of events and a response that flushes while it's sent go out as they are, with a note in the record. When a plugin changes a response body, Content-Length is set again and ETag dropped.
+Whole bodies only: a plugin gets the body in one piece, up to its body limit (8 MB by default). A body over the limit, a partial (206) body, a compressed body and a stream of events go out as they are, with a note in the record. Until 0.15.0 a response that flushed while it was sent did too; but Go's proxy flushes after every write when it doesn't know a response's length (a chunked one, or one it decompressed), which isn't streaming, so such a body is now held to its end. When a plugin changes a response body, Content-Length is set again and ETag dropped.
 
 ## Host functions
 

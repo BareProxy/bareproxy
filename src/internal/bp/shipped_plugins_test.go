@@ -4,6 +4,7 @@
 package bp
 
 import (
+	"compress/gzip"
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/base64"
@@ -1847,4 +1848,274 @@ func TestMarkdownStoppedRenderNotRetried(t *testing.T) {
 func TestMarkdownConfigRefused(t *testing.T) {
 	configRefused(t, "markdown", "html maybe\n", "line 1: html takes on or off")
 	configRefused(t, "markdown", "lang en\ntemplate page.html\n", "line 2: can't read page.html: it isn't in a folder the plugin line names with read")
+}
+
+const consentPage = `<!doctype html><html><head><title>Shop</title>
+<script async src="https://www.googletagmanager.com/gtag/js?id=G-1"></script>
+<script>window.dataLayer=[];function gtag(){dataLayer.push(arguments)}gtag('config','G-1')</script>
+<script src="https://connect.facebook.net/en_US/fbevents.js"></script>
+<script src="/app.js"></script>
+</head><body><h1>Shop</h1><p>Welcome.</p></body></html>
+`
+
+// consentServer starts BareProxy with the consent plugin in front of an
+// app that sets a session cookie, an analytics cookie and a marketing
+// cookie on each page, and says in headers what it was sent: X-Saw-Cookie,
+// X-Saw-Consent and X-Saw-Encoding. It gzips a page when it may.
+func consentServer(t *testing.T, conf string) *liveServer {
+	t.Helper()
+	app := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		h := w.Header()
+		h.Set("X-Saw-Cookie", r.Header.Get("Cookie"))
+		h.Set("X-Saw-Consent", r.Header.Get("X-Consent"))
+		h.Set("X-Saw-Encoding", r.Header.Get("Accept-Encoding"))
+		h.Set("X-Saw-Conditional", r.Header.Get("If-None-Match")+r.Header.Get("If-Modified-Since"))
+		h.Add("Set-Cookie", "session=abc; Path=/; HttpOnly")
+		h.Add("Set-Cookie", "_ga=GA1.1.42; Path=/; Max-Age=63072000")
+		h.Add("Set-Cookie", "_fbp=fb.1.42; Path=/; Domain=example.com")
+		if strings.HasPrefix(r.URL.Path, "/api/") {
+			h.Set("Content-Type", "application/json")
+			fmt.Fprint(w, `{"ok":true}`)
+			return
+		}
+		h.Set("Content-Type", "text/html; charset=utf-8")
+		h.Set("Cache-Control", "public, max-age=60")
+		h.Set("ETag", `"v1"`)
+		h.Set("Last-Modified", "Wed, 14 Oct 2026 10:00:00 GMT")
+		if strings.Contains(r.Header.Get("Accept-Encoding"), "gzip") {
+			h.Set("Content-Encoding", "gzip")
+			gz := gzip.NewWriter(w)
+			gz.Write([]byte(consentPage))
+			gz.Close()
+			return
+		}
+		fmt.Fprint(w, consentPage)
+	}))
+	t.Cleanup(app.Close)
+	l := &liveServer{dir: t.TempDir(), port: freePort(t)}
+	l.conf = filepath.Join(l.dir, "bareproxy.conf")
+	writeFile(t, filepath.Join(l.dir, "p.wasm"), string(shipped(t, "consent")))
+	writeFile(t, filepath.Join(l.dir, "p.conf"), conf)
+	writeFile(t, l.conf, fmt.Sprintf(`global
+  admin off
+  trace-log off
+  state state
+
+plugin p p.wasm
+  config p.conf
+  body response
+
+site http://example.com:%d
+  use p
+  route /* -> app
+
+pool app
+  backend %s
+`, l.port, strings.TrimPrefix(app.URL, "http://")))
+	s, err := Start(l.conf)
+	if err != nil {
+		t.Fatal(err)
+	}
+	l.s = s
+	t.Cleanup(s.Stop)
+	return l
+}
+
+const uaChrome = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0 Safari/537.36"
+
+// browsing is what a browser sends for a page.
+func browsing(more ...string) []string {
+	return append([]string{"User-Agent", uaChrome, "Accept", "text/html,application/xhtml+xml,*/*;q=0.8",
+		"Sec-Fetch-Dest", "document", "Sec-Fetch-Mode", "navigate", "Accept-Encoding", "gzip, br"}, more...)
+}
+
+func TestConsentBannerAndHeldCookies(t *testing.T) {
+	l := consentServer(t, "privacy /privacy/\n")
+	// The browser's kept copy may be from before a choice, so a page that
+	// may change comes whole, and goes out with nothing to check it by.
+	resp, body, rec := send(t, l, "GET", "/shoes?color=red", browsing("If-None-Match", `"v1"`, "If-Modified-Since", "Wed, 14 Oct 2026 10:00:00 GMT")...)
+	cookies := resp.Header.Values("Set-Cookie")
+	if resp.StatusCode != 200 || !strings.Contains(body, `<div id="bp-consent" role="region"`) ||
+		!strings.Contains(body, `href="/.bareproxy-consent?accept=all&amp;r=/shoes%3Fcolor%3Dred"`) ||
+		!strings.HasSuffix(body, "</div>\n</body></html>\n") {
+		t.Fatalf("no banner: %d %v\n%s", resp.StatusCode, resp.Header, body)
+	}
+	if !strings.Contains(body, `<script async src="https://www.googletagmanager.com/gtag/js?id=G-1" type="text/plain" data-consent="analytics"></script>`) ||
+		!strings.Contains(body, `<script>window.dataLayer=[];function gtag()`) || // it loads nothing itself
+		!strings.Contains(body, `<script src="https://connect.facebook.net/en_US/fbevents.js" type="text/plain" data-consent="marketing"></script>`) ||
+		!strings.Contains(body, `<script src="/app.js"></script>`) {
+		t.Errorf("scripts:\n%s", body)
+	}
+	if !slices.Equal(cookies, []string{"session=abc; Path=/; HttpOnly"}) {
+		t.Errorf("cookies that went out: %q", cookies)
+	}
+	if resp.Header.Get("Vary") != "Cookie" || resp.Header.Get("Cache-Control") != "private, no-cache" ||
+		resp.Header.Get("Content-Encoding") != "" || resp.Header.Get("X-Saw-Encoding") == "gzip, br" ||
+		resp.Header.Get("X-Saw-Consent") != "unknown" || resp.Header.Get("X-Saw-Conditional") != "" ||
+		resp.Header.Get("ETag") != "" || resp.Header.Get("Last-Modified") != "" {
+		t.Errorf("headers: %v", resp.Header)
+	}
+	if n := notes(rec); !strings.Contains(n, "held back _ga (analytics) and _fbp (marketing) until consent") ||
+		!strings.Contains(n, "showed the banner: no choice yet; kept 2 scripts out until consent: googletagmanager.com (analytics), connect.facebook.net (marketing)") {
+		t.Errorf("notes: %q", n)
+	}
+	// Not a page for a browser: no banner and no change, but the cookies
+	// still wait, and the body streams as it came (compressed, here).
+	for _, c := range []struct {
+		name string
+		hdr  []string
+	}{
+		{"an API call", []string{"User-Agent", uaChrome, "Accept", "application/json", "Sec-Fetch-Dest", "empty", "Sec-Fetch-Mode", "cors", "Accept-Encoding", "gzip"}},
+		{"Googlebot", []string{"User-Agent", "Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)", "Accept", "text/html", "Accept-Encoding", "gzip"}},
+		{"a page in an iframe", browsing("Sec-Fetch-Dest", "iframe")},
+	} {
+		path := "/page"
+		if c.name == "an API call" {
+			path = "/api/data"
+		}
+		resp, body, _ := send(t, l, "GET", path, c.hdr...)
+		if strings.Contains(body, "bp-consent") || !slices.Equal(resp.Header.Values("Set-Cookie"), []string{"session=abc; Path=/; HttpOnly"}) ||
+			resp.Header.Get("X-Saw-Encoding") != "gzip" && resp.Header.Get("X-Saw-Encoding") != "gzip, br" {
+			t.Errorf("%s: %v", c.name, resp.Header)
+		}
+	}
+	m := l.s.Current().Plugins["p"].Metrics()
+	if m["banners"] != 1 || m["held"] != 8 || m["blocked"] != 2 {
+		t.Errorf("metrics %v", m)
+	}
+}
+
+// consentCookie is the consent cookie a choice of categories makes.
+func consentCookie(t *testing.T, l *liveServer, query string) string {
+	t.Helper()
+	resp, _, _ := send(t, l, "GET", "/.bareproxy-consent?"+query, "Sec-Fetch-Site", "same-origin")
+	for _, c := range resp.Header.Values("Set-Cookie") {
+		if strings.HasPrefix(c, "bp_consent=") {
+			return strings.SplitN(c, ";", 2)[0]
+		}
+	}
+	t.Fatalf("no consent cookie for %s: %d %v", query, resp.StatusCode, resp.Header)
+	return ""
+}
+
+func TestConsentAcceptWithdrawAndRefuse(t *testing.T) {
+	l := consentServer(t, "")
+	resp, _, rec := send(t, l, "GET", "/.bareproxy-consent?accept=all&r=%2Fshoes%3Fcolor%3Dred", "Sec-Fetch-Site", "same-origin")
+	sets := resp.Header.Values("Set-Cookie")
+	if resp.StatusCode != 303 || resp.Header.Get("Location") != "/shoes?color=red" || len(sets) != 1 ||
+		!regexp.MustCompile(`^bp_consent=[0-9a-f]{6}\.analytics\+marketing; Path=/; Max-Age=15552000; SameSite=Lax$`).MatchString(sets[0]) ||
+		notes(rec) != "consent: accepted analytics and marketing" {
+		t.Fatalf("accept: %d %v %q", resp.StatusCode, resp.Header, notes(rec))
+	}
+	all := strings.SplitN(sets[0], ";", 2)[0]
+	// With consent, the page and its cookies go out as the app made them.
+	resp, body, rec := send(t, l, "GET", "/shoes", browsing("Cookie", all+"; _ga=GA1.1.42; _fbp=fb.1", "If-None-Match", `"v1"`)...)
+	if strings.Contains(body, "bp-consent") || len(resp.Header.Values("Set-Cookie")) != 3 ||
+		resp.Header.Get("X-Saw-Conditional") != `"v1"` || resp.Header.Get("ETag") != `"v1"` ||
+		resp.Header.Get("X-Saw-Consent") != "analytics,marketing" || resp.Header.Get("X-Saw-Encoding") != "gzip, br" ||
+		resp.Header.Get("X-Saw-Cookie") != all+"; _ga=GA1.1.42; _fbp=fb.1" || resp.Header.Get("Cache-Control") != "public, max-age=60" ||
+		resp.Header.Get("Vary") != "Cookie" || notes(rec) != "" {
+		t.Errorf("with consent: %v %q", resp.Header, notes(rec))
+	}
+	// Taking marketing back deletes its cookies in the browser.
+	resp, _, rec = send(t, l, "GET", "/.bareproxy-consent?save=1&set=analytics&r=%2F", "Sec-Fetch-Site", "same-origin",
+		"Cookie", all+"; _ga=GA1.1.42; _fbp=fb.1")
+	sets = resp.Header.Values("Set-Cookie")
+	if resp.StatusCode != 303 || len(sets) != 3 || !strings.HasSuffix(sets[0], ".analytics; Path=/; Max-Age=15552000; SameSite=Lax") ||
+		sets[1] != "_fbp=; Path=/; Max-Age=0" || sets[2] != "_fbp=; Path=/; Domain=example.com; Max-Age=0" ||
+		notes(rec) != "consent: accepted analytics; withdrew marketing" {
+		t.Errorf("withdraw: %d %q %q", resp.StatusCode, sets, notes(rec))
+	}
+	some := strings.SplitN(sets[0], ";", 2)[0]
+	resp, body, rec = send(t, l, "GET", "/shoes", browsing("Cookie", some+"; _ga=GA1.1.42; _fbp=fb.1")...)
+	if strings.Contains(body, "bp-consent") || !strings.Contains(body, `<script async src="https://www.googletagmanager.com/gtag/js?id=G-1"></script>`) ||
+		!strings.Contains(body, `fbevents.js" type="text/plain" data-consent="marketing">`) ||
+		resp.Header.Get("X-Saw-Cookie") != some+"; _ga=GA1.1.42" || resp.Header.Get("X-Saw-Consent") != "analytics" ||
+		!slices.Equal(resp.Header.Values("Set-Cookie"), []string{"session=abc; Path=/; HttpOnly", "_ga=GA1.1.42; Path=/; Max-Age=63072000"}) {
+		t.Errorf("analytics only: %v %q\n%s", resp.Header, notes(rec), body)
+	}
+	if n := notes(rec); !strings.Contains(n, "kept _fbp from the app: no consent") || !strings.Contains(n, "kept 1 script out until consent: connect.facebook.net (marketing)") {
+		t.Errorf("notes: %q", n)
+	}
+	// Refusing counts from anywhere; accepting only from the site's pages.
+	resp, _, _ = send(t, l, "GET", "/.bareproxy-consent?reject=all", "Sec-Fetch-Site", "cross-site")
+	if resp.StatusCode != 303 || !strings.Contains(resp.Header.Get("Set-Cookie"), ".none; ") {
+		t.Errorf("reject from another site: %d %v", resp.StatusCode, resp.Header)
+	}
+	resp, body, rec = send(t, l, "GET", "/.bareproxy-consent?accept=all", "Sec-Fetch-Site", "cross-site")
+	if resp.StatusCode != 200 || resp.Header.Get("Set-Cookie") != "" || !strings.Contains(body, "<h1>Cookie settings</h1>") ||
+		notes(rec) != "an accept from another site isn't counted, so the settings page asks instead" {
+		t.Errorf("accept from another site: %d %v %q", resp.StatusCode, resp.Header, notes(rec))
+	}
+	if resp, _, _ := send(t, l, "GET", "/.bareproxy-consent?accept=all", "Referer", "https://evil.example/"); resp.StatusCode != 200 {
+		t.Errorf("accept with another site's Referer: %d", resp.StatusCode)
+	}
+	if resp, _, _ := send(t, l, "GET", "/.bareproxy-consent?accept=all", "Referer", fmt.Sprintf("http://example.com:%d/page", l.port)); resp.StatusCode != 303 {
+		t.Errorf("accept with the site's Referer: %d", resp.StatusCode)
+	}
+	m := l.s.Current().Plugins["p"].Metrics()
+	if m["accepted"] != 3 || m["declined"] != 1 || m["withdrawn"] != 1 {
+		t.Errorf("metrics %v", m)
+	}
+}
+
+func TestConsentGlobalPrivacyControl(t *testing.T) {
+	l := consentServer(t, "")
+	resp, body, rec := send(t, l, "GET", "/page", browsing("Sec-GPC", "1")...)
+	if strings.Contains(body, "bp-consent") || !strings.Contains(body, `type="text/plain" data-consent="analytics"`) ||
+		resp.Header.Get("X-Saw-Consent") != "none" || len(resp.Header.Values("Set-Cookie")) != 1 ||
+		!strings.Contains(notes(rec), "the browser sends Global Privacy Control, so nothing is accepted") {
+		t.Errorf("GPC: %v %q\n%s", resp.Header, notes(rec), body)
+	}
+	_, body, _ = send(t, l, "GET", "/.bareproxy-consent", "Sec-GPC", "1")
+	if !strings.Contains(body, `<p class="bp-consent-note">Your browser asks sites not to track you`) {
+		t.Errorf("settings page with GPC:\n%s", body)
+	}
+	// A choice made on the site counts over the signal.
+	c := consentCookie(t, l, "save=1&set=analytics")
+	if resp, _, _ := send(t, l, "GET", "/page", browsing("Sec-GPC", "1", "Cookie", c)...); resp.Header.Get("X-Saw-Consent") != "analytics" {
+		t.Errorf("GPC after a choice: %v", resp.Header)
+	}
+	off := consentServer(t, "gpc off\n")
+	if _, body, _ := send(t, off, "GET", "/page", browsing("Sec-GPC", "1")...); !strings.Contains(body, "bp-consent") {
+		t.Error("gpc off: no banner")
+	}
+}
+
+func TestConsentSettingsPage(t *testing.T) {
+	l := consentServer(t, "category stats Statistics: to count visits\ncookies stats _ga\nblock stats googletagmanager.com\ntitle Cookies\nlang de\nskip /checkout/\n")
+	c := consentCookie(t, l, "save=1&set=stats")
+	resp, body, _ := send(t, l, "GET", "/.bareproxy-consent", "Cookie", c, "Referer", fmt.Sprintf("http://example.com:%d/docs/x?y=1", l.port))
+	if resp.StatusCode != 200 || resp.Header.Get("Cache-Control") != "no-store" || !strings.Contains(body, `<html lang="de">`) ||
+		!strings.Contains(body, `<input type="checkbox" name="set" value="stats" checked> Statistics</label><span>to count visits</span>`) ||
+		!strings.Contains(body, `<input type="hidden" name="r" value="/docs/x?y=1">`) || !strings.Contains(body, "<title>Cookies</title>") {
+		t.Errorf("settings: %d %v\n%s", resp.StatusCode, resp.Header, body)
+	}
+	resp, css, _ := send(t, l, "GET", "/.bareproxy-consent/consent.css")
+	if resp.StatusCode != 200 || resp.Header.Get("Content-Type") != "text/css; charset=utf-8" ||
+		resp.Header.Get("Cache-Control") != "public, max-age=31536000, immutable" || !strings.HasPrefix(css, "#bp-consent{") {
+		t.Errorf("styles: %d %v", resp.StatusCode, resp.Header)
+	}
+	if resp, _, _ := send(t, l, "POST", "/.bareproxy-consent"); resp.StatusCode != 405 || resp.Header.Get("Allow") != "GET, HEAD" {
+		t.Errorf("POST: %d", resp.StatusCode)
+	}
+	if resp, _, _ := send(t, l, "GET", "/.bareproxy-consent/other"); resp.StatusCode != 404 {
+		t.Errorf("another path under the endpoint: %d", resp.StatusCode)
+	}
+	// The config's own categories: _fbp isn't in one, so it's needed.
+	resp, body, _ = send(t, l, "GET", "/page", browsing()...)
+	if !slices.Equal(resp.Header.Values("Set-Cookie"), []string{"session=abc; Path=/; HttpOnly", "_fbp=fb.1.42; Path=/; Domain=example.com"}) ||
+		strings.Contains(body, `fbevents.js" type="text/plain"`) || !strings.Contains(body, `data-consent="stats"`) {
+		t.Errorf("own categories: %v\n%s", resp.Header, body)
+	}
+	// A skipped path gets no banner, and its cookies still wait.
+	resp, body, _ = send(t, l, "GET", "/checkout/pay", browsing()...)
+	if strings.Contains(body, "bp-consent") || strings.Contains(body, "data-consent") || len(resp.Header.Values("Set-Cookie")) != 2 {
+		t.Errorf("a skipped path: %v\n%s", resp.Header, body)
+	}
+}
+
+func TestConsentConfigRefused(t *testing.T) {
+	configRefused(t, "consent", "gpc maybe\n", "line 1: gpc takes on or off")
+	configRefused(t, "consent", "cookies ads _x\n", "line 1: cookies names category ads, which no category line before it defines")
 }

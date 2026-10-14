@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.15.0 (14 October 2026)
+
+The thirteenth plugin, and whole bodies for responses with no length.
+
+- **Cookie consent** (`plugins/consent`, released as `consent.wasm`), number 13 in the build order: a visitor who hasn't chosen gets a banner at the foot of each HTML page, with Accept all, Reject all and Choose, and a settings page with a box for each category, all without JavaScript. Until a category is accepted, its `Set-Cookie` headers are taken out of responses, its cookies out of the requests the app gets, and the scripts and iframes the config names for it are made inert in pages. A choice that takes a category back deletes its cookies in the browser. A browser that sends Global Privacy Control counts as having said no. The app learns the choice from `X-Consent`. An accept counts only from the site's own pages. Pages that may change are asked of the app uncompressed and without conditions, and go out private, with nothing to check a kept copy by, and every HTML page varies by cookie. Without a config it asks about analytics and marketing, with the cookies and scripts of the common tools. `status` counts banners, choices, withdrawals, cookies held and scripts blocked. See its README; `live/consent-browser-test.sh` runs it in headless Chromium.
+- A plugin that holds a response body now gets it whole when the response has no length (chunked, or decompressed by BareProxy's client). Go's proxy flushes such a response after every write, and that used to send the body past the plugin with a note. A stream of events is still never held.
+- `plugins/kit`: the web helpers bot challenges had (cookies, query parameters, return paths, HTML escaping, telling pages and browsers), moved there, with `query_params` and `percent_encode`.
+
 ## 0.14.0 (14 October 2026)
 
 The twelfth plugin, and a host function for it.

@@ -11,6 +11,10 @@
 //! who it was given to.
 
 use hmac::{Hmac, Mac};
+pub use kit::{
+    BOT_WORDS, cookie_value, html_escape, is_navigation, looks_like_browser, query_param,
+    safe_return,
+};
 use kit::{Item, Line, Net};
 use sha2::{Digest, Sha256};
 use std::net::IpAddr;
@@ -23,9 +27,6 @@ pub const PAGE: &str = include_str!("page.html");
 /// Paths never challenged, whatever the config says: a bot may read
 /// robots.txt, and browsers and certificate checks fetch the others alone.
 pub const ALWAYS_SKIP: &[&str] = &["/robots.txt", "/favicon.ico", "/.well-known/"];
-
-/// Words in a User-Agent that say the client is a bot, not a browser.
-pub const BOT_WORDS: &[&str] = &["bot", "crawl", "spider", "slurp", "+http"];
 
 /// How long a browser has to solve a puzzle, in seconds.
 pub const SOLVE_WITHIN: u64 = 600;
@@ -373,22 +374,6 @@ pub fn network(ip: IpAddr, v4: u32, v6: u32) -> String {
     }
 }
 
-/// Whether a User-Agent says browser: it starts like one, Mozilla/, and
-/// has none of the words that say bot.
-pub fn looks_like_browser(ua: &str) -> bool {
-    let ua = ua.to_ascii_lowercase();
-    ua.starts_with("mozilla/") && !BOT_WORDS.iter().any(|w| ua.contains(w))
-}
-
-/// Whether a request loads a page, as a browser says with Sec-Fetch-Mode,
-/// or else by asking for HTML. Images, styles and scripts don't count.
-pub fn is_navigation(sec_fetch_mode: Option<&str>, accept: Option<&str>) -> bool {
-    match sec_fetch_mode {
-        Some(m) => m.eq_ignore_ascii_case("navigate"),
-        None => accept.is_some_and(|a| a.contains("text/html")),
-    }
-}
-
 fn mac(key: &[u8], msg: &str) -> HmacSha256 {
     let mut m = HmacSha256::new_from_slice(key).expect("HMAC takes any key length");
     m.update(msg.as_bytes());
@@ -456,57 +441,6 @@ pub fn pass_ok(key: &[u8], value: &str, bind: &str, now: u64) -> Option<u64> {
         .map(|_| exp)
 }
 
-/// A cookie's value from a Cookie header.
-pub fn cookie_value<'a>(header: &'a str, name: &str) -> Option<&'a str> {
-    header.split(';').find_map(|kv| {
-        let (k, v) = kv.trim().split_once('=')?;
-        (k == name).then_some(v)
-    })
-}
-
-/// A query parameter, percent-decoded.
-pub fn query_param(query: &str, name: &str) -> Option<String> {
-    query.split('&').find_map(|kv| {
-        let (k, v) = kv.split_once('=').unwrap_or((kv, ""));
-        (k == name).then(|| percent_decode(v))?
-    })
-}
-
-fn percent_decode(s: &str) -> Option<String> {
-    let b = s.as_bytes();
-    let mut out = Vec::with_capacity(b.len());
-    let mut i = 0;
-    while i < b.len() {
-        match b[i] {
-            b'%' => {
-                out.push(u8::from_str_radix(s.get(i + 1..i + 3)?, 16).ok()?);
-                i += 3;
-            }
-            b'+' => {
-                out.push(b' ');
-                i += 1;
-            }
-            x => {
-                out.push(x);
-                i += 1;
-            }
-        }
-    }
-    String::from_utf8(out).ok()
-}
-
-/// A place on this site to go back to: a path, perhaps with a query. A
-/// full URL, a //host or anything odd becomes /, so the endpoint can't be
-/// used to send people elsewhere.
-pub fn safe_return(r: &str) -> String {
-    let ok = r.starts_with('/')
-        && !r.starts_with("//")
-        && !r.starts_with("/\\")
-        && r.len() <= 2048
-        && !r.chars().any(|c| c.is_control());
-    if ok { r.to_string() } else { "/".into() }
-}
-
 /// A JSON string that's safe inside a script element: <, > and & are
 /// written as escapes, so no text can end the element.
 pub fn json_str(s: &str) -> String {
@@ -526,15 +460,6 @@ pub fn json_str(s: &str) -> String {
     }
     out.push('"');
     out
-}
-
-/// Text that's safe in HTML, in an attribute too.
-pub fn html_escape(s: &str) -> String {
-    s.replace('&', "&amp;")
-        .replace('<', "&lt;")
-        .replace('>', "&gt;")
-        .replace('"', "&quot;")
-        .replace('\'', "&#39;")
 }
 
 #[cfg(test)]

@@ -1,0 +1,8 @@
+/tmp/tmp.5YOvAh73HF/bareproxy.conf: ok, 1 site, 0 pools, 1 rule; listening on :47979 (http)
+Chromium 141.0.7390.37
+first visit: the banner shows, the tracker doesn't run, no cookies
+after Accept all: back on the page, the tracker runs, cookies ['_ga', 'bp_consent']
+after taking it back: the tracker doesn't run, the _ga cookie is gone
+without JavaScript: Reject all works, and the banner goes
+with Global Privacy Control: no banner, and the tracker doesn't run
+ok

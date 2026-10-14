@@ -162,6 +162,12 @@ func TestPluginChangesRequestAndResponse(t *testing.T) {
 
 func testPluginChangesRequestAndResponse(t *testing.T) {
 	be := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/chunked" { // no length, and a flush, as a page an app streams
+			fmt.Fprint(w, "part one\n")
+			w.(http.Flusher).Flush()
+			fmt.Fprint(w, "part two\n")
+			return
+		}
 		fmt.Fprintf(w, "backend saw x-plugin=%s\n", r.Header.Get("X-Plugin"))
 	}))
 	defer be.Close()
@@ -169,6 +175,7 @@ func testPluginChangesRequestAndResponse(t *testing.T) {
 	for _, c := range []struct{ path, body string }{
 		{"/api/x", "BACKEND SAW X-PLUGIN=HELLO\n"}, // proxied
 		{"/page.txt", "A STATIC PAGE\n"},           // a file, read in for the plugin instead of sent with sendfile
+		{"/api/chunked", "PART ONE\nPART TWO\n"},   // chunked and flushed, held whole for the plugin
 	} {
 		resp, body, rec := fetch(t, l, c.path)
 		if resp.StatusCode != 200 || body != c.body || resp.Header.Get("X-Resp") != "200" || resp.ContentLength != int64(len(c.body)) {

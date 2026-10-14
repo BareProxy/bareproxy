@@ -368,6 +368,110 @@ pub fn utc(secs: u64) -> String {
     format!("{y}-{mo:02}-{d:02} {h:02}:{m:02} UTC")
 }
 
+/// Words in a User-Agent that say the client is a bot, not a browser.
+pub const BOT_WORDS: &[&str] = &["bot", "crawl", "spider", "slurp", "+http"];
+
+/// Whether a User-Agent says browser: it starts like one, Mozilla/, and
+/// has none of the words that say bot.
+pub fn looks_like_browser(ua: &str) -> bool {
+    let ua = ua.to_ascii_lowercase();
+    ua.starts_with("mozilla/") && !BOT_WORDS.iter().any(|w| ua.contains(w))
+}
+
+/// Whether a request loads a page, as a browser says with Sec-Fetch-Mode,
+/// or else by asking for HTML. Images, styles and scripts don't count.
+pub fn is_navigation(sec_fetch_mode: Option<&str>, accept: Option<&str>) -> bool {
+    match sec_fetch_mode {
+        Some(m) => m.eq_ignore_ascii_case("navigate"),
+        None => accept.is_some_and(|a| a.contains("text/html")),
+    }
+}
+
+/// A cookie's value from a Cookie header.
+pub fn cookie_value<'a>(header: &'a str, name: &str) -> Option<&'a str> {
+    header.split(';').find_map(|kv| {
+        let (k, v) = kv.trim().split_once('=')?;
+        (k == name).then_some(v)
+    })
+}
+
+/// A query parameter, percent-decoded.
+pub fn query_param(query: &str, name: &str) -> Option<String> {
+    query.split('&').find_map(|kv| {
+        let (k, v) = kv.split_once('=').unwrap_or((kv, ""));
+        (k == name).then(|| percent_decode(v))?
+    })
+}
+
+fn percent_decode(s: &str) -> Option<String> {
+    let b = s.as_bytes();
+    let mut out = Vec::with_capacity(b.len());
+    let mut i = 0;
+    while i < b.len() {
+        match b[i] {
+            b'%' => {
+                out.push(u8::from_str_radix(s.get(i + 1..i + 3)?, 16).ok()?);
+                i += 3;
+            }
+            b'+' => {
+                out.push(b' ');
+                i += 1;
+            }
+            x => {
+                out.push(x);
+                i += 1;
+            }
+        }
+    }
+    String::from_utf8(out).ok()
+}
+
+/// A place on this site to go back to: a path, perhaps with a query. A
+/// full URL, a //host or anything odd becomes /, so the endpoint can't be
+/// used to send people elsewhere.
+pub fn safe_return(r: &str) -> String {
+    let ok = r.starts_with('/')
+        && !r.starts_with("//")
+        && !r.starts_with("/\\")
+        && r.len() <= 2048
+        && !r.chars().any(|c| c.is_control());
+    if ok { r.to_string() } else { "/".into() }
+}
+
+/// Text that's safe in HTML, in an attribute too.
+pub fn html_escape(s: &str) -> String {
+    s.replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;")
+        .replace('\'', "&#39;")
+}
+
+/// Every value of a query parameter, percent-decoded, in order: set=a&set=b.
+pub fn query_params(query: &str, name: &str) -> Vec<String> {
+    query
+        .split('&')
+        .filter_map(|kv| {
+            let (k, v) = kv.split_once('=').unwrap_or((kv, ""));
+            (k == name).then(|| percent_decode(v))?
+        })
+        .collect()
+}
+
+/// Text made fit for a URL's query: everything but letters, digits and
+/// -._~/ as %XX.
+pub fn percent_encode(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for &b in s.as_bytes() {
+        if b.is_ascii_alphanumeric() || b"-._~/".contains(&b) {
+            out.push(b as char);
+        } else {
+            out.push_str(&format!("%{b:02X}"));
+        }
+    }
+    out
+}
+
 /// Writes a line into the request's record, shown by `why` and `explain`.
 /// Outside a request, the line goes to BareProxy's log.
 #[cfg(target_arch = "wasm32")]
@@ -486,6 +590,31 @@ pub fn property(ctx: &dyn proxy_wasm::traits::Context, path: &[&str]) -> String 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn web_helpers() {
+        assert_eq!(
+            query_params("set=a&r=%2F&set=b%20c&set", "set"),
+            vec!["a", "b c", ""]
+        );
+        assert!(query_params("x=1", "set").is_empty());
+        assert_eq!(percent_encode("/a b?c=d&e"), "/a%20b%3Fc%3Dd%26e");
+        assert_eq!(
+            query_param(&format!("r={}", percent_encode("/x?y=1&z")), "r").as_deref(),
+            Some("/x?y=1&z")
+        );
+        assert_eq!(cookie_value("a=1; b=2", "b"), Some("2"));
+        assert!(looks_like_browser(
+            "Mozilla/5.0 (X11; Linux x86_64) Firefox/131.0"
+        ));
+        assert!(!looks_like_browser(
+            "Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)"
+        ));
+        assert_eq!(
+            html_escape("<a href='x'>&\"</a>"),
+            "&lt;a href=&#39;x&#39;&gt;&amp;&quot;&lt;/a&gt;"
+        );
+    }
 
     #[test]
     fn sizes() {

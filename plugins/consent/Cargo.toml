@@ -1,0 +1,16 @@
+[package]
+name = "consent"
+description = "BareProxy plugin: a cookie consent banner on HTML pages, cookies and scripts held back until consent, Global Privacy Control respected"
+publish = false
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+proxy-wasm.workspace = true
+kit = { path = "../kit" }
+memchr.workspace = true
