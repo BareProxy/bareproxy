@@ -44,13 +44,13 @@ Durations take `ms`, `s`, `m`, `h`, and `d` for days. The secret file holds the 
 
 The sender gets `202` with `BareProxy-Inbox-Id: ID` and the text `Stored as event ID`, and only once the event is on disk. When the event can't be written (a full disk, say), it gets `503` and keeps the event, as it would for any failed delivery.
 
-The app gets the request as it came: method, path (or `path`), query, headers and body, with `X-Forwarded-For`, `-Proto` and `-Host` set, and three more headers:
+The app gets the request as it came: method, path (or `path`), query, headers and body, with `X-Forwarded-For`, `-Proto` and `-Host` set (hop-by-hop headers, and any header the sender named in `Connection`, are left out), and three more headers:
 
 - `BareProxy-Inbox-Id`: the event ID, the same on every attempt. Use it to tell events apart.
 - `BareProxy-Inbox-Attempt`: 1 for the first attempt, counting up on each retry.
 - `BareProxy-Inbox-Replay`: only on deliveries that may repeat an earlier one: `operator` when someone replayed the event, `in-doubt` when BareProxy can't know whether an earlier attempt reached the app.
 
-Any 2xx answer means delivered. Anything else, a refused connection or a timeout means try again later.
+Any 2xx answer means delivered. Anything else, a refused connection or a timeout means try again later. Each attempt is sent once: BareProxy's HTTP client never resends it on its own (Go's client would, for a request with an `Idempotency-Key` header, when a kept-alive connection breaks), so every repeat goes through the inbox and carries its mark.
 
 ## The promises, and how they are kept
 

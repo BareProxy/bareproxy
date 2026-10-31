@@ -310,7 +310,21 @@ func (rt *Runtime) deliverTo(spec *InboxSpec) inbox.Deliver {
 		if err != nil {
 			return inbox.Result{Err: err}
 		}
+		// No GetBody: with it, Go's transport sends a request that carries an
+		// Idempotency-Key header again by itself when a reused connection
+		// breaks after the request went out, so the app could get the event
+		// twice with no in-doubt mark. Without it, that break comes back
+		// here as an error and the retry is marked in-doubt.
+		out.GetBody = nil
 		out.Header = req.Header.Clone()
+		// Headers the sender named in Connection are hop-by-hop too.
+		for _, v := range out.Header["Connection"] {
+			for _, name := range strings.Split(v, ",") {
+				if name = strings.TrimSpace(name); name != "" {
+					out.Header.Del(name)
+				}
+			}
+		}
 		for _, h := range hopHeaders {
 			out.Header.Del(h)
 		}

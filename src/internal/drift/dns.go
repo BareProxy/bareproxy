@@ -87,6 +87,11 @@ func (r Resolver) Lookup(ctx context.Context, name, typ string) ([]string, error
 			out = append(out, v)
 		}
 	}
+	if len(out) == 0 && !resp.Header.RecursionAvailable && !resp.Header.Authoritative {
+		// A referral or a lame answer, from a server that doesn't recurse
+		// and doesn't hold the zone: it says nothing about the records.
+		return nil, errors.New("the resolver didn't look the name up (no recursion, not authoritative)")
+	}
 	slices.Sort(out)
 	return slices.Compact(out), nil
 }

@@ -49,7 +49,7 @@ drift sites
 | `webhook URL` | none | The report is posted here as JSON when it has alerts or unchecked parts. |
 | `folder DIR` | `<state>/drift/NAME` | Where the state, the history and the lock file go. |
 
-The TLS connection goes to the domain's A and AAAA addresses as just looked up (the first one that answers), with the domain as the server name. The certificate is read even when it doesn't verify, so a bad one is reported as bad rather than as a failed connection. HSTS is read from the answer to `GET /`; redirects aren't followed.
+The TLS connection goes to the domain's A and AAAA addresses as just looked up (the first one that answers), with the domain as the server name. The certificate is read even when it doesn't verify, so a bad one is reported as bad rather than as a failed connection. HSTS is read from the answer to `GET /`; redirects aren't followed. With `hsts off`, a server that shows its certificate but doesn't answer HTTP (a mail port, say) is still checked.
 
 ## Running a check
 
@@ -81,11 +81,11 @@ Result: 2 alerts, 1 unchecked
 
 `--history` prints every change recorded, oldest first, with before and after. `--json` gives the report or the history as JSON, the same JSON the webhook gets.
 
-With `every` set, a running server checks the watch on its own: the time since the last check is taken from the state file, so a restart or an apply doesn't check early. Each check's summary and its alerts (the first 20) go into `events`, and the webhook gets the report. The server and the command never check one watch at the same time: a lock file in the folder keeps them apart, and a lock left by a check that died is taken over after 5 minutes.
+With `every` set, a running server checks the watch on its own: the time since the last check is taken from the state file, so a restart or an apply doesn't check early. Each check's summary and its alerts (the first 20) go into `events`, and the webhook gets the report. A check the server cuts off (an apply that replaces the running config, or a shutdown) saves nothing, so what it had found is found again by the next one. The server and the command never check one watch at the same time: a lock file in the folder keeps them apart, and a lock left by a check that died is taken over after 5 minutes.
 
 ## How it avoids false alarms and false calm
 
-- **A failed lookup is unchecked, never unchanged.** A lookup that times out or gets SERVFAIL or REFUSED from the resolver is tried once more. If it fails again, that part is reported as unchecked, the exit code is at least 3, and its last known good value is kept for next time. The same goes for a TLS connection that fails twice. A name that doesn't exist (NXDOMAIN) or has no records of a type is an answer, an empty one.
+- **A failed lookup is unchecked, never unchanged.** A lookup that times out or gets SERVFAIL or REFUSED from the resolver is tried once more. If it fails again, that part is reported as unchecked, the exit code is at least 3, and its last known good value is kept for next time. The same goes for a TLS connection that fails twice. A name that doesn't exist (NXDOMAIN) or has no records of a type is an answer, an empty one. An empty answer from a server that neither recursed nor holds the zone (a referral, so the `resolver` isn't a recursive one) is not an answer: it is unchecked.
 - **One flapping answer doesn't alert.** A lookup that shows a change is asked again. If the second answer is the known value, the change isn't reported; a note says it flapped. If the second answer differs too, the change is reported with the second answer as "after". Certificates get the same second look, for load balancers with one stray node.
 - **A change alerts once.** The new value becomes the known one and goes into the history. Standing problems alert on every check until they are fixed: a certificate inside its window or expired, one that doesn't verify, missing HSTS or CAA. When the connection fails, the last certificate seen still alerts if it is near its end.
 - **The first check records, it doesn't alert on changes.** It notes what it found as the baseline. Standing problems still alert.

@@ -274,6 +274,12 @@ func (c *Checker) Run(ctx context.Context, s *Spec) (*Report, error) {
 	}
 	close(jobs)
 	wg.Wait()
+	if err := ctx.Err(); err != nil {
+		// Cut off (a server swapping its runtime, or stopping): what was
+		// found isn't taken into the state or the history, so the next
+		// check finds it again and reports it.
+		return nil, err
+	}
 	next := map[string]*Known{}
 	var hist []HistoryEntry
 	for i, d := range domains {
@@ -566,7 +572,14 @@ func (c *Checker) probe(ctx context.Context, s *Spec, d string, addrs []string) 
 			mu.Lock()
 			gotCert := p.cert != nil
 			mu.Unlock()
-			if gotCert && s.HSTS {
+			if gotCert && !s.HSTS {
+				// The certificate is what's watched, and it came: a server
+				// that doesn't answer HTTP is still checked.
+				mu.Lock()
+				defer mu.Unlock()
+				return p, nil
+			}
+			if gotCert {
 				// The certificate came, the HTTP answer didn't: the HSTS
 				// header is unknown, so the whole look is unchecked.
 				lastErr = fmt.Errorf("%s: the certificate came but no HTTP answer (%s)", a, short(err))

@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.16.1 (31 October 2026)
+
+Fixes from an independent review of the webhook inbox and the drift watcher. Each has a test that failed before the fix.
+
+- Inbox: an event could reach the app twice with no mark. When a delivery carried an `Idempotency-Key` header and the kept-alive connection to the app broke after the request went out, Go's HTTP client sent it again on its own, inside one attempt, so the copy had no `BareProxy-Inbox-Replay`. Deliveries are now never resent by the client; that break comes back as an attempt in doubt, and the retry is marked `in-doubt`.
+- Inbox: headers the sender named in `Connection` are hop-by-hop and are no longer passed on to the app, as on proxied requests.
+- Drift: a change found by a server-side check that an apply or a shutdown cut off was saved as the known state, and the report was dropped, so the change never alerted. It also moved the last-run time, delaying the next check by a whole `every`. A cut-off check now saves nothing.
+- Drift: with `hsts off`, a server that sends its certificate but doesn't answer HTTP was reported as unchecked on every run, so its certificate changes and expiry were never seen. The certificate now counts.
+- Drift: an empty answer from a server that doesn't recurse and doesn't hold the zone (a referral) read as "no records", so every record alerted as removed. It is now unchecked.
+
 ## 0.16.0 (31 October 2026)
 
 A webhook inbox and a DNS and TLS drift watcher, both in the core.
