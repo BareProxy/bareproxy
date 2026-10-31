@@ -128,7 +128,7 @@ Layout:
    Forwarded headers passed on to the app; a broken state file could panic;
    plan missed changes in all but the last `domains` line; the browser demo
    would refuse drift blocks with no resolver.
-8. [in progress] README, docs, CHANGELOG 0.16.0, version bump in
+8. [in progress: docs, CHANGELOG and version 0.16.0 pushed; watching CI and the release] README, docs, CHANGELOG 0.16.0, version bump in
    `src/internal/bp/server.go`; push; watch CI and the release; check the
    files, SHA256SUMS, the latest/download links, run a downloaded binary.
 9. [ ] Site (photozeitgeist/bareproxy.com): two posts with numbers from

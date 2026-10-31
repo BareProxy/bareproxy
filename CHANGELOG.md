@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.16.0 (31 October 2026)
+
+A webhook inbox and a DNS and TLS drift watcher, both in the core.
+
+- **Webhook inbox** (`route PATH -> inbox NAME` and an `inbox NAME` block): webhooks from Stripe, GitHub, Shopify and the like are written to disk, flushed, before the sender gets `202`, then delivered to a pool with retries that double from `retry FIRST MAX` (10s to 1h by default) until `give-up` (3d). Each event is marked on disk before each attempt, so one cut off by a crash or a kill is sent again with `BareProxy-Inbox-Replay: in-doubt`; an operator's replay is marked `operator`; otherwise an event the app took is never sent again. Deliveries carry `BareProxy-Inbox-Id` and `BareProxy-Inbox-Attempt`. Signatures can be checked per inbox (`signature github|shopify|stripe FILE`, or `hmac-sha256 HEADER FILE hex|base64`), with 401 and nothing stored when they don't match. `key-header` dedupes a sender's own retries. `bareproxy inbox list|show|replay` works over the admin socket; webhooks have records (`outcome inbox`), `why` and `explain` show them, and inboxes stay open across applies. See [docs/inbox.md](docs/inbox.md).
+- **DNS and TLS drift watcher** (a `drift NAME` block and `bareproxy drift`): for each domain, A, AAAA, CNAME, MX, NS, TXT and CAA records, the certificate and the HSTS header, against the last known good state. Alerts for certificates within `expiry` (21 days) or expired, certificates that don't verify, changed certificates and issuers, changed records with before and after, nameserver moves, and missing HSTS or CAA. A lookup that fails twice is unchecked, never unchanged, and its last known value is kept; a change must hold on a second look, so one flapping answer doesn't alert. Every change goes into a history (`bareproxy drift --history`). Exit codes 0, 3 (unchecked) and 4 (alerts) for CI, `--json`, an optional `webhook`, and with `every` a running server checks on its own into `events`. A config may hold only drift blocks. See [docs/drift.md](docs/drift.md).
+- Both are core Go packages (`internal/inbox`, `internal/drift`), not plugins: the inbox needs flushed disk writes before it answers and its own delivery schedule across restarts, and the watcher needs raw DNS and TLS, none of which a Proxy-Wasm plugin can do. [docs/plugin-program.md](docs/plugin-program.md) lists them under "Kept in the core".
+- `golang.org/x/net/dns/dnsmessage` is vendored, from the same x/net v0.58.0 as before.
+- `live/inbox-drift-test.sh` records `results/inbox-test.log` and `results/drift-test.log`: 1,500 webhooks through 15 SIGKILLs during delivery with 0 lost and 0 unmarked duplicates, and 500 domains checked in 2.6 s.
+
 ## 0.15.0 (14 October 2026)
 
 The thirteenth plugin, and whole bodies for responses with no length.

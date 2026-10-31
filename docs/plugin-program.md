@@ -38,9 +38,11 @@ Adding the times up gives roughly eight to ten weeks of coding for all 21. The f
 
 ## Kept in the core
 
-Two items on the first list stay in the core and have no place in the build order:
+Some jobs stay in the core and have no place in the build order:
 
 - **Auto TLS.** Let's Encrypt certificates, in the core since 0.1.0-alpha (`tls auto`). Every https site needs it.
+- **Webhook inbox** (0.16.0, [inbox.md](inbox.md)). It must write each event to disk before answering the sender, deliver on its own schedule across restarts, and replay on an operator's command. A plugin's store isn't flushed to disk, a plugin calls out only while a request or a timer tick holds it, and plugins have no commands.
+- **DNS and TLS drift watcher** (0.16.0, [drift.md](drift.md)). It needs raw DNS queries and raw TLS connections, and a plugin's only way out is an HTTP call; it also runs from the command line in CI with no server. It sits next to auto TLS above and the uptime checks of plugin 14.
 - **Plan and explain.** `explain`, `why` and `plan` are the core's own. The plugin side is that every plugin reports into them through `bareproxy_note`, so plugins never become a blind spot.
 
 ## Bots and AI, together
