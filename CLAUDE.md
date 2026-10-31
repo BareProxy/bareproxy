@@ -5,6 +5,13 @@ never ask the owner to publish one. [RELEASING.md](RELEASING.md) has the
 whole procedure, the checks to run afterwards, and how to copy it to a new
 project.
 
+## In progress: independent review of inbox and drift (31 October 2026)
+
+Plan: read the inbox (src/internal/inbox, src/internal/bp/inbox.go) and the
+drift watcher (src/internal/drift, src/internal/bp/drift.go) against their
+promises; each suspected bug gets a failing test first (race detector on),
+then a fix; re-record results; 0.16.1 only if something real was fixed.
+
 ## In progress: inbox and drift case studies (31 October 2026)
 
 Plan (case study files only; no changes to the features' code):
