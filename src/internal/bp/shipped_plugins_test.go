@@ -1138,6 +1138,10 @@ plugin p crawlers.wasm
   allow-http %s
   instances 2
   store 1MB
+  # Counts an instance hasn't shared yet go with it when a call runs past
+  # its limit and the instance is replaced, which a busy CI runner can
+  # cause at the default 5ms. These tests are about the counts.
+  timeout 1s
 
 site http://example.com:%d
   use p
@@ -1289,7 +1293,13 @@ func TestCrawlersLimitAndReport(t *testing.T) {
 		_, body, rec := send(t, l, "GET", "/.crawlers")
 		for _, want := range wants {
 			if !strings.Contains(body, want) {
-				t.Errorf("missing %q in the report:\n%s", want, body)
+				// On one line, so CI's annotation shows the report and the
+				// plugin's instances with it.
+				var inst string
+				for _, p := range l.s.Status().Plugins {
+					inst += fmt.Sprintf(" %s: %d of %d instances working;", p.Name, p.Working, p.Instances)
+				}
+				t.Errorf("missing %q in the report;%s report: %q", want, inst, body)
 			}
 		}
 		if !strings.Contains(notes(rec), "the crawler report went out") {

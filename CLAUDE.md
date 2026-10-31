@@ -128,7 +128,15 @@ Layout:
    Forwarded headers passed on to the app; a broken state file could panic;
    plan missed changes in all but the last `domains` line; the browser demo
    would refuse drift blocks with no resolver.
-8. [in progress: docs, CHANGELOG and version 0.16.0 pushed; watching CI and the release] README, docs, CHANGELOG 0.16.0, version bump in
+8. [in progress: docs, CHANGELOG and version 0.16.0 pushed; watching CI and the release.
+   First CI run: everything green but the `plugins` job, where the existing
+   TestCrawlersLimitAndReport missed GPTBot's counts after 17 s (same
+   assertion failed on 14 Oct). Likely cause: a call over the default 5 ms
+   limit on a busy runner replaced an instance and its unshared counts went
+   with it. Fix round 1: the crawler test servers get `timeout 1s`, and the
+   failure message now shows the report and working instances on one line.
+   The job log host is blocked from the session, and the Rust wasm target
+   can't be downloaded there, so it couldn't be reproduced locally] README, docs, CHANGELOG 0.16.0, version bump in
    `src/internal/bp/server.go`; push; watch CI and the release; check the
    files, SHA256SUMS, the latest/download links, run a downloaded binary.
 9. [ ] Site (photozeitgeist/bareproxy.com): two posts with numbers from
