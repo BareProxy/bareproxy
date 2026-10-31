@@ -24,6 +24,7 @@ import (
 	"syscall"
 	"time"
 
+	"bareproxy/internal/inbox"
 	"bareproxy/internal/plugin"
 )
 
@@ -39,6 +40,7 @@ type Runtime struct {
 	Trace    *TraceLog
 	Mem      *TraceMem // recent records and events, inherited across reloads
 	Plugins  map[string]*plugin.Plugin
+	Inboxes  map[string]*inbox.Inbox
 	acme     *acmeState
 }
 
@@ -102,6 +104,10 @@ func NewRuntime(c *Config, old *Runtime, version int, logf func(string, ...any),
 			prev = old.acme
 		}
 		rt.acme = newACME(c, prev, rt.Mem)
+		if err := rt.startInboxes(logf); err != nil {
+			rt.Stop()
+			return nil, err
+		}
 	}
 	return rt, nil
 }
@@ -114,6 +120,7 @@ func (rt *Runtime) Stop() {
 		}
 	}
 	rt.stopPlugins(nil)
+	rt.stopInboxes()
 }
 
 // retire stops what the old runtime has and the new one doesn't. Folders and
@@ -129,6 +136,7 @@ func retire(old, rt *Runtime) {
 	}
 	time.AfterFunc(2*time.Minute, func() {
 		old.stopPlugins(rt)
+		old.stopInboxes()
 		old.Cfg.Close()
 		for _, p := range old.Pools {
 			p.transport.CloseIdleConnections()
@@ -498,6 +506,8 @@ func (s *Server) serve(w *respWriter, r *http.Request, rt *Runtime, port int, re
 		s.files(w, r, rec, site, route, norm)
 	case "pool":
 		s.proxy(w, r, rt, site, route, norm, rec)
+	case "inbox":
+		s.serveInbox(w, r, rt, site, route, norm, rec)
 	}
 }
 

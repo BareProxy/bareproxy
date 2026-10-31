@@ -55,6 +55,8 @@ type Record struct {
 	Encoding    string      `json:"encoding,omitempty"`
 	ContentType string      `json:"content_type,omitempty"`
 	ErrorPage   string      `json:"error_page,omitempty"`
+	Inbox       string      `json:"inbox,omitempty"`
+	Event       string      `json:"event,omitempty"` // the inbox event it was stored as
 	Status      int         `json:"status"`
 	BytesIn     int64       `json:"bytes_in"`
 	BytesOut    int64       `json:"bytes_out"`
@@ -315,6 +317,10 @@ func RenderWhy(rec *Record) string {
 		case len(rec.Checked) > 0:
 			fmt.Fprintf(&b, "Checked: %s\n", inFolder(rec.Folder, rec.Checked[0]))
 		}
+	}
+	if rec.Inbox != "" {
+		fmt.Fprintf(&b, "Inbox %s\n", rec.Inbox)
+		note("  stored as event %s, delivered from the inbox\n", rec.Event)
 	}
 	note("Redirected to %s\n", rec.Location)
 	note("Reason: %s\n", rec.Reason)

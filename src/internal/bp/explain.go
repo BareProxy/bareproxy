@@ -122,6 +122,8 @@ func Explain(rt *Runtime, method, rawURL string, h http.Header, live bool) (stri
 		explainFiles(&b, site, route, norm, u.RawQuery, method, h)
 	case "pool":
 		explainPool(&b, rt, route, norm, method, u.Host, live)
+	case "inbox":
+		explainInbox(&b, rt, route, norm, method)
 	}
 	return b.String(), nil
 }

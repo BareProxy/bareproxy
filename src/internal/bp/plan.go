@@ -202,6 +202,8 @@ func routeEffect(s *Site, r *Route) string {
 		return strings.TrimSuffix(fmt.Sprintf("respond %d %q", a.Status, a.Body), ` ""`)
 	case "https":
 		return "plain HTTP redirected to https://"
+	case "inbox":
+		return "inbox " + a.Inbox
 	}
 	return r.Act.Kind
 }
@@ -764,6 +766,9 @@ func Warnings(c *Config) []Problem {
 			}
 			warn(r.Line, "%s never matches: %s every request it would get", r.Text, takes)
 		}
+	}
+	for _, ib := range c.Inboxes {
+		used[ib.Deliver] = true
 	}
 	for _, name := range c.PoolOrder {
 		if ps := c.Pools[name]; !used[name] {

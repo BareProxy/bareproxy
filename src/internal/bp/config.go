@@ -62,6 +62,8 @@ type Config struct {
 	Ports       map[int]*Port
 	Plugins     map[string]*PluginSpec
 	PluginOrder []string
+	Inboxes     map[string]*InboxSpec
+	InboxOrder  []string
 	roots       []*os.Root
 	warns       []Problem // what Parse found; Warnings adds plan's
 }
@@ -125,8 +127,9 @@ type HeaderCond struct {
 
 // Action is what a route does.
 type Action struct {
-	Kind   string // pool, files, redirect, respond, https
+	Kind   string // pool, files, redirect, respond, https, inbox
 	Pool   string
+	Inbox  string
 	Strip  bool
 	Dir    string
 	Root   *os.Root
@@ -284,6 +287,7 @@ func ParseWith(file, src string, o ParseOptions) (*Config, []Problem) {
 		Pools:    map[string]*PoolSpec{},
 		Ports:    map[int]*Port{},
 		Plugins:  map[string]*PluginSpec{},
+		Inboxes:  map[string]*InboxSpec{},
 	}
 	p := &parser{c: c, dir: filepath.Dir(file), opt: o}
 	src = strings.ReplaceAll(src, "\r\n", "\n")
@@ -292,6 +296,7 @@ func ParseWith(file, src string, o ParseOptions) (*Config, []Problem) {
 	var site *Site
 	var pool *PoolSpec
 	var plug *PluginSpec
+	var ibx *InboxSpec
 	for i, raw := range c.Lines {
 		ln := i + 1
 		toks, err := splitLine(raw)
@@ -307,7 +312,7 @@ func ParseWith(file, src string, o ParseOptions) (*Config, []Problem) {
 			w[k] = t.s
 		}
 		if raw[0] != ' ' && raw[0] != '\t' {
-			site, pool, plug, block = nil, nil, nil, ""
+			site, pool, plug, ibx, block = nil, nil, nil, nil, ""
 			switch w[0] {
 			case "global":
 				block = "global"
@@ -349,8 +354,11 @@ func ParseWith(file, src string, o ParseOptions) (*Config, []Problem) {
 			case "plugin":
 				block = "plugin"
 				plug = p.newPlugin(ln, w)
+			case "inbox":
+				block = "inbox"
+				ibx = p.newInbox(ln, w)
 			default:
-				p.errf(ln, "%q can't start a block: a line in the first column starts global, site, pool or plugin", w[0])
+				p.errf(ln, "%q can't start a block: a line in the first column starts global, site, pool, plugin or inbox", w[0])
 			}
 			continue
 		}
@@ -363,8 +371,10 @@ func ParseWith(file, src string, o ParseOptions) (*Config, []Problem) {
 			err = p.poolSetting(pool, ln, w)
 		case "plugin":
 			err = p.pluginSetting(plug, ln, w)
+		case "inbox":
+			err = p.inboxSetting(ibx, ln, w)
 		default:
-			err = errors.New("indented line outside a global, site, pool or plugin block")
+			err = errors.New("indented line outside a global, site, pool, plugin or inbox block")
 		}
 		if err != nil {
 			p.errf(ln, "%v", err)
@@ -585,9 +595,21 @@ func (p *parser) route(ln int, toks []token) (*Route, error) {
 		if len(right) == 3 {
 			a.Body = right[2].s
 		}
+	case "inbox":
+		// "inbox NAME" is the inbox action. A pool may be named inbox (the
+		// word was free before inboxes came), so "inbox" alone and "inbox
+		// strip" still name that pool.
+		if len(right) == 2 && right[1].s != "strip" {
+			if !validName(right[1].s) {
+				return nil, errors.New("inbox takes the name of an inbox block")
+			}
+			a.Kind, a.Inbox = "inbox", right[1].s
+			break
+		}
+		fallthrough
 	default:
 		if !validName(right[0].s) {
-			return nil, fmt.Errorf("%q isn't an action: use a pool name, files, redirect or respond", right[0].s)
+			return nil, fmt.Errorf("%q isn't an action: use a pool name, files, redirect, respond or inbox", right[0].s)
 		}
 		a.Kind, a.Pool = "pool", right[0].s
 		switch {
@@ -710,6 +732,10 @@ func (p *parser) compile() {
 				if c.Pools[r.Act.Pool] == nil {
 					p.errf(r.Line, "no pool named %s", r.Act.Pool)
 				}
+			case "inbox":
+				if c.Inboxes[r.Act.Inbox] == nil {
+					p.errf(r.Line, "no inbox named %s", r.Act.Inbox)
+				}
 			case "files":
 				if p.opt.NoDisk {
 					continue
@@ -787,6 +813,7 @@ func (p *parser) compile() {
 		}
 	}
 	p.loadPlugins()
+	p.compileInboxes()
 	if len(c.Sites) == 0 {
 		p.errf(0, "the config has no sites")
 	}
