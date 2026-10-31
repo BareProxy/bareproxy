@@ -849,7 +849,7 @@ func blocks(c *Config) map[string]map[string]cfgLine {
 				out[name] = map[string]cfgLine{"": {text, i + 1}}
 			}
 			cur = out[name]
-		case key == "backend" || key == "allow-http" || key == "read":
+		case key == "backend" || key == "allow-http" || key == "read" || key == "domains":
 			cur[text] = cfgLine{text, i + 1}
 		case key != "route" && key != "use": // use lines: see pluginChanges
 			cur[key] = cfgLine{text, i + 1}

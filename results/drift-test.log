@@ -1,34 +1,34 @@
 # drift watcher tests, 2026-10-31, go1.27.1 linux/amd64, Intel(R) Xeon(R) Processor @ 2.80GHz, 2 CPUs
 $ go test -count=1 -v ./internal/drift/
---- PASS: TestFirstRunRecordsABaselineAndAlertsOnNothing (0.05s)
---- PASS: TestChangedRecordAlwaysAlertsWithBeforeAndAfter (0.21s)
---- PASS: TestNameserverMove (0.03s)
---- PASS: TestLookupFailureIsUncheckedNeverUnchanged (0.89s)
+--- PASS: TestFirstRunRecordsABaselineAndAlertsOnNothing (0.02s)
+--- PASS: TestChangedRecordAlwaysAlertsWithBeforeAndAfter (0.07s)
+--- PASS: TestNameserverMove (0.02s)
+--- PASS: TestLookupFailureIsUncheckedNeverUnchanged (0.88s)
     --- PASS: TestLookupFailureIsUncheckedNeverUnchanged/timeout (0.83s)
-    --- PASS: TestLookupFailureIsUncheckedNeverUnchanged/servfail (0.04s)
+    --- PASS: TestLookupFailureIsUncheckedNeverUnchanged/servfail (0.03s)
     --- PASS: TestLookupFailureIsUncheckedNeverUnchanged/refused (0.03s)
---- PASS: TestOneFailedLookupThenAnswerIsFine (0.46s)
---- PASS: TestFlappingLookupDoesNotAlert (0.36s)
---- PASS: TestChangeThenFailedSecondLookIsUnchecked (0.02s)
---- PASS: TestExpiringCertificateAlwaysAlerts (0.04s)
+--- PASS: TestOneFailedLookupThenAnswerIsFine (0.42s)
+--- PASS: TestFlappingLookupDoesNotAlert (0.12s)
+--- PASS: TestChangeThenFailedSecondLookIsUnchecked (0.03s)
+--- PASS: TestExpiringCertificateAlwaysAlerts (0.03s)
 --- PASS: TestExpiredCertificate (0.02s)
---- PASS: TestChangedCertificateAndIssuerAlert (0.05s)
+--- PASS: TestChangedCertificateAndIssuerAlert (0.04s)
 --- PASS: TestCertificateFlapDoesNotAlert (0.04s)
---- PASS: TestInvalidCertificateAlerts (0.03s)
---- PASS: TestHSTSAndCAAGaps (0.08s)
+--- PASS: TestInvalidCertificateAlerts (0.02s)
+--- PASS: TestHSTSAndCAAGaps (0.11s)
 --- PASS: TestTruncatedAnswerFallsBackToTCP (0.03s)
---- PASS: TestWebhookGetsTheReport (0.03s)
---- PASS: TestBusyLock (0.02s)
-    drift_test.go:455: 500 domains, 7 record types, TLS and HSTS each, 16 workers: first run 3.09 s, second run 3.00 s (5 changes found, 3 timeouts unchecked)
---- PASS: TestManyDomains (6.34s)
+--- PASS: TestWebhookGetsTheReport (0.02s)
+--- PASS: TestBusyLock (0.01s)
+    drift_test.go:455: 500 domains, 7 record types, TLS and HSTS each, 16 workers: first run 2.56 s, second run 2.17 s (5 changes found, 3 timeouts unchecked)
+--- PASS: TestManyDomains (4.88s)
 PASS
-ok  	bareproxy/internal/drift	8.728s
+ok  	bareproxy/internal/drift	6.770s
 $ go test -count=1 -v -run Drift ./internal/bp/ ./cmd/bareproxy/
---- PASS: TestInboxAndDriftConfigErrors (0.00s)
---- PASS: TestInboxAndDriftConfigsThatWork (0.00s)
---- PASS: TestServerRunsDriftWatches (0.53s)
+--- PASS: TestInboxAndDriftConfigErrors (0.02s)
+--- PASS: TestInboxAndDriftConfigsThatWork (0.01s)
+--- PASS: TestServerRunsDriftWatches (0.41s)
 PASS
-ok  	bareproxy/internal/bp	0.556s
+ok  	bareproxy/internal/bp	0.450s
 --- PASS: TestDriftCommandExitCodes (0.65s)
 PASS
-ok  	bareproxy/cmd/bareproxy	0.662s
+ok  	bareproxy/cmd/bareproxy	0.680s

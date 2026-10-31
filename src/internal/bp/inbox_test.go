@@ -505,3 +505,24 @@ func TestInboxSurvivesSIGKILL(t *testing.T) {
 	t.Logf("%d events, %d SIGKILLs during delivery, %d deliveries: %d lost, %d delivered twice unmarked, %d sent again marked in-doubt",
 		len(accepted), kills, len(app.calls()), lost, unmarkedDup, inDoubt)
 }
+
+// An apply whose inbox can't be opened changes nothing: the running config
+// keeps serving and delivering, and its backends keep their health checks.
+func TestInboxThatCantOpenLeavesTheRunningConfig(t *testing.T) {
+	app := newHookApp(t, 0)
+	s, port, dir := startInbox(t, app.port, "", nil)
+	writeFile(t, filepath.Join(dir, "afile"), "x")
+	bad := inboxConfig(dir, port, app.port, "  folder "+filepath.Join(dir, "afile")+"\n") +
+		fmt.Sprintf("pool checked\n  backend 127.0.0.1:%d\n  health /\n", app.port)
+	if _, err := s.Apply(Change{Text: bad, How: "apply"}); err == nil || !strings.Contains(err.Error(), "inbox app: can't open") {
+		t.Fatalf("apply: %v", err)
+	}
+	if v := s.Current().Version; v != 1 {
+		t.Fatalf("running version %d", v)
+	}
+	code, _, _, err := postHook(port, "/hooks/x", "after", nil)
+	if err != nil || code != 202 {
+		t.Fatalf("POST after the failed apply: %d %v", code, err)
+	}
+	waitUntil(t, "delivery", 5*time.Second, func() bool { return len(app.calls()) == 1 })
+}

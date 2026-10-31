@@ -112,9 +112,8 @@ func TestServerRunsDriftWatches(t *testing.T) {
 	}
 	defer res.Close()
 	res.Records("a.test", "A", "192.0.2.1")
-	old := driftPause
-	driftPause = 50 * time.Millisecond
-	defer func() { driftPause = old }()
+	old := driftPause.Swap(int64(50 * time.Millisecond))
+	defer driftPause.Store(old)
 	dir := t.TempDir()
 	port := freePort(t)
 	conf := filepath.Join(dir, "bareproxy.conf")
@@ -141,7 +140,7 @@ drift web
 	defer s.Stop()
 	waitUntil(t, "the drift event", 10*time.Second, func() bool {
 		for _, e := range s.Current().Mem.Events() {
-			if e.Kind == "drift" && strings.Contains(e.Text, "drift web: 1 domains, 0 alerts, 0 unchecked") {
+			if e.Kind == "drift" && strings.Contains(e.Text, "drift web: 1 domain, 0 alerts, 0 unchecked") {
 				return true
 			}
 		}

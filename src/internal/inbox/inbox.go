@@ -164,7 +164,7 @@ func Open(dir string) (*Inbox, error) {
 			if err != nil || json.Unmarshal(b, &st) != nil || st.ID+".state" != name {
 				return nil, fmt.Errorf("the inbox file %s is broken", filepath.Join(dir, name))
 			}
-			if st.Status == "delivering" {
+			if st.Status == "delivering" && len(st.Attempts) > 0 {
 				n := len(st.Attempts) - 1
 				st.Attempts[n].End = time.Now().UTC()
 				st.Attempts[n].Error = "BareProxy stopped during the attempt"

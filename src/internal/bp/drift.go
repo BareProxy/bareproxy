@@ -15,6 +15,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"bareproxy/internal/drift"
@@ -174,7 +175,7 @@ func (p *parser) compileDrifts() {
 		}
 		if d.Resolver == "" {
 			d.Resolver = systemResolver()
-			if d.Resolver == "" && len(d.Types) > 0 {
+			if d.Resolver == "" && len(d.Types) > 0 && !p.opt.NoDisk {
 				p.errf(d.Line, "drift %s needs resolver HOST:PORT: no nameserver found in /etc/resolv.conf", name)
 			}
 		}
@@ -241,8 +242,9 @@ func (rt *Runtime) stopDrift() {
 	}
 }
 
-// driftPause is the least a watch waits after a server starts it.
-var driftPause = 5 * time.Second
+// driftPause is the least a watch waits after a server starts it, in
+// nanoseconds; tests shorten it.
+var driftPause = func() *atomic.Int64 { var n atomic.Int64; n.Store(int64(5 * time.Second)); return &n }()
 
 func (rt *Runtime) driftLoop(ctx context.Context, spec *drift.Spec, logf func(string, ...any)) {
 	for {
@@ -252,7 +254,7 @@ func (rt *Runtime) driftLoop(ctx context.Context, spec *drift.Spec, logf func(st
 		}
 		// A short pause first, so an apply that replaces this runtime at
 		// once doesn't start a check that is cut off.
-		wait = max(wait, driftPause)
+		wait = max(wait, time.Duration(driftPause.Load()))
 		select {
 		case <-ctx.Done():
 			return
@@ -279,7 +281,7 @@ func (rt *Runtime) driftLoop(ctx context.Context, spec *drift.Spec, logf func(st
 			}
 			continue
 		}
-		summary := fmt.Sprintf("drift %s: %d domains, %d alerts, %d unchecked", spec.Name, rep.Domains, len(rep.Alerts), len(rep.Unchecked))
+		summary := fmt.Sprintf("drift %s: %s, %s, %d unchecked", spec.Name, plural(rep.Domains, "domain"), plural(len(rep.Alerts), "alert"), len(rep.Unchecked))
 		if rep.Webhook != "" {
 			summary += ", webhook " + rep.Webhook
 		}

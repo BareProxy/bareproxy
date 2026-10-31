@@ -100,15 +100,18 @@ func NewRuntime(c *Config, old *Runtime, version int, logf func(string, ...any),
 		if err := rt.startPlugins(old, logf); err != nil {
 			return nil, err
 		}
+		// Before anything shared with old changes (the ACME state's
+		// config), so a failure leaves the running config as it was. Only
+		// what this runtime started is stopped: its backends may be old's.
+		if err := rt.startInboxes(logf); err != nil {
+			rt.stopPlugins(old)
+			return nil, err
+		}
 		var prev *acmeState
 		if old != nil {
 			prev = old.acme
 		}
 		rt.acme = newACME(c, prev, rt.Mem)
-		if err := rt.startInboxes(logf); err != nil {
-			rt.Stop()
-			return nil, err
-		}
 		rt.startDrift(logf)
 	}
 	return rt, nil

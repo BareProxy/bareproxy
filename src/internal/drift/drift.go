@@ -195,7 +195,7 @@ type Checker struct {
 // ErrBusy says another check of the same watch is running.
 var ErrBusy = errors.New("another check of this watch is running")
 
-// Domains reads the watch's list: the config's domains, then the file's.
+// DomainList reads the watch's list: the config's domains, then the file's.
 func (s *Spec) DomainList() ([]string, error) {
 	out := slices.Clone(s.Domains)
 	if s.DomainsFile != "" {
@@ -334,6 +334,7 @@ func (c *Checker) checkDomain(ctx context.Context, s *Spec, d string, old *Known
 	res := Resolver{Addr: s.Resolver, Timeout: s.Timeout}
 	var out []Finding
 	var baseline []string
+	caaChecked := false
 	for _, typ := range s.Types {
 		got, err := res.Lookup(ctx, d, typ)
 		if err != nil {
@@ -366,6 +367,7 @@ func (c *Checker) checkDomain(ctx context.Context, s *Spec, d string, old *Known
 		}
 		k.Records[typ] = got
 		k.Seen[typ] = now.UTC().Format(time.RFC3339)
+		caaChecked = caaChecked || typ == "CAA"
 		switch {
 		case first || !had:
 			baseline = append(baseline, fmt.Sprintf("%s %s", typ, list(got)))
@@ -378,7 +380,7 @@ func (c *Checker) checkDomain(ctx context.Context, s *Spec, d string, old *Known
 		}
 	}
 	if s.CAA && slices.Contains(s.Types, "CAA") {
-		if caa, ok := k.Records["CAA"]; ok && k.Seen["CAA"] == now.UTC().Format(time.RFC3339) && len(caa) == 0 {
+		if caaChecked && len(k.Records["CAA"]) == 0 {
 			if f := c.caaGap(ctx, res, d); f != nil {
 				out = append(out, *f)
 			}

@@ -289,7 +289,7 @@ func (rt *Runtime) stopInboxes() {
 
 // hopHeaders aren't passed on with a stored event.
 var hopHeaders = []string{"Connection", "Keep-Alive", "Proxy-Connection", "Te", "Trailer", "Transfer-Encoding", "Upgrade",
-	"Content-Length", "BareProxy-Id", "BareProxy-Inbox-Id", "BareProxy-Inbox-Attempt", "BareProxy-Inbox-Replay"}
+	"Content-Length", "Expect", "Forwarded", "BareProxy-Id", "BareProxy-Inbox-Id", "BareProxy-Inbox-Attempt", "BareProxy-Inbox-Replay"}
 
 // deliverTo sends an event to the inbox's pool, through the same backend
 // choice, health and connection accounting as proxied requests.

@@ -117,8 +117,18 @@ Layout:
    flapping lookup doesn't alert. All on local test servers and a stub
    resolver, no internet.
 6. [done, pushed; re-record after the review] Record results in `results/` (script in `live/`, like the others).
-7. [in progress] Independent review of the diff, fixes, re-record.
-8. [ ] README, docs, CHANGELOG 0.16.0, version bump in
+7. [done, pushed] Review of the diff (a second pass of my own; no
+   separate agent could be started in that session), fixes, re-record.
+   Found and fixed: a data race in the TLS probe (a late handshake wrote to
+   a reused probe); an inbox that failed to open during an apply called
+   rt.Stop(), which would have stopped health checks of backends shared
+   with the running config, after the shared ACME state had already taken
+   the new config (now opened before ACME, and only what the new runtime
+   started is stopped); CAA gap judged from a stale timestamp; Expect and
+   Forwarded headers passed on to the app; a broken state file could panic;
+   plan missed changes in all but the last `domains` line; the browser demo
+   would refuse drift blocks with no resolver.
+8. [in progress] README, docs, CHANGELOG 0.16.0, version bump in
    `src/internal/bp/server.go`; push; watch CI and the release; check the
    files, SHA256SUMS, the latest/download links, run a downloaded binary.
 9. [ ] Site (photozeitgeist/bareproxy.com): two posts with numbers from
