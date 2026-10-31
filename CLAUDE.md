@@ -12,24 +12,30 @@ drift watcher (src/internal/drift, src/internal/bp/drift.go) against their
 promises; each suspected bug gets a failing test first (race detector on),
 then a fix; re-record results; 0.16.1 only if something real was fixed.
 
-## In progress: inbox and drift case studies (31 October 2026)
+## Done: inbox and drift case studies (31 October 2026)
 
-Plan (case study files only; no changes to the features' code):
-- [x] Download the released v0.16.0 Linux binary, check SHA256SUMS.
-- [x] Inbox case studies, local only: a small app on 127.0.0.1, webhooks
-      signed in the GitHub, Stripe and Shopify formats with test secrets
-      generated per run. Scenarios: an app deploy (app down about a minute
-      while webhooks keep coming), a SIGKILL mid-delivery and the in-doubt
-      replay, a sender retrying the same event (key-header dedupe), bad
-      signatures, operator replay after a bad deploy.
-- [x] Drift case studies (public DNS answers NXDOMAIN and HTTPS is
-      intercepted in this sandbox, so `lib/fakenet.py` stands in): public DNS/TLS if reachable from the sandbox
-      (badssl.com test hosts and well-known public names, never the owner's
-      domains), otherwise the repo's stub resolver and local TLS servers.
-- [x] Scripts and recorded output under `results/case-studies/`, rerunnable.
-- [x] Use-examples recipes, each one run and recorded.
-- [ ] Site posts on bareproxy.com (tag "case studies", like the other
-      project sites), linked from the two feature posts and the plugins page.
+Rerunnable scripts and recorded logs in `results/case-studies/`
+(`run-all.sh` reruns all; about six minutes; needs python3 with
+`cryptography`, curl, jq), all against the released v0.16.0 Linux binary:
+`inbox-deploy` (app down 67 s, 18/18 delivered once, longest wait 150 s with
+default backoff), `inbox-crash` (SIGKILL with 4 deliveries in the app: 0
+lost, 4 resends all marked in-doubt), `inbox-retries-replay` (forged and
+stale signatures 401 and not stored; GitHub/Shopify repeats deduped by
+key-header; a Stripe retry becomes a second event, since its ID is in the
+body; failed events replayed as `operator`), `drift-watch` (DNS move: MX,
+NS, CAA, issuer change found; flap noted, timeout unchecked; exit codes
+4/4/4/0) and `use-examples` (six recipes). Public DNS answers NXDOMAIN in
+the cloud sandbox and HTTPS is intercepted, so the drift runs use
+`lib/fakenet.py` (a stand-in DNS + HTTPS server, not the repo's drifttest).
+Site: four case study posts (tag "case studies") and a use examples post
+on bareproxy.com, linked from the two feature posts and the plugins page.
+
+Found during case studies (not bugs, nothing fixed): `give-up` is checked
+when an attempt fails, so an event can be tried once past the give-up time
+(up to one max backoff; seen: give-up 30s, last try at 34 s); docs/inbox.md
+could say so. `drift --history --json` prints times in local time while
+the text output is UTC. `BareProxy-Inbox-Attempt` restarts at 1 on an
+operator replay (the code counts per round; the manual doesn't say).
 
 ## Done: webhook inbox and DNS/TLS drift watcher (0.16.0, 31 October 2026)
 
