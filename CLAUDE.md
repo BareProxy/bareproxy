@@ -116,8 +116,8 @@ Layout:
    after; lookup failure or timeout is unchecked, never unchanged; one
    flapping lookup doesn't alert. All on local test servers and a stub
    resolver, no internet.
-6. [in progress] Record results in `results/` (script in `live/`, like the others).
-7. [ ] Independent review of the diff, fixes, re-record.
+6. [done, pushed; re-record after the review] Record results in `results/` (script in `live/`, like the others).
+7. [in progress] Independent review of the diff, fixes, re-record.
 8. [ ] README, docs, CHANGELOG 0.16.0, version bump in
    `src/internal/bp/server.go`; push; watch CI and the release; check the
    files, SHA256SUMS, the latest/download links, run a downloaded binary.

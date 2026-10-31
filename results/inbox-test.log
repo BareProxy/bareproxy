@@ -1,0 +1,45 @@
+# webhook inbox tests, 2026-10-31, go1.27.1 linux/amd64, Intel(R) Xeon(R) Processor @ 2.80GHz, 2 CPUs
+$ go test -count=1 -v ./internal/inbox/
+--- PASS: TestAddDeliverListGetReplay (0.05s)
+--- PASS: TestSendersKeyStoresOnce (0.11s)
+--- PASS: TestUpstreamDownThenBack (0.72s)
+--- PASS: TestNon2xxIsRetriedAndInDoubtIsMarked (0.16s)
+    inbox_test.go:65: note: event 18e3932f599c2eb9353b6c failed for good after 4 attempts since 2026-10-31 09:28:28 UTC; replay it once the app takes it
+--- PASS: TestGiveUpThenReplay (0.63s)
+    inbox_test.go:65: note: 1 event was in delivery when BareProxy stopped, so it is sent again, marked in-doubt
+--- PASS: TestCrashDuringDeliveryIsSentAgainMarked (0.03s)
+--- PASS: TestCloseDuringDeliveryIsSentAgainMarked (0.06s)
+--- PASS: TestDeliveredEventsStayDeliveredAfterRestart (0.65s)
+--- PASS: TestOrphanRequestFileIsDropped (0.01s)
+--- PASS: TestBrokenStateFileRefusesToOpen (0.00s)
+--- PASS: TestSweepDeletesOldEvents (0.03s)
+--- PASS: TestWorkersLimitInFlight (0.57s)
+--- PASS: TestDelay (0.00s)
+PASS
+ok  	bareproxy/internal/inbox	3.017s
+$ go test -count=1 -v -run TestInbox ./internal/bp/
+--- PASS: TestInboxAndDriftConfigErrors (0.00s)
+--- PASS: TestInboxAndDriftConfigsThatWork (0.00s)
+--- PASS: TestInboxStoresAnswersAndDelivers (0.09s)
+--- PASS: TestInboxUpstreamDownThenBack (10.77s)
+--- PASS: TestInboxSignatures (0.35s)
+--- PASS: TestInboxBodyLimitAndKeyHeader (0.26s)
+--- PASS: TestInboxKeepsDeliveringAcrossAnApply (0.14s)
+    inbox_test.go:505: 300 events, 3 SIGKILLs during delivery, 308 deliveries: 0 lost, 0 delivered twice unmarked, 8 sent again marked in-doubt
+--- PASS: TestInboxSurvivesSIGKILL (6.64s)
+PASS
+ok  	bareproxy/internal/bp	18.275s
+
+## The crash test, 5 runs
+    inbox_test.go:505: 300 events, 3 SIGKILLs during delivery, 312 deliveries: 0 lost, 0 delivered twice unmarked, 12 sent again marked in-doubt
+--- PASS: TestInboxSurvivesSIGKILL (4.67s)
+    inbox_test.go:505: 300 events, 3 SIGKILLs during delivery, 309 deliveries: 0 lost, 0 delivered twice unmarked, 9 sent again marked in-doubt
+--- PASS: TestInboxSurvivesSIGKILL (5.00s)
+    inbox_test.go:505: 300 events, 3 SIGKILLs during delivery, 311 deliveries: 0 lost, 0 delivered twice unmarked, 11 sent again marked in-doubt
+--- PASS: TestInboxSurvivesSIGKILL (4.94s)
+    inbox_test.go:505: 300 events, 3 SIGKILLs during delivery, 312 deliveries: 0 lost, 0 delivered twice unmarked, 12 sent again marked in-doubt
+--- PASS: TestInboxSurvivesSIGKILL (4.42s)
+    inbox_test.go:505: 300 events, 3 SIGKILLs during delivery, 312 deliveries: 0 lost, 0 delivered twice unmarked, 12 sent again marked in-doubt
+--- PASS: TestInboxSurvivesSIGKILL (5.05s)
+ok  	bareproxy/internal/bp	24.118s
+Total: 1500 webhooks, 15 SIGKILLs during delivery, 1556 deliveries: 0 lost, 0 delivered twice unmarked, 56 sent again marked in-doubt
