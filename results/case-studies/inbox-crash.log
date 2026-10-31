@@ -1,0 +1,108 @@
+# Case study: a crash in the middle of deliveries
+# bareproxy 0.16.0, built with go1.27.3, 2026-10-31 10:40:05 UTC, Linux x86_64
+
+## Config
+
+global
+  admin /work/admin.sock
+  state /work/state
+  trace-log /work/requests.log 10MB 2
+
+site http://hooks.test:35151
+  route /hooks/stripe -> inbox stripe
+
+inbox stripe
+  deliver app
+  signature stripe /work/stripe-secret
+  workers 4
+
+pool app
+  backend 127.0.0.1:38011
+
+## Six webhooks; the app takes 3 s for each
+
+t=0.4s stripe   evt_ed4a5f1aa09a4b10a51f4787 -> 202 18e39717fcbb1e9eb853af (52 ms)
+t=0.6s stripe   evt_12ebcaa72a06499fb8bf5700 -> 202 18e397180ac8f2dcb90cc6 (30 ms)
+t=0.8s stripe   evt_a6a1002dcb4d4dca9e15abd2 -> 202 18e397181728d75c7bc869 (44 ms)
+t=1.1s stripe   evt_0312a4579980402e9fa124d7 -> 202 18e3971825e79fc43daf20 (28 ms)
+t=1.3s stripe   evt_7e97fffa68a74aa68f346ca4 -> 202 18e39718327aba44464fe8 (34 ms)
+t=1.5s stripe   evt_ca80729a1e014f908d28e624 -> 202 18e397184058b736bf8ca6 (42 ms)
+
+## SIGKILL while four deliveries are inside the app
+
+t=2.8s kill -9 bareproxy
+The event files on disk, as BareProxy left them:
+18e39717fcbb1e9eb853af.state: {"id":"18e39717fcbb1e9eb853af","received":"2026-10-31T10:40:05.903752862Z","path":"/hooks/stripe","size":162,"status":"delivering","since":"2026-10-31T10:40:05.903752862Z","next_at":"2026-10-31T10:40:05.903752862Z","attempts":[{"start":"2026-10-31T10:40:05.908055171Z"}]}
+18e397180ac8f2dcb90cc6.state: {"id":"18e397180ac8f2dcb90cc6","received":"2026-10-31T10:40:06.139540188Z","path":"/hooks/stripe","size":162,"status":"delivering","since":"2026-10-31T10:40:06.139540188Z","next_at":"2026-10-31T10:40:06.139540188Z","attempts":[{"start":"2026-10-31T10:40:06.143345849Z"}]}
+18e397181728d75c7bc869.state: {"id":"18e397181728d75c7bc869","received":"2026-10-31T10:40:06.347151196Z","path":"/hooks/stripe","size":162,"status":"delivering","since":"2026-10-31T10:40:06.347151196Z","next_at":"2026-10-31T10:40:06.347151196Z","attempts":[{"start":"2026-10-31T10:40:06.356158013Z"}]}
+18e3971825e79fc43daf20.state: {"id":"18e3971825e79fc43daf20","received":"2026-10-31T10:40:06.594535364Z","path":"/hooks/stripe","size":162,"status":"delivering","since":"2026-10-31T10:40:06.594535364Z","next_at":"2026-10-31T10:40:06.594535364Z","attempts":[{"start":"2026-10-31T10:40:06.597335797Z"}]}
+18e39718327aba44464fe8.state: {"id":"18e39718327aba44464fe8","received":"2026-10-31T10:40:06.805502532Z","path":"/hooks/stripe","size":162,"status":"pending","since":"2026-10-31T10:40:06.805502532Z","next_at":"2026-10-31T10:40:06.805502532Z"}
+18e397184058b736bf8ca6.state: {"id":"18e397184058b736bf8ca6","received":"2026-10-31T10:40:07.03815455Z","path":"/hooks/stripe","size":162,"status":"pending","since":"2026-10-31T10:40:07.03815455Z","next_at":"2026-10-31T10:40:07.03815455Z"}
+
+## A webhook arrives while BareProxy is down
+
+t=3.0s stripe   evt_sent_during_outage -> no answer (URLError)  (21 ms)
+t=6.1s the app has finished what it had:
+{"t": 3.5, "path": "/hooks/stripe", "inbox_id": "18e39717fcbb1e9eb853af", "attempt": 1, "replay": "", "sender_event": "evt_ed4a5f1aa09a4b10a51f4787", "result": "200 processed"}
+{"t": 3.7, "path": "/hooks/stripe", "inbox_id": "18e397180ac8f2dcb90cc6", "attempt": 1, "replay": "", "sender_event": "evt_12ebcaa72a06499fb8bf5700", "result": "200 processed"}
+{"t": 3.9, "path": "/hooks/stripe", "inbox_id": "18e397181728d75c7bc869", "attempt": 1, "replay": "", "sender_event": "evt_a6a1002dcb4d4dca9e15abd2", "result": "200 processed"}
+{"t": 4.2, "path": "/hooks/stripe", "inbox_id": "18e3971825e79fc43daf20", "attempt": 1, "replay": "", "sender_event": "evt_0312a4579980402e9fa124d7", "result": "200 processed"}
+
+## BareProxy starts again; the sender of event 7 tries again
+
+t=6.1s bareproxy run
+t=6.4s stripe   evt_sent_during_outage -> 202 18e39719620ad0e08b13f2 (35 ms)
+t=6.6s nothing pending
+
+## What the app received (one line per delivery)
+
+{"t": 3.5, "path": "/hooks/stripe", "inbox_id": "18e39717fcbb1e9eb853af", "attempt": 1, "replay": "", "sender_event": "evt_ed4a5f1aa09a4b10a51f4787", "result": "200 processed"}
+{"t": 3.7, "path": "/hooks/stripe", "inbox_id": "18e397180ac8f2dcb90cc6", "attempt": 1, "replay": "", "sender_event": "evt_12ebcaa72a06499fb8bf5700", "result": "200 processed"}
+{"t": 3.9, "path": "/hooks/stripe", "inbox_id": "18e397181728d75c7bc869", "attempt": 1, "replay": "", "sender_event": "evt_a6a1002dcb4d4dca9e15abd2", "result": "200 processed"}
+{"t": 4.2, "path": "/hooks/stripe", "inbox_id": "18e3971825e79fc43daf20", "attempt": 1, "replay": "", "sender_event": "evt_0312a4579980402e9fa124d7", "result": "200 processed"}
+{"t": 6.2, "path": "/hooks/stripe", "inbox_id": "18e39717fcbb1e9eb853af", "attempt": 2, "replay": "in-doubt", "sender_event": "evt_ed4a5f1aa09a4b10a51f4787", "result": "200 duplicate, not processed again"}
+{"t": 6.2, "path": "/hooks/stripe", "inbox_id": "18e397180ac8f2dcb90cc6", "attempt": 2, "replay": "in-doubt", "sender_event": "evt_12ebcaa72a06499fb8bf5700", "result": "200 duplicate, not processed again"}
+{"t": 6.2, "path": "/hooks/stripe", "inbox_id": "18e397181728d75c7bc869", "attempt": 2, "replay": "in-doubt", "sender_event": "evt_a6a1002dcb4d4dca9e15abd2", "result": "200 duplicate, not processed again"}
+{"t": 6.2, "path": "/hooks/stripe", "inbox_id": "18e3971825e79fc43daf20", "attempt": 2, "replay": "in-doubt", "sender_event": "evt_0312a4579980402e9fa124d7", "result": "200 duplicate, not processed again"}
+{"t": 6.2, "path": "/hooks/stripe", "inbox_id": "18e39718327aba44464fe8", "attempt": 1, "replay": "", "sender_event": "evt_7e97fffa68a74aa68f346ca4", "result": "200 processed"}
+{"t": 6.2, "path": "/hooks/stripe", "inbox_id": "18e397184058b736bf8ca6", "attempt": 1, "replay": "", "sender_event": "evt_ca80729a1e014f908d28e624", "result": "200 processed"}
+{"t": 6.4, "path": "/hooks/stripe", "inbox_id": "18e39719620ad0e08b13f2", "attempt": 1, "replay": "", "sender_event": "evt_sent_during_outage", "result": "200 processed"}
+
+## Inbox
+
+Inbox stripe (line 9), to pool app, in /work/state/inbox/stripe
+  0 pending, 0 delivering, 7 delivered, 0 failed
+  18e39719620ad0e08b13f2  2026-10-31 10:40:11  delivered           /hooks/stripe, 156 B, 1 attempt, last: 200
+  18e397184058b736bf8ca6  2026-10-31 10:40:07  delivered           /hooks/stripe, 162 B, 1 attempt, last: 200
+  18e39718327aba44464fe8  2026-10-31 10:40:06  delivered           /hooks/stripe, 162 B, 1 attempt, last: 200
+  18e3971825e79fc43daf20  2026-10-31 10:40:06  delivered           /hooks/stripe, 162 B, 2 attempts, last: 200
+  18e397181728d75c7bc869  2026-10-31 10:40:06  delivered           /hooks/stripe, 162 B, 2 attempts, last: 200
+  18e397180ac8f2dcb90cc6  2026-10-31 10:40:06  delivered           /hooks/stripe, 162 B, 2 attempts, last: 200
+  18e39717fcbb1e9eb853af  2026-10-31 10:40:05  delivered           /hooks/stripe, 162 B, 2 attempts, last: 200
+
+## One of the in-doubt events
+
+Event 18e39717fcbb1e9eb853af in inbox stripe: delivered
+Received 2026-10-31 10:40:05.903 UTC: POST hooks.test:35151/hooks/stripe, 162 B
+  Accept-Encoding: identity
+  Connection: close
+  Content-Length: 162
+  Content-Type: application/json
+  Stripe-Signature: t=1793443205,v1=ea301f177160985da80eddf2b8face441d65ab0063e94be99de83dca29b277b4
+  User-Agent: case-study-sender
+  X-Forwarded-For: 127.0.0.1
+  X-Forwarded-Host: hooks.test:35151
+  X-Forwarded-Proto: http
+Attempt 1 at 2026-10-31 10:40:05: BareProxy stopped during the attempt, may have reached the app
+Attempt 2 at 2026-10-31 10:40:11: 200 (marked in-doubt)
+Delivered 2026-10-31 10:40:11 UTC
+
+## Summary
+
+webhooks sent: 8, answered 202: 7, no answer: 1
+deliveries: 11, distinct events: 7
+events the senders got a 202 for that never reached the app: 0
+events that reached the app twice: 4
+  of those, second delivery marked in-doubt: 4
+deliveries marked in-doubt: 4
+processed by the app: 7, skipped as repeats: 4

@@ -1,0 +1,200 @@
+# Use examples: each recipe run once
+# bareproxy 0.16.0, built with go1.27.3, 2026-10-31 10:44:03 UTC, Linux x86_64
+
+## Recipes 1 to 3 share this config
+
+global
+  admin /work/admin.sock
+  state /work/state
+  trace-log /work/requests.log 10MB 2
+
+site http://hooks.test:56529
+  route /hooks/stripe -> inbox stripe
+  route /hooks/github -> inbox github
+
+inbox stripe
+  deliver app
+  signature stripe /work/etc/stripe-secret
+  retry 5s 2m
+
+inbox github
+  deliver app
+  signature github /work/etc/github-secret
+  key-header X-GitHub-Delivery
+  retry 2s 5s
+  give-up 15s
+
+pool app
+  backend 127.0.0.1:39059
+  health /healthz
+$ bareproxy check /work/hooks.conf
+/work/hooks.conf: ok, 1 site, 1 pool, 2 rules; listening on :56529 (http)
+
+## Recipe 1: an inbox in front of an app that restarts on every deploy
+
+t=1.4s app stopped
+t=1.4s stripe   evt_cc532c8afccb474e81d8d69f -> 202 18e3974fbf8843d392cc36 (20 ms)
+t=16.8s app back
+t=37.2s delivered:
+{"t": 36.5, "path": "/hooks/stripe", "inbox_id": "18e3974fbf8843d392cc36", "attempt": 4, "replay": "", "sender_event": "evt_cc532c8afccb474e81d8d69f", "result": "200 processed"}
+
+## Recipe 2: Stripe signatures
+
+t=37.5s stripe   evt_4f3f170fe74f45028e9ff220 -> 202 18e3975827b78be1d17305 (73 ms)
+t=37.8s stripe   evt_45e4a14f185e4de684199468 -> 401  (77 ms)
+t=38.2s stripe   evt_e636ba2d158442368b3dc2ec -> 401  (45 ms)
+
+## Recipe 3: replay what failed during an outage
+
+t=38.3s the app answers 500
+t=38.5s github   155493cd-d51f-43f0-bad5-fd661337a3fc -> 202 18e39758638e4c637f884c (46 ms)
+t=38.9s github   f0944857-c6c7-4eed-acb2-fce5a8436c16 -> 202 18e39758786c365152c1d6 (65 ms)
+$ bareproxy inbox -c /work/hooks.conf list github --status failed
+Inbox github (line 15), to pool app, in /work/state/inbox/github
+  0 pending, 0 delivering, 0 delivered, 2 failed
+  18e39758786c365152c1d6  2026-10-31 10:44:42  failed              /hooks/github, 158 B, 5 attempts, last: 500
+  18e39758638e4c637f884c  2026-10-31 10:44:42  failed              /hooks/github, 158 B, 5 attempts, last: 500
+$ bareproxy inbox -c /work/hooks.conf replay github --failed
+Replayed 2 events; each delivery carries BareProxy-Inbox-Replay: operator.
+Deliveries after the replay:
+{"t":55.5,"path":"/hooks/github","inbox_id":"18e39758638e4c637f884c","attempt":1,"replay":"operator","sender_event":"155493cd-d51f-43f0-bad5-fd661337a3fc","result":"200 processed"}
+{"t":55.5,"path":"/hooks/github","inbox_id":"18e39758786c365152c1d6","attempt":1,"replay":"operator","sender_event":"f0944857-c6c7-4eed-acb2-fce5a8436c16","result":"200 processed"}
+$ bareproxy inbox -c /work/hooks.conf show github 18e39758638e4c637f884c
+Event 18e39758638e4c637f884c in inbox github: delivered
+Received 2026-10-31 10:44:42.506 UTC: POST hooks.test:56529/hooks/github, 158 B
+Sender's ID: 155493cd-d51f-43f0-bad5-fd661337a3fc
+  Accept-Encoding: identity
+  Connection: close
+  Content-Length: 158
+  Content-Type: application/json
+  User-Agent: case-study-sender
+  X-Forwarded-For: 127.0.0.1
+  X-Forwarded-Host: hooks.test:56529
+  X-Forwarded-Proto: http
+  X-Github-Delivery: 155493cd-d51f-43f0-bad5-fd661337a3fc
+  X-Github-Event: push
+  X-Hub-Signature-256: sha256=2b260d3d8279e25a77938f36fb3ed3a316979d3fd7c87c6ab92e8491e3374e11
+Attempt 1 at 2026-10-31 10:44:42: 500
+Attempt 2 at 2026-10-31 10:44:44: 500
+Attempt 3 at 2026-10-31 10:44:48: 500
+Attempt 4 at 2026-10-31 10:44:53: 500
+Attempt 5 at 2026-10-31 10:44:58: 500
+Attempt 6 at 2026-10-31 10:44:59: 200 (marked operator)
+Delivered 2026-10-31 10:44:59 UTC
+
+## Recipe 4: drift in CI, failing the job on alerts
+
+global
+  state /work/ci-state
+
+drift sites
+  domains www.example.test shop.example.test
+  resolver 127.0.0.1:54879
+  port 59937
+  ca /work/net/t-ca.pem
+
+drift-check.sh:
+#!/bin/sh
+bareproxy drift -c drift-ci.conf
+case $? in
+  0) echo "drift: all clear" ;;
+  3) echo "drift: some parts couldn't be checked, see above" ;;
+  4) echo "drift: alerts, failing the job"; exit 1 ;;
+  *) echo "drift: the check couldn't run"; exit 1 ;;
+esac
+
+$ ./drift-check.sh
+Drift watch sites, 2 domains, 2026-10-31 10:45:01 UTC, took 0.1 s
+ALERT      shop.example.test  certificate ends in 11 days (2026-11-12 10:45 UTC), inside the 21-day window
+NOTE       shop.example.test  first look, recorded: A 127.0.0.1; AAAA (none); CNAME (none); MX (none); NS (none); TXT (none); CAA (none); certificate shop.example.test, issued by Recipe Test CA, Case Study, ends 2026-11-12, sha256 21acd3708494cf17
+NOTE       www.example.test  first look, recorded: A 127.0.0.1; AAAA (none); CNAME (none); MX (none); NS (none); TXT (none); CAA (none); certificate www.example.test, issued by Recipe Test CA, Case Study, ends 2026-12-30, sha256 249e9a4555999f72
+Result: 1 alert, 0 unchecked
+drift: alerts, failing the job
+(job exit code 1)
+
+With expiry 7d, the certificate with 11 days left is outside the window:
+Drift watch sites, 2 domains, 2026-10-31 10:45:01 UTC, took 0.0 s
+OK         2 domains with nothing to report
+Result: 0 alerts, 0 unchecked
+drift: all clear
+(job exit code 0)
+
+## Recipe 5: drift every hour inside the server, with a webhook alert
+
+global
+  admin /work/admin2.sock
+  state /work/state2
+
+site http://status.test:47465
+  route /* -> respond 200 "ok"
+
+drift sites
+  domains www.example.test shop.example.test
+  resolver 127.0.0.1:54879
+  port 59937
+  ca /work/net/t-ca.pem
+  every 1h
+  webhook http://127.0.0.1:38069/bareproxy
+
+The alert receiver got:
+{"watch":"sites","domains":2,"alerts":[{"domain":"shop.example.test","text":"certificate ends in 11 days (2026-11-12 10:45 UTC), inside the 21-day window"}],"unchecked":0}
+
+$ bareproxy events -c /work/server-drift.conf
+2026-10-31T10:45:02.501Z  start        version 1 running (startup by root): 1 site, 0 pools, 1 rule; listening on :47465 (http)
+2026-10-31T10:45:07.519Z  drift        drift sites: 2 domains, 1 alert, 0 unchecked, webhook sent, answered 204
+2026-10-31T10:45:07.519Z  drift        drift sites: shop.example.test certificate ends in 11 days (2026-11-12 10:45 UTC), inside the 21-day window
+
+## Recipe 6: reading the history
+
+(www.example.test moved to 127.0.0.2)
+$ bareproxy drift -c /work/drift-ci.conf
+Drift watch sites, 2 domains, 2026-10-31 10:45:07 UTC, took 0.0 s
+ALERT      www.example.test  A changed
+           before: 127.0.0.1
+           after:  127.0.0.2
+OK         1 domain with nothing to report
+Result: 1 alert, 0 unchecked
+(exit code 4)
+$ bareproxy drift -c /work/drift-ci.conf --history
+Drift watch sites, history:
+2026-10-31 10:45:01  shop.example.test  first look, recorded: A 127.0.0.1; AAAA (none); CNAME (none); MX (none); NS (none); TXT (none); CAA (none); certificate shop.example.test, issued by Recipe Test CA, Case Study, ends 2026-11-12, sha256 21acd3708494cf17
+2026-10-31 10:45:01  www.example.test  first look, recorded: A 127.0.0.1; AAAA (none); CNAME (none); MX (none); NS (none); TXT (none); CAA (none); certificate www.example.test, issued by Recipe Test CA, Case Study, ends 2026-12-30, sha256 249e9a4555999f72
+2026-10-31 10:45:07  www.example.test  A changed
+                     before: 127.0.0.1
+                     after:  127.0.0.2
+
+$ bareproxy drift -c drift-ci.conf --history --json | jq ...
+{"time":"2026-10-31T12:45:07.671489159+02:00","domain":"www.example.test","kind":"record-changed","part":"A","text":"A changed","before":["127.0.0.1"],"after":["127.0.0.2"]}
+
+(the raw JSON, first 40 lines)
+{
+  "sites": [
+    {
+      "time": "2026-10-31T12:45:01.797219307+02:00",
+      "domain": "shop.example.test",
+      "kind": "baseline",
+      "part": "all",
+      "text": "first look, recorded: A 127.0.0.1; AAAA (none); CNAME (none); MX (none); NS (none); TXT (none); CAA (none); certificate shop.example.test, issued by Recipe Test CA, Case Study, ends 2026-11-12, sha256 21acd3708494cf17"
+    },
+    {
+      "time": "2026-10-31T12:45:01.797219307+02:00",
+      "domain": "www.example.test",
+      "kind": "baseline",
+      "part": "all",
+      "text": "first look, recorded: A 127.0.0.1; AAAA (none); CNAME (none); MX (none); NS (none); TXT (none); CAA (none); certificate www.example.test, issued by Recipe Test CA, Case Study, ends 2026-12-30, sha256 249e9a4555999f72"
+    },
+    {
+      "time": "2026-10-31T12:45:07.671489159+02:00",
+      "domain": "www.example.test",
+      "kind": "record-changed",
+      "part": "A",
+      "text": "A changed",
+      "before": [
+        "127.0.0.1"
+      ],
+      "after": [
+        "127.0.0.2"
+      ]
+    }
+  ]
+}

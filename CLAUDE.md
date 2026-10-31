@@ -15,18 +15,19 @@ then a fix; re-record results; 0.16.1 only if something real was fixed.
 ## In progress: inbox and drift case studies (31 October 2026)
 
 Plan (case study files only; no changes to the features' code):
-- [ ] Download the released v0.16.0 Linux binary, check SHA256SUMS.
-- [ ] Inbox case studies, local only: a small app on 127.0.0.1, webhooks
+- [x] Download the released v0.16.0 Linux binary, check SHA256SUMS.
+- [x] Inbox case studies, local only: a small app on 127.0.0.1, webhooks
       signed in the GitHub, Stripe and Shopify formats with test secrets
       generated per run. Scenarios: an app deploy (app down about a minute
       while webhooks keep coming), a SIGKILL mid-delivery and the in-doubt
       replay, a sender retrying the same event (key-header dedupe), bad
       signatures, operator replay after a bad deploy.
-- [ ] Drift case studies: public DNS/TLS if reachable from the sandbox
+- [x] Drift case studies (public DNS answers NXDOMAIN and HTTPS is
+      intercepted in this sandbox, so `lib/fakenet.py` stands in): public DNS/TLS if reachable from the sandbox
       (badssl.com test hosts and well-known public names, never the owner's
       domains), otherwise the repo's stub resolver and local TLS servers.
-- [ ] Scripts and recorded output under `results/case-studies/`, rerunnable.
-- [ ] Use-examples recipes, each one run and recorded.
+- [x] Scripts and recorded output under `results/case-studies/`, rerunnable.
+- [x] Use-examples recipes, each one run and recorded.
 - [ ] Site posts on bareproxy.com (tag "case studies", like the other
       project sites), linked from the two feature posts and the plugins page.
 

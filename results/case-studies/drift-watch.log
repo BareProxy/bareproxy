@@ -1,0 +1,107 @@
+# Case study: a DNS move that went wrong
+# bareproxy 0.16.0, built with go1.27.3, 2026-10-31 10:41:06 UTC, Linux x86_64
+# DNS and HTTPS from lib/fakenet.py on 127.0.0.1 (resolver port 56839, TLS port 53711)
+
+## Config
+
+global
+  state /work/state
+
+drift acme
+  domains acme.test www.acme.test shop.acme.test blog.acme.test
+  domains api.acme.test status.otherco.test
+  resolver 127.0.0.1:56839
+  port 53711
+  ca /work/ca-bundle.pem
+  timeout 2s
+
+## Check 1: the baseline
+
+$ bareproxy drift -c /work/drift.conf
+Drift watch acme, 6 domains, 2026-10-31 10:41:07 UTC, took 0.1 s
+ALERT      blog.acme.test  no Strict-Transport-Security header on https://blog.acme.test/
+ALERT      shop.acme.test  certificate ends in 8 days (2026-11-09 10:41 UTC), inside the 21-day window
+ALERT      status.otherco.test  no CAA records here or on its parent names, so any CA may issue a certificate for it
+NOTE       acme.test  first look, recorded: A 127.0.0.1; AAAA (none); CNAME (none); MX 10 mx1.mailhost.test, 20 mx2.mailhost.test; NS ns1.dnshost-a.test, ns2.dnshost-a.test; TXT "v=spf1 include:mailhost.test -all"; CAA 0 issue "old-ca.test"; certificate acme.test, issued by Acme Old Test CA, Case Study, ends 2026-12-30, sha256 89069d08fa67696e
+NOTE       api.acme.test  first look, recorded: A 127.0.0.1; AAAA (none); CNAME (none); MX (none); NS (none); TXT (none); CAA (none); certificate api.acme.test, issued by Acme Old Test CA, Case Study, ends 2026-12-20, sha256 d025db8d796cd071
+NOTE       blog.acme.test  first look, recorded: A 127.0.0.1; AAAA (none); CNAME (none); MX (none); NS (none); TXT (none); CAA (none); certificate blog.acme.test, issued by Acme Old Test CA, Case Study, ends 2027-01-09, sha256 e6d03b4d8003e0c2
+NOTE       shop.acme.test  first look, recorded: A 127.0.0.1; AAAA (none); CNAME (none); MX (none); NS (none); TXT (none); CAA (none); certificate shop.acme.test, issued by Acme Old Test CA, Case Study, ends 2026-11-09, sha256 a60e40ac6b065770
+NOTE       status.otherco.test  first look, recorded: A 127.0.0.1; AAAA (none); CNAME (none); MX (none); NS (none); TXT (none); CAA (none); certificate status.otherco.test, issued by Acme Old Test CA, Case Study, ends 2026-12-10, sha256 2b40c94f9542d4fc
+NOTE       www.acme.test  first look, recorded: A 127.0.0.1; AAAA (none); CNAME (none); MX (none); NS (none); TXT (none); CAA (none); certificate www.acme.test, issued by Acme Old Test CA, Case Study, ends 2027-01-19, sha256 c13e1c37d0b4efa1
+Result: 3 alerts, 0 unchecked
+(exit code 4)
+
+## Check 2: after the move to the new DNS host
+
+Changed since check 1: NS, MX and CAA on acme.test; shop.acme.test renewed by the second CA;
+api.acme.test answers 127.0.0.9 once; the resolver drops the MX question for www.acme.test.
+$ bareproxy drift -c /work/drift.conf
+Drift watch acme, 6 domains, 2026-10-31 10:41:07 UTC, took 4.0 s
+ALERT      acme.test  MX changed
+           before: 10 mx1.mailhost.test, 20 mx2.mailhost.test
+           after:  10 mx1.mailhost.test
+ALERT      acme.test  nameservers moved: ns1.dnshost-a.test, ns2.dnshost-a.test -> ns1.cheapdns.test, ns2.cheapdns.test
+           before: ns1.dnshost-a.test, ns2.dnshost-a.test
+           after:  ns1.cheapdns.test, ns2.cheapdns.test
+ALERT      acme.test  CAA changed
+           before: 0 issue "old-ca.test"
+           after:  0 issue "new-ca.test"
+ALERT      blog.acme.test  no Strict-Transport-Security header on https://blog.acme.test/
+ALERT      shop.acme.test  certificate changed and its issuer too: Acme Old Test CA, Case Study -> Second Test CA, Case Study
+           before: shop.acme.test, issued by Acme Old Test CA, Case Study, ends 2026-11-09, sha256 a60e40ac6b065770
+           after:  shop.acme.test, issued by Second Test CA, Case Study, ends 2027-01-29, sha256 74e048b497a6d18d
+ALERT      status.otherco.test  no CAA records here or on its parent names, so any CA may issue a certificate for it
+UNCHECKED  www.acme.test  MX: lookup failed twice (timeout); last known (none) kept
+NOTE       api.acme.test  A: one lookup showed 127.0.0.9, the next showed the known 127.0.0.1 again; not reported
+Result: 6 alerts, 1 unchecked
+(exit code 4)
+
+## Check 3: nothing changed since check 2
+
+$ bareproxy drift -c /work/drift.conf
+Drift watch acme, 6 domains, 2026-10-31 10:41:11 UTC, took 0.1 s
+ALERT      blog.acme.test  no Strict-Transport-Security header on https://blog.acme.test/
+ALERT      status.otherco.test  no CAA records here or on its parent names, so any CA may issue a certificate for it
+OK         4 domains with nothing to report
+Result: 2 alerts, 0 unchecked
+(exit code 4)
+
+## Check 4: HSTS on blog.acme.test, a CAA record on otherco.test
+
+$ bareproxy drift -c /work/drift.conf
+Drift watch acme, 6 domains, 2026-10-31 10:41:12 UTC, took 0.1 s
+OK         6 domains with nothing to report
+Result: 0 alerts, 0 unchecked
+
+## The history
+
+$ bareproxy drift -c /work/drift.conf --history
+Drift watch acme, history:
+2026-10-31 10:41:07  acme.test  first look, recorded: A 127.0.0.1; AAAA (none); CNAME (none); MX 10 mx1.mailhost.test, 20 mx2.mailhost.test; NS ns1.dnshost-a.test, ns2.dnshost-a.test; TXT "v=spf1 include:mailhost.test -all"; CAA 0 issue "old-ca.test"; certificate acme.test, issued by Acme Old Test CA, Case Study, ends 2026-12-30, sha256 89069d08fa67696e
+2026-10-31 10:41:07  api.acme.test  first look, recorded: A 127.0.0.1; AAAA (none); CNAME (none); MX (none); NS (none); TXT (none); CAA (none); certificate api.acme.test, issued by Acme Old Test CA, Case Study, ends 2026-12-20, sha256 d025db8d796cd071
+2026-10-31 10:41:07  blog.acme.test  first look, recorded: A 127.0.0.1; AAAA (none); CNAME (none); MX (none); NS (none); TXT (none); CAA (none); certificate blog.acme.test, issued by Acme Old Test CA, Case Study, ends 2027-01-09, sha256 e6d03b4d8003e0c2
+2026-10-31 10:41:07  shop.acme.test  first look, recorded: A 127.0.0.1; AAAA (none); CNAME (none); MX (none); NS (none); TXT (none); CAA (none); certificate shop.acme.test, issued by Acme Old Test CA, Case Study, ends 2026-11-09, sha256 a60e40ac6b065770
+2026-10-31 10:41:07  status.otherco.test  first look, recorded: A 127.0.0.1; AAAA (none); CNAME (none); MX (none); NS (none); TXT (none); CAA (none); certificate status.otherco.test, issued by Acme Old Test CA, Case Study, ends 2026-12-10, sha256 2b40c94f9542d4fc
+2026-10-31 10:41:07  www.acme.test  first look, recorded: A 127.0.0.1; AAAA (none); CNAME (none); MX (none); NS (none); TXT (none); CAA (none); certificate www.acme.test, issued by Acme Old Test CA, Case Study, ends 2027-01-19, sha256 c13e1c37d0b4efa1
+2026-10-31 10:41:07  acme.test  MX changed
+                     before: 10 mx1.mailhost.test, 20 mx2.mailhost.test
+                     after:  10 mx1.mailhost.test
+2026-10-31 10:41:07  acme.test  nameservers moved: ns1.dnshost-a.test, ns2.dnshost-a.test -> ns1.cheapdns.test, ns2.cheapdns.test
+                     before: ns1.dnshost-a.test, ns2.dnshost-a.test
+                     after:  ns1.cheapdns.test, ns2.cheapdns.test
+2026-10-31 10:41:07  acme.test  CAA changed
+                     before: 0 issue "old-ca.test"
+                     after:  0 issue "new-ca.test"
+2026-10-31 10:41:07  shop.acme.test  certificate changed and its issuer too: Acme Old Test CA, Case Study -> Second Test CA, Case Study
+                     before: shop.acme.test, issued by Acme Old Test CA, Case Study, ends 2026-11-09, sha256 a60e40ac6b065770
+                     after:  shop.acme.test, issued by Second Test CA, Case Study, ends 2027-01-29, sha256 74e048b497a6d18d
+
+## Check 4 again as JSON, summed up with jq
+
+{"watch":"acme","domains":6,"clean":6,"alerts":0,"unchecked":0}
+(exit code 0)
+
+## Questions the resolver got over the four checks and the JSON run
+
+total questions: 240
+dropped (no reply): 2

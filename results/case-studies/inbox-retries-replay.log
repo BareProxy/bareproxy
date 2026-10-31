@@ -1,0 +1,178 @@
+# Case study: forged signatures, repeated events and a bad deploy
+# bareproxy 0.16.0, built with go1.27.3, 2026-10-31 10:40:12 UTC, Linux x86_64
+
+## Config
+
+global
+  admin /work/admin.sock
+  state /work/state
+  trace-log /work/requests.log 10MB 2
+
+site http://hooks.test:33945
+  route /hooks/github -> inbox github
+  route /hooks/shopify -> inbox shopify
+  route /hooks/stripe -> inbox stripe
+
+inbox github
+  deliver app
+  signature github /work/github-secret
+  key-header X-GitHub-Delivery
+  retry 2s 10s
+  give-up 30s
+
+inbox shopify
+  deliver app
+  signature shopify /work/shopify-secret
+  key-header X-Shopify-Webhook-Id
+  retry 2s 10s
+  give-up 30s
+
+inbox stripe
+  deliver app
+  signature stripe /work/stripe-secret
+  retry 2s 10s
+  give-up 30s
+
+pool app
+  backend 127.0.0.1:47009
+
+## What an inbox route does
+
+$ bareproxy explain -c /work/bareproxy.conf POST http://hooks.test:33945/hooks/github
+Running config /work/bareproxy.conf, version 1
+Site hooks.test (line 6): exact host match
+  line 7    route /hooks/github -> inbox github   match
+Path: /hooks/github
+Inbox github (line 11): stored in /work/state/inbox/github, answered 202 once on disk
+  checked first: github signature in X-Hub-Signature-256 (401 when it doesn't match)
+  delivered to pool app as POST /hooks/github, retried from 2s up to 10s apart, for 30s
+Action: 202 (inbox)
+
+## Part 1: signatures
+
+t=0.4s github   47f362b3-3424-4a46-a105-0eb6af4ae89a -> 202 18e39719adb22915ba6373 (23 ms)
+t=0.5s github   f937ca94-86f8-47b3-a2f8-2ec5d426af61 -> 401  (23 ms)
+t=0.6s shopify  ccc74f55-0fc0-42a6-ab62-2d2c5c96c6a8 -> 401  (14 ms)
+t=0.7s stripe   evt_509144e18a0c4b6d90bd049b -> 401  (14 ms)
+t=0.8s stripe   evt_112af34551f44141a5f8efe1 -> 401  (15 ms)
+t=0.9s stripe   evt_bf9f2db2bc8f4cb48a899eff -> 202 18e39719cb99d55ca20def (21 ms)
+Stored events:
+Inbox github (line 11), to pool app, in /work/state/inbox/github
+  0 pending, 0 delivering, 1 delivered, 0 failed
+Inbox shopify (line 18), to pool app, in /work/state/inbox/shopify
+  0 pending, 0 delivering, 0 delivered, 0 failed
+Inbox stripe (line 25), to pool app, in /work/state/inbox/stripe
+  0 pending, 0 delivering, 1 delivered, 0 failed
+
+## Part 2: the sender sends the same event again
+
+GitHub redelivers with the same X-GitHub-Delivery:
+t=1.2s github   a0888bb8-a998-4350-89f0-4f1b54de1295 -> 202 18e39719dfb133d0b152ba (43 ms)
+t=1.4s github   a0888bb8-a998-4350-89f0-4f1b54de1295 -> 202 18e39719dfb133d0b152ba (33 ms)
+t=1.6s github   a0888bb8-a998-4350-89f0-4f1b54de1295 -> 202 18e39719dfb133d0b152ba (33 ms)
+Shopify retries with the same X-Shopify-Webhook-Id:
+t=1.9s shopify  bb76fb85-a89c-4226-a89d-6b4d63ce0ae3 -> 202 18e3971a0b5c9d261158b6 (43 ms)
+t=2.2s shopify  bb76fb85-a89c-4226-a89d-6b4d63ce0ae3 -> 202 18e3971a0b5c9d261158b6 (46 ms)
+Stripe retries the same event (same evt_ ID in the body, new Stripe-Signature):
+t=2.4s stripe   evt_retried_by_stripe -> 202 18e3971a271b2e9da124af (25 ms)
+t=3.7s stripe   evt_retried_by_stripe -> 202 18e3971a75c0d113fbb95d (113 ms)
+
+What the app received for these:
+{"t": 1.2, "path": "/hooks/github", "inbox_id": "18e39719dfb133d0b152ba", "attempt": 1, "replay": "", "sender_event": "a0888bb8-a998-4350-89f0-4f1b54de1295", "result": "200 processed"}
+{"t": 2.0, "path": "/hooks/shopify", "inbox_id": "18e3971a0b5c9d261158b6", "attempt": 1, "replay": "", "sender_event": "bb76fb85-a89c-4226-a89d-6b4d63ce0ae3", "result": "200 processed"}
+{"t": 2.5, "path": "/hooks/stripe", "inbox_id": "18e3971a271b2e9da124af", "attempt": 1, "replay": "", "sender_event": "evt_retried_by_stripe", "result": "200 processed"}
+{"t": 3.8, "path": "/hooks/stripe", "inbox_id": "18e3971a75c0d113fbb95d", "attempt": 1, "replay": "", "sender_event": "evt_retried_by_stripe", "result": "200 processed"}
+
+## Part 3: a bad deploy answers 500 for a while
+
+t=5.0s the app now answers 500
+t=5.2s github   b2567d57-6332-4b0a-8721-f70b1441c5bc -> 202 18e3971ace9bedc8d52fc9 (81 ms)
+t=5.4s github   01b43788-3099-4e26-babf-a19b63aef0a6 -> 202 18e3971adb31000439bc7e (30 ms)
+t=5.6s shopify  e659c83d-80e6-40cf-8d65-66019f96818c -> 202 18e3971aea72596f6345af (66 ms)
+t=5.9s stripe   evt_90a90e82368b443e995971ad -> 202 18e3971af88fae7c2c1b32 (76 ms)
+Waiting for the inbox to give up (give-up 30s)...
+t=41.1s failed events:
+$ bareproxy inbox -c /work/bareproxy.conf list --status failed
+Inbox github (line 11), to pool app, in /work/state/inbox/github
+  0 pending, 0 delivering, 2 delivered, 2 failed
+  18e3971adb31000439bc7e  2026-10-31 10:40:18  failed              /hooks/github, 159 B, 6 attempts, last: 500
+  18e3971ace9bedc8d52fc9  2026-10-31 10:40:18  failed              /hooks/github, 159 B, 6 attempts, last: 500
+Inbox shopify (line 18), to pool app, in /work/state/inbox/shopify
+  0 pending, 0 delivering, 1 delivered, 1 failed
+  18e3971aea72596f6345af  2026-10-31 10:40:18  failed              /hooks/shopify, 111 B, 6 attempts, last: 500
+Inbox stripe (line 25), to pool app, in /work/state/inbox/stripe
+  0 pending, 0 delivering, 3 delivered, 1 failed
+  18e3971af88fae7c2c1b32  2026-10-31 10:40:18  failed              /hooks/stripe, 162 B, 6 attempts, last: 500
+
+t=41.2s the fix is deployed; replaying
+$ bareproxy inbox -c /work/bareproxy.conf replay github --failed
+Replayed 2 events; each delivery carries BareProxy-Inbox-Replay: operator.
+$ bareproxy inbox -c /work/bareproxy.conf replay shopify --failed
+Replayed 1 event; each delivery carries BareProxy-Inbox-Replay: operator.
+$ bareproxy inbox -c /work/bareproxy.conf replay stripe --failed
+Replayed 1 event; each delivery carries BareProxy-Inbox-Replay: operator.
+t=41.4s done
+
+## Every delivery the app received in this run
+
+{"t": 0.4, "path": "/hooks/github", "inbox_id": "18e39719adb22915ba6373", "attempt": 1, "replay": "", "sender_event": "47f362b3-3424-4a46-a105-0eb6af4ae89a", "result": "200 processed"}
+{"t": 0.9, "path": "/hooks/stripe", "inbox_id": "18e39719cb99d55ca20def", "attempt": 1, "replay": "", "sender_event": "evt_bf9f2db2bc8f4cb48a899eff", "result": "200 processed"}
+{"t": 1.2, "path": "/hooks/github", "inbox_id": "18e39719dfb133d0b152ba", "attempt": 1, "replay": "", "sender_event": "a0888bb8-a998-4350-89f0-4f1b54de1295", "result": "200 processed"}
+{"t": 2.0, "path": "/hooks/shopify", "inbox_id": "18e3971a0b5c9d261158b6", "attempt": 1, "replay": "", "sender_event": "bb76fb85-a89c-4226-a89d-6b4d63ce0ae3", "result": "200 processed"}
+{"t": 2.5, "path": "/hooks/stripe", "inbox_id": "18e3971a271b2e9da124af", "attempt": 1, "replay": "", "sender_event": "evt_retried_by_stripe", "result": "200 processed"}
+{"t": 3.8, "path": "/hooks/stripe", "inbox_id": "18e3971a75c0d113fbb95d", "attempt": 1, "replay": "", "sender_event": "evt_retried_by_stripe", "result": "200 processed"}
+{"t": 5.2, "path": "/hooks/github", "inbox_id": "18e3971ace9bedc8d52fc9", "attempt": 1, "replay": "", "sender_event": "b2567d57-6332-4b0a-8721-f70b1441c5bc", "result": "500 (bad deploy)"}
+{"t": 5.4, "path": "/hooks/github", "inbox_id": "18e3971adb31000439bc7e", "attempt": 1, "replay": "", "sender_event": "01b43788-3099-4e26-babf-a19b63aef0a6", "result": "500 (bad deploy)"}
+{"t": 5.7, "path": "/hooks/shopify", "inbox_id": "18e3971aea72596f6345af", "attempt": 1, "replay": "", "sender_event": "e659c83d-80e6-40cf-8d65-66019f96818c", "result": "500 (bad deploy)"}
+{"t": 6.0, "path": "/hooks/stripe", "inbox_id": "18e3971af88fae7c2c1b32", "attempt": 1, "replay": "", "sender_event": "evt_90a90e82368b443e995971ad", "result": "500 (bad deploy)"}
+{"t": 7.3, "path": "/hooks/github", "inbox_id": "18e3971ace9bedc8d52fc9", "attempt": 2, "replay": "", "sender_event": "b2567d57-6332-4b0a-8721-f70b1441c5bc", "result": "500 (bad deploy)"}
+{"t": 7.5, "path": "/hooks/github", "inbox_id": "18e3971adb31000439bc7e", "attempt": 2, "replay": "", "sender_event": "01b43788-3099-4e26-babf-a19b63aef0a6", "result": "500 (bad deploy)"}
+{"t": 7.7, "path": "/hooks/shopify", "inbox_id": "18e3971aea72596f6345af", "attempt": 2, "replay": "", "sender_event": "e659c83d-80e6-40cf-8d65-66019f96818c", "result": "500 (bad deploy)"}
+{"t": 8.0, "path": "/hooks/stripe", "inbox_id": "18e3971af88fae7c2c1b32", "attempt": 2, "replay": "", "sender_event": "evt_90a90e82368b443e995971ad", "result": "500 (bad deploy)"}
+{"t": 11.3, "path": "/hooks/github", "inbox_id": "18e3971ace9bedc8d52fc9", "attempt": 3, "replay": "", "sender_event": "b2567d57-6332-4b0a-8721-f70b1441c5bc", "result": "500 (bad deploy)"}
+{"t": 11.5, "path": "/hooks/github", "inbox_id": "18e3971adb31000439bc7e", "attempt": 3, "replay": "", "sender_event": "01b43788-3099-4e26-babf-a19b63aef0a6", "result": "500 (bad deploy)"}
+{"t": 11.8, "path": "/hooks/shopify", "inbox_id": "18e3971aea72596f6345af", "attempt": 3, "replay": "", "sender_event": "e659c83d-80e6-40cf-8d65-66019f96818c", "result": "500 (bad deploy)"}
+{"t": 12.0, "path": "/hooks/stripe", "inbox_id": "18e3971af88fae7c2c1b32", "attempt": 3, "replay": "", "sender_event": "evt_90a90e82368b443e995971ad", "result": "500 (bad deploy)"}
+{"t": 19.3, "path": "/hooks/github", "inbox_id": "18e3971ace9bedc8d52fc9", "attempt": 4, "replay": "", "sender_event": "b2567d57-6332-4b0a-8721-f70b1441c5bc", "result": "500 (bad deploy)"}
+{"t": 19.5, "path": "/hooks/github", "inbox_id": "18e3971adb31000439bc7e", "attempt": 4, "replay": "", "sender_event": "01b43788-3099-4e26-babf-a19b63aef0a6", "result": "500 (bad deploy)"}
+{"t": 19.8, "path": "/hooks/shopify", "inbox_id": "18e3971aea72596f6345af", "attempt": 4, "replay": "", "sender_event": "e659c83d-80e6-40cf-8d65-66019f96818c", "result": "500 (bad deploy)"}
+{"t": 20.0, "path": "/hooks/stripe", "inbox_id": "18e3971af88fae7c2c1b32", "attempt": 4, "replay": "", "sender_event": "evt_90a90e82368b443e995971ad", "result": "500 (bad deploy)"}
+{"t": 29.3, "path": "/hooks/github", "inbox_id": "18e3971ace9bedc8d52fc9", "attempt": 5, "replay": "", "sender_event": "b2567d57-6332-4b0a-8721-f70b1441c5bc", "result": "500 (bad deploy)"}
+{"t": 29.5, "path": "/hooks/github", "inbox_id": "18e3971adb31000439bc7e", "attempt": 5, "replay": "", "sender_event": "01b43788-3099-4e26-babf-a19b63aef0a6", "result": "500 (bad deploy)"}
+{"t": 29.8, "path": "/hooks/shopify", "inbox_id": "18e3971aea72596f6345af", "attempt": 5, "replay": "", "sender_event": "e659c83d-80e6-40cf-8d65-66019f96818c", "result": "500 (bad deploy)"}
+{"t": 30.0, "path": "/hooks/stripe", "inbox_id": "18e3971af88fae7c2c1b32", "attempt": 5, "replay": "", "sender_event": "evt_90a90e82368b443e995971ad", "result": "500 (bad deploy)"}
+{"t": 39.4, "path": "/hooks/github", "inbox_id": "18e3971ace9bedc8d52fc9", "attempt": 6, "replay": "", "sender_event": "b2567d57-6332-4b0a-8721-f70b1441c5bc", "result": "500 (bad deploy)"}
+{"t": 39.5, "path": "/hooks/github", "inbox_id": "18e3971adb31000439bc7e", "attempt": 6, "replay": "", "sender_event": "01b43788-3099-4e26-babf-a19b63aef0a6", "result": "500 (bad deploy)"}
+{"t": 39.8, "path": "/hooks/shopify", "inbox_id": "18e3971aea72596f6345af", "attempt": 6, "replay": "", "sender_event": "e659c83d-80e6-40cf-8d65-66019f96818c", "result": "500 (bad deploy)"}
+{"t": 40.0, "path": "/hooks/stripe", "inbox_id": "18e3971af88fae7c2c1b32", "attempt": 6, "replay": "", "sender_event": "evt_90a90e82368b443e995971ad", "result": "500 (bad deploy)"}
+{"t": 41.2, "path": "/hooks/github", "inbox_id": "18e3971ace9bedc8d52fc9", "attempt": 1, "replay": "operator", "sender_event": "b2567d57-6332-4b0a-8721-f70b1441c5bc", "result": "200 processed"}
+{"t": 41.2, "path": "/hooks/github", "inbox_id": "18e3971adb31000439bc7e", "attempt": 1, "replay": "operator", "sender_event": "01b43788-3099-4e26-babf-a19b63aef0a6", "result": "200 processed"}
+{"t": 41.2, "path": "/hooks/shopify", "inbox_id": "18e3971aea72596f6345af", "attempt": 1, "replay": "operator", "sender_event": "e659c83d-80e6-40cf-8d65-66019f96818c", "result": "200 processed"}
+{"t": 41.2, "path": "/hooks/stripe", "inbox_id": "18e3971af88fae7c2c1b32", "attempt": 1, "replay": "operator", "sender_event": "evt_90a90e82368b443e995971ad", "result": "200 processed"}
+
+## Inbox at the end
+
+Inbox github (line 11), to pool app, in /work/state/inbox/github
+  0 pending, 0 delivering, 4 delivered, 0 failed
+  18e3971adb31000439bc7e  2026-10-31 10:40:18  delivered           /hooks/github, 159 B, 7 attempts, last: 200
+  18e3971ace9bedc8d52fc9  2026-10-31 10:40:18  delivered           /hooks/github, 159 B, 7 attempts, last: 200
+  18e39719dfb133d0b152ba  2026-10-31 10:40:14  delivered           /hooks/github, 159 B, 1 attempt, last: 200
+  18e39719adb22915ba6373  2026-10-31 10:40:13  delivered           /hooks/github, 158 B, 1 attempt, last: 200
+Inbox shopify (line 18), to pool app, in /work/state/inbox/shopify
+  0 pending, 0 delivering, 2 delivered, 0 failed
+  18e3971aea72596f6345af  2026-10-31 10:40:18  delivered           /hooks/shopify, 111 B, 7 attempts, last: 200
+  18e3971a0b5c9d261158b6  2026-10-31 10:40:14  delivered           /hooks/shopify, 111 B, 1 attempt, last: 200
+Inbox stripe (line 25), to pool app, in /work/state/inbox/stripe
+  0 pending, 0 delivering, 4 delivered, 0 failed
+  18e3971af88fae7c2c1b32  2026-10-31 10:40:18  delivered           /hooks/stripe, 162 B, 7 attempts, last: 200
+  18e3971a75c0d113fbb95d  2026-10-31 10:40:16  delivered           /hooks/stripe, 155 B, 1 attempt, last: 200
+  18e3971a271b2e9da124af  2026-10-31 10:40:15  delivered           /hooks/stripe, 155 B, 1 attempt, last: 200
+  18e39719cb99d55ca20def  2026-10-31 10:40:13  delivered           /hooks/stripe, 162 B, 1 attempt, last: 200
+
+## Summary
+
+GitHub delivery sent 3 times, deliveries to the app: 1
+Shopify webhook sent 2 times, deliveries to the app: 1
+Stripe event sent 2 times, deliveries to the app: 2, processed: 2
+answers 500 during the bad deploy: 24
+replayed deliveries marked operator: 4, processed: 4
