@@ -56,10 +56,10 @@ Layout:
   `golang.org/x/net/dns/dnsmessage`, newly vendored from x/net v0.58.0, the
   same version already vendored; TLS and HSTS probe; state, history, lock,
   report, webhook). No BareProxy imports.
-- `src/internal/bp/drift.go` (to do): the `drift NAME` config block, and a
+- `src/internal/bp/drift.go`: the `drift NAME` config block, and a
   running server checking each watch with `every` set, alerts to `events`
   and the webhook.
-- `src/cmd/bareproxy/main.go` (to do): `bareproxy inbox` (list, show,
+- `src/cmd/bareproxy/main.go`: `bareproxy inbox` (list, show,
   replay, over the admin socket) and `bareproxy drift [NAME] [--history]`
   (runs without a server).
 
@@ -103,13 +103,13 @@ Layout:
 
 1. [done, pushed; tests come in step 5] Inbox package and its config, route action,
    signature check, delivery through pools, explain and records.
-2. [in progress, pushed] Drift package: DNS client, TLS/HSTS probe, state,
-   history, lock, report, webhook (code builds, not yet tested).
-3. [ ] Drift config block in bp, server-side `every` loop with events and
+2. [done, pushed] Drift package: DNS client, TLS/HSTS probe, state,
+   history, lock, report, webhook.
+3. [done, pushed] Drift config block in bp, server-side `every` loop with events and
    webhook; allow a config with drift blocks and no sites (for CI).
-4. [ ] CLI: `bareproxy inbox list|show|replay` (admin socket endpoints) and
+4. [done, pushed] CLI: `bareproxy inbox list|show|replay` (admin socket endpoints) and
    `bareproxy drift`.
-5. [ ] Tests. Inbox: every operation; upstream down then back; a process
+5. [in progress] Tests. Inbox: every operation; upstream down then back; a process
    killed with SIGKILL mid-delivery and restarted; no event lost, none
    delivered twice unless marked; backoff honoured. Drift: expiring and
    changed certificates always alert; changed records alert with before and
@@ -127,5 +127,5 @@ Layout:
 
 ### If this session stops
 
-Start at the first step not marked done. Code is pushed after each step, built
-but untested until step 5. Build with Go 1.27.1 (`GOTOOLCHAIN=local`, `-mod=vendor`).
+Start at the first step not marked done. Code is pushed after each step. Steps
+1 to 4 build and the old tests pass; their own tests are step 5. Build with Go 1.27.1 (`GOTOOLCHAIN=local`, `-mod=vendor`).

@@ -20,6 +20,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"bareproxy/internal/drift"
 )
 
 // Problem is an error or warning found in a config, tied to its line.
@@ -64,6 +66,8 @@ type Config struct {
 	PluginOrder []string
 	Inboxes     map[string]*InboxSpec
 	InboxOrder  []string
+	Drifts      map[string]*drift.Spec
+	DriftOrder  []string
 	roots       []*os.Root
 	warns       []Problem // what Parse found; Warnings adds plan's
 }
@@ -288,6 +292,7 @@ func ParseWith(file, src string, o ParseOptions) (*Config, []Problem) {
 		Ports:    map[int]*Port{},
 		Plugins:  map[string]*PluginSpec{},
 		Inboxes:  map[string]*InboxSpec{},
+		Drifts:   map[string]*drift.Spec{},
 	}
 	p := &parser{c: c, dir: filepath.Dir(file), opt: o}
 	src = strings.ReplaceAll(src, "\r\n", "\n")
@@ -297,6 +302,7 @@ func ParseWith(file, src string, o ParseOptions) (*Config, []Problem) {
 	var pool *PoolSpec
 	var plug *PluginSpec
 	var ibx *InboxSpec
+	var dft *drift.Spec
 	for i, raw := range c.Lines {
 		ln := i + 1
 		toks, err := splitLine(raw)
@@ -312,7 +318,7 @@ func ParseWith(file, src string, o ParseOptions) (*Config, []Problem) {
 			w[k] = t.s
 		}
 		if raw[0] != ' ' && raw[0] != '\t' {
-			site, pool, plug, ibx, block = nil, nil, nil, nil, ""
+			site, pool, plug, ibx, dft, block = nil, nil, nil, nil, nil, ""
 			switch w[0] {
 			case "global":
 				block = "global"
@@ -357,8 +363,11 @@ func ParseWith(file, src string, o ParseOptions) (*Config, []Problem) {
 			case "inbox":
 				block = "inbox"
 				ibx = p.newInbox(ln, w)
+			case "drift":
+				block = "drift"
+				dft = p.newDrift(ln, w)
 			default:
-				p.errf(ln, "%q can't start a block: a line in the first column starts global, site, pool, plugin or inbox", w[0])
+				p.errf(ln, "%q can't start a block: a line in the first column starts global, site, pool, plugin, inbox or drift", w[0])
 			}
 			continue
 		}
@@ -373,8 +382,10 @@ func ParseWith(file, src string, o ParseOptions) (*Config, []Problem) {
 			err = p.pluginSetting(plug, ln, w)
 		case "inbox":
 			err = p.inboxSetting(ibx, ln, w)
+		case "drift":
+			err = p.driftSetting(dft, ln, w)
 		default:
-			err = errors.New("indented line outside a global, site, pool, plugin or inbox block")
+			err = errors.New("indented line outside a global, site, pool, plugin, inbox or drift block")
 		}
 		if err != nil {
 			p.errf(ln, "%v", err)
@@ -814,7 +825,12 @@ func (p *parser) compile() {
 	}
 	p.loadPlugins()
 	p.compileInboxes()
-	if len(c.Sites) == 0 {
+	p.compileDrifts()
+	switch {
+	case len(c.Sites) == 0 && len(c.Drifts) > 0:
+		// A config made only for the drift command, in CI say.
+		p.warnf(0, "the config has no sites, so bareproxy run would serve nothing")
+	case len(c.Sites) == 0:
 		p.errf(0, "the config has no sites")
 	}
 	if HasErrors(p.probs) {

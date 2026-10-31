@@ -24,6 +24,7 @@ import (
 	"time"
 
 	"bareproxy/internal/bp"
+	"bareproxy/internal/drift"
 )
 
 // The options that several commands take.
@@ -50,6 +51,8 @@ var commands = map[string]struct {
 	"tail":     {tailCmd, withConfig, false, 0, -1},
 	"status":   {statusCmd, withConfig, false, 0, 0},
 	"events":   {eventsCmd, withConfig, false, 0, 0},
+	"inbox":    {inboxCmd, withConfig + " --status --body --failed", false, 1, -1},
+	"drift":    {driftCmd, withConfig + " --history", false, 0, -1},
 }
 
 func main() { os.Exit(execute(os.Args[1:])) }
@@ -103,6 +106,17 @@ func usage() {
                                         'status>=500' status=404 pool=api site= host= outcome= method= path=/prefix
   bareproxy status [-c FILE] [--json]   listeners, sites, backends, certificates, recent error rates
   bareproxy events [-c FILE] [--json]   recent changes: backends up and down, certificates, reloads
+  bareproxy inbox [-c FILE] [--json] list [NAME] [--status STATUS]
+                                        a running server's inbox events (STATUS: pending, delivering, delivered, failed)
+  bareproxy inbox [-c FILE] [--json] [--body] show NAME ID
+                                        one event: its request and every delivery attempt
+  bareproxy inbox [-c FILE] replay NAME ID... | replay NAME --failed
+                                        send events to the app again, marked BareProxy-Inbox-Replay: operator
+  bareproxy drift [-c FILE] [--json] [NAME]...
+                                        check the drift watches now (no server needed); exit 0 clean,
+                                        3 something unchecked, 4 alerts
+  bareproxy drift [-c FILE] [--json] --history [NAME]...
+                                        the changes each watch has recorded
   bareproxy version
 FILE defaults to $BAREPROXY_CONFIG, then /etc/bareproxy/bareproxy.conf.
 -c FILE (or --config FILE) names the config for every command but run and check, which take only FILE.
@@ -127,7 +141,10 @@ func fail(format string, a ...any) int {
 // options is what a command line holds. A command takes some of them.
 type options struct {
 	json, yes, offline bool
+	history, body      bool
+	failed             bool
 	config, from, plan string
+	status             string
 	headers            []string // every -H
 	pos                []string // the arguments that aren't options
 }
@@ -137,8 +154,9 @@ type options struct {
 // arguments go to pos. An option that isn't in names, or that lacks its
 // value, is an error.
 func parse(args []string, names string) (o options, err error) {
-	flags := map[string]*bool{"--json": &o.json, "--yes": &o.yes, "-y": &o.yes, "--offline": &o.offline}
-	values := map[string]*string{"--config": &o.config, "-c": &o.config, "--from": &o.from, "--plan": &o.plan}
+	flags := map[string]*bool{"--json": &o.json, "--yes": &o.yes, "-y": &o.yes, "--offline": &o.offline,
+		"--history": &o.history, "--body": &o.body, "--failed": &o.failed}
+	values := map[string]*string{"--config": &o.config, "-c": &o.config, "--from": &o.from, "--plan": &o.plan, "--status": &o.status}
 	for i := 0; i < len(args); i++ {
 		a := args[i]
 		switch {
@@ -154,7 +172,7 @@ func parse(args []string, names string) (o options, err error) {
 		case a == "-H":
 			i++
 			o.headers = append(o.headers, args[i])
-		default: // --config, -c, --from and --plan
+		default: // --config, -c, --from, --plan and --status
 			i++
 			*values[a] = args[i]
 		}
@@ -558,4 +576,92 @@ func printStatus(st bp.Status) {
 func rateLine(name string, r bp.Rate) {
 	more := map[bool]string{false: " or more (the ring has wrapped)"}[r.Complete]
 	fmt.Printf("  %-15s requests: %d%s, status 5xx: %d, proxy errors: %d\n", name, r.Requests, more, r.Status5xx, r.ProxyErrors)
+}
+
+// inboxCmd lists, shows and replays a running server's inbox events.
+func inboxCmd(o options) int {
+	sub, args := o.pos[0], o.pos[1:]
+	switch {
+	case sub == "list" && len(args) <= 1:
+		q := url.Values{}
+		if len(args) == 1 {
+			q.Set("name", args[0])
+		}
+		if o.status != "" {
+			q.Set("status", o.status)
+		}
+		return o.show(o.ask("GET", "/inbox", q, ""))
+	case sub == "show" && len(args) == 2:
+		q := url.Values{"name": {args[0]}, "id": {args[1]}}
+		if o.body {
+			q.Set("body", "1")
+		}
+		return o.show(o.ask("GET", "/inbox/event", q, ""))
+	case sub == "replay" && (len(args) >= 2 && !o.failed || len(args) == 1 && o.failed):
+		q := url.Values{"name": {args[0]}, "id": args[1:]}
+		if o.failed {
+			q.Set("failed", "1")
+		}
+		return o.show(o.ask("POST", "/inbox/replay", q, ""))
+	}
+	return badUsage("inbox takes list [NAME], show NAME ID, or replay NAME ID... (or replay NAME --failed)")
+}
+
+// driftCmd checks drift watches now, or shows their history. It reads the
+// config itself and needs no running server.
+func driftCmd(o options) int {
+	c, err := loadChecked(o.config)
+	if err != nil {
+		return fail("%v", err)
+	}
+	names := o.pos
+	if len(names) == 0 {
+		names = c.DriftOrder
+	}
+	if len(names) == 0 {
+		return fail("%s has no drift blocks", o.config)
+	}
+	for _, n := range names {
+		if c.Drifts[n] == nil {
+			return fail("%s has no drift block named %s (it has: %s)", o.config, n, strings.Join(c.DriftOrder, ", "))
+		}
+	}
+	if o.history {
+		all := map[string][]drift.HistoryEntry{}
+		for _, n := range names {
+			h, err := drift.History(c.Drifts[n].Folder)
+			if err != nil {
+				return fail("%v", err)
+			}
+			if o.json {
+				all[n] = h
+				continue
+			}
+			fmt.Printf("Drift watch %s, history:\n%s", n, drift.HistoryText(h))
+		}
+		if o.json {
+			fmt.Print(toJSON(all))
+		}
+		return 0
+	}
+	code := 0
+	var reports []*drift.Report
+	for _, n := range names {
+		rep, err := (&drift.Checker{}).Run(context.Background(), c.Drifts[n])
+		if errors.Is(err, drift.ErrBusy) {
+			return fail("drift %s: %v (a running BareProxy checks it when every is set); try again shortly", n, err)
+		}
+		if err != nil {
+			return fail("drift %s: %v", n, err)
+		}
+		reports = append(reports, rep)
+		if !o.json {
+			fmt.Print(rep.Text())
+		}
+		code = max(code, rep.ExitCode())
+	}
+	if o.json {
+		fmt.Print(toJSON(reports))
+	}
+	return code
 }

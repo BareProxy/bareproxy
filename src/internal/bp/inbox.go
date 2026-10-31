@@ -5,6 +5,7 @@ package bp
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"crypto/hmac"
 	"crypto/sha256"
@@ -17,6 +18,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -495,4 +497,202 @@ func fmtDur(d time.Duration) string {
 		return fmt.Sprintf("%dd", d/(24*time.Hour))
 	}
 	return d.String()
+}
+
+// The admin endpoints of the inboxes, for bareproxy inbox.
+func init() {
+	adminHandlers = append(adminHandlers, func(s *Server, mux *http.ServeMux) {
+		mux.HandleFunc("GET /inbox", s.adminInboxList)
+		mux.HandleFunc("GET /inbox/event", s.adminInboxEvent)
+		mux.HandleFunc("POST /inbox/replay", s.adminInboxReplay)
+	})
+}
+
+// InboxList is what GET /inbox sends for one inbox.
+type InboxList struct {
+	Name   string        `json:"name"`
+	Line   int           `json:"line"`
+	Folder string        `json:"folder"`
+	Pool   string        `json:"pool"`
+	Counts inbox.Counts  `json:"counts"`
+	Events []inbox.State `json:"events"`
+}
+
+// inboxesNamed returns the running inboxes a request names (all with no
+// name), or an error that says which names exist.
+func (s *Server) inboxesNamed(name string) (*Runtime, []string, error) {
+	rt := s.rt.Load()
+	if name == "" {
+		if len(rt.Cfg.InboxOrder) == 0 {
+			return nil, nil, errors.New("the running config has no inboxes")
+		}
+		return rt, rt.Cfg.InboxOrder, nil
+	}
+	if rt.Inboxes[name] == nil {
+		return nil, nil, fmt.Errorf("the running config has no inbox named %s (it has: %s)", name, strings.Join(rt.Cfg.InboxOrder, ", "))
+	}
+	return rt, []string{name}, nil
+}
+
+func (s *Server) adminInboxList(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+	rt, names, err := s.inboxesNamed(q.Get("name"))
+	if err != nil {
+		replyErr(w, r, err)
+		return
+	}
+	status := q.Get("status")
+	var out []InboxList
+	var b strings.Builder
+	for _, n := range names {
+		spec, ib := rt.Cfg.Inboxes[n], rt.Inboxes[n]
+		l := InboxList{Name: n, Line: spec.Line, Folder: spec.Folder, Pool: spec.Deliver, Counts: ib.Counts(), Events: []inbox.State{}}
+		for _, st := range ib.List() {
+			if status == "" || st.Status == status {
+				l.Events = append(l.Events, st)
+			}
+		}
+		out = append(out, l)
+		c := l.Counts
+		fmt.Fprintf(&b, "Inbox %s (line %d), to pool %s, in %s\n  %d pending, %d delivering, %d delivered, %d failed\n",
+			n, spec.Line, spec.Deliver, spec.Folder, c.Pending, c.Delivering, c.Delivered, c.Failed)
+		for _, st := range l.Events {
+			fmt.Fprintf(&b, "  %s  %s  %-10s %-8s %s, %s, %d %s%s\n", st.ID, st.Received.Format("2006-01-02 15:04:05"), st.Status,
+				st.Replay, st.Path, fmtBytes(int64(st.Size)), len(st.Attempts), plural2(len(st.Attempts), "attempt", "attempts"), lastTry(st))
+		}
+	}
+	reply(w, r, http.StatusOK, out, b.String())
+}
+
+func plural2(n int, one, many string) string {
+	if n == 1 {
+		return one
+	}
+	return many
+}
+
+// lastTry says how the latest attempt went, and when the next one is.
+func lastTry(st inbox.State) string {
+	out := ""
+	if n := len(st.Attempts); n > 0 {
+		a := st.Attempts[n-1]
+		switch {
+		case a.Error != "":
+			out = ", last: " + a.Error
+		case a.Status != 0:
+			out = fmt.Sprintf(", last: %d", a.Status)
+		}
+	}
+	if st.Status == "pending" && !st.NextAt.IsZero() {
+		if d := time.Until(st.NextAt); d > 0 {
+			out += ", next in " + d.Round(time.Second).String()
+		} else {
+			out += ", next now"
+		}
+	}
+	return out
+}
+
+func (s *Server) adminInboxEvent(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+	rt, names, err := s.inboxesNamed(q.Get("name"))
+	if err == nil && len(names) != 1 {
+		err = errors.New("name the inbox")
+	}
+	if err != nil {
+		replyErr(w, r, err)
+		return
+	}
+	st, req, err := rt.Inboxes[names[0]].Get(q.Get("id"))
+	if err != nil {
+		replyErr(w, r, fmt.Errorf("inbox %s has no event %s", names[0], q.Get("id")))
+		return
+	}
+	var b strings.Builder
+	fmt.Fprintf(&b, "Event %s in inbox %s: %s\n", st.ID, names[0], st.Status)
+	fmt.Fprintf(&b, "Received %s: %s %s%s, %s\n", st.Received.Format("2006-01-02 15:04:05.000 UTC"), req.Method, req.Host, withQuery(req.Path, req.Query), fmtBytes(int64(st.Size)))
+	if st.Key != "" {
+		fmt.Fprintf(&b, "Sender's ID: %s\n", st.Key)
+	}
+	for _, k := range sortedKeys(req.Header) {
+		fmt.Fprintf(&b, "  %s: %s\n", k, strings.Join(req.Header[k], ", "))
+	}
+	for i, a := range st.Attempts {
+		how := fmt.Sprintf("%d", a.Status)
+		if a.Error != "" {
+			how = a.Error
+		}
+		mark := ""
+		if a.Replay != "" {
+			mark = " (marked " + a.Replay + ")"
+		}
+		if a.InDoubt {
+			mark += ", may have reached the app"
+		}
+		fmt.Fprintf(&b, "Attempt %d at %s: %s%s\n", i+1, a.Start.Format("2006-01-02 15:04:05"), how, mark)
+	}
+	if !st.Delivered.IsZero() {
+		fmt.Fprintf(&b, "Delivered %s\n", st.Delivered.Format("2006-01-02 15:04:05 UTC"))
+	}
+	if st.Status == "pending" {
+		fmt.Fprintf(&b, "Next attempt %s\n", st.NextAt.Format("2006-01-02 15:04:05 UTC"))
+	}
+	if q.Get("body") == "1" {
+		fmt.Fprintf(&b, "\n%s\n", req.Body)
+	}
+	reply(w, r, http.StatusOK, map[string]any{"state": st, "request": req, "body": string(req.Body)}, b.String())
+}
+
+func sortedKeys(h http.Header) []string {
+	ks := make([]string, 0, len(h))
+	for k := range h {
+		ks = append(ks, k)
+	}
+	slices.Sort(ks)
+	return ks
+}
+
+func (s *Server) adminInboxReplay(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+	rt, names, err := s.inboxesNamed(q.Get("name"))
+	if err == nil && len(names) != 1 {
+		err = errors.New("name the inbox")
+	}
+	if err != nil {
+		replyErr(w, r, err)
+		return
+	}
+	ib := rt.Inboxes[names[0]]
+	ids := q["id"]
+	if q.Get("failed") == "1" {
+		for _, st := range ib.List() {
+			if st.Status == "failed" {
+				ids = append(ids, st.ID)
+			}
+		}
+		if len(ids) == 0 {
+			reply(w, r, http.StatusOK, map[string]any{"replayed": []string{}}, "No failed events to replay.\n")
+			return
+		}
+	}
+	var done []string
+	var errs []error
+	for _, id := range ids {
+		if err := ib.Replay(id); err != nil {
+			if inbox.IsNotFound(err) {
+				err = fmt.Errorf("inbox %s has no event %s", names[0], id)
+			}
+			errs = append(errs, err)
+			continue
+		}
+		done = append(done, id)
+	}
+	if len(done) > 0 {
+		s.Event("inbox", fmt.Sprintf("inbox %s: %d %s replayed by %s", names[0], len(done), plural2(len(done), "event", "events"), cmp.Or(peerUser(r), "the admin socket")))
+	}
+	if err := errors.Join(errs...); err != nil {
+		replyErr(w, r, err)
+		return
+	}
+	reply(w, r, http.StatusOK, map[string]any{"replayed": done}, fmt.Sprintf("Replayed %d %s; each delivery carries BareProxy-Inbox-Replay: operator.\n", len(done), plural2(len(done), "event", "events")))
 }

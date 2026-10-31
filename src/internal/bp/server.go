@@ -33,15 +33,16 @@ const Version = "0.15.0"
 
 // Runtime is one running config version with its live pools.
 type Runtime struct {
-	Cfg      *Config
-	Version  int
-	Pools    map[string]*Pool
-	backends map[string]*Backend
-	Trace    *TraceLog
-	Mem      *TraceMem // recent records and events, inherited across reloads
-	Plugins  map[string]*plugin.Plugin
-	Inboxes  map[string]*inbox.Inbox
-	acme     *acmeState
+	Cfg       *Config
+	Version   int
+	Pools     map[string]*Pool
+	backends  map[string]*Backend
+	Trace     *TraceLog
+	Mem       *TraceMem // recent records and events, inherited across reloads
+	Plugins   map[string]*plugin.Plugin
+	Inboxes   map[string]*inbox.Inbox
+	acme      *acmeState
+	driftStop func()
 }
 
 // NewRuntime builds live pools for a config. Backends that old already has
@@ -108,6 +109,7 @@ func NewRuntime(c *Config, old *Runtime, version int, logf func(string, ...any),
 			rt.Stop()
 			return nil, err
 		}
+		rt.startDrift(logf)
 	}
 	return rt, nil
 }
@@ -121,6 +123,7 @@ func (rt *Runtime) Stop() {
 	}
 	rt.stopPlugins(nil)
 	rt.stopInboxes()
+	rt.stopDrift()
 }
 
 // retire stops what the old runtime has and the new one doesn't. Folders and
@@ -131,6 +134,7 @@ func retire(old, rt *Runtime) {
 			b.stop()
 		}
 	}
+	old.stopDrift()
 	if old.Trace != nil && old.Trace != rt.Trace {
 		time.AfterFunc(time.Minute, old.Trace.Close)
 	}
