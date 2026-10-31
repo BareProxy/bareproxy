@@ -5,12 +5,36 @@ never ask the owner to publish one. [RELEASING.md](RELEASING.md) has the
 whole procedure, the checks to run afterwards, and how to copy it to a new
 project.
 
-## In progress: independent review of inbox and drift (31 October 2026)
+## Done: independent review of inbox and drift, 0.16.1 (31 October 2026)
 
-Plan: read the inbox (src/internal/inbox, src/internal/bp/inbox.go) and the
-drift watcher (src/internal/drift, src/internal/bp/drift.go) against their
-promises; each suspected bug gets a failing test first (race detector on),
-then a fix; re-record results; 0.16.1 only if something real was fixed.
+A separate agent reviewed both features. Five bugs confirmed, each with a
+test that failed first (`src/internal/bp/inbox_review_test.go`,
+`src/internal/drift/review_test.go`), all fixed and released as v0.16.1
+(release files, SHA256SUMS and latest/download links checked; the Linux
+binary prints 0.16.1, built with go1.27.3):
+- Inbox (high): Go's transport resent a delivery by itself on a broken
+  reused connection when it had an `Idempotency-Key` header, so the app got
+  it twice with no mark. Fix: `out.GetBody = nil` in `deliverTo`.
+- Inbox (low): headers named in `Connection` were passed on to the app.
+- Drift (high): a server check cut off by an apply or shutdown saved state
+  and history, so a change it found never alerted, and LastRun moved. Fix:
+  `Run` returns `ctx.Err()` before saving.
+- Drift (medium): with `hsts off`, a TLS server that doesn't answer HTTP
+  was always unchecked, so its certificate was never watched.
+- Drift (medium): an empty answer with neither RA nor AA (a referral) read
+  as "no records" and alerted every record as removed; now unchecked.
+Looked at and found sound: fsync and rename order with folder fsync, 202
+only after both files, crash recovery and in-doubt marking, replay and
+dedupe under one lock, admin lookups by map (no path traversal), signature
+checks (raw body, constant-time compare, Stripe tolerance and several v1,
+Shopify base64, GitHub prefix), reload refcounting, DNS sorting, TXT
+joining, CNAME filtering, TCP fallback, SNI and verification, exit codes.
+Open (not fixed, low): the drift lock's stale takeover has a narrow race
+(two processes can both take a stale lock); `history.jsonl` grows without
+limit; no cap on inbox event count or folder size. The proxy path itself
+(not the inbox) is unaffected by the Idempotency-Key resend: incoming
+bodies have no GetBody. Results re-recorded (48 in-doubt of 1,548; 500
+domains in 1.8 s and 2.7 s); README and both site posts updated.
 
 ## Done: inbox and drift case studies (31 October 2026)
 
