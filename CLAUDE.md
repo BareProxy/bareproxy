@@ -48,8 +48,8 @@ look; exit codes 0, 3 (unchecked), 4 (alerts); a lock file keeps the server
 and the command apart.
 
 **Status.** Released. The review was a second pass of my own (no separate
-agent could be started in that session); its fixes are in the CHANGELOG
-history of commits. CI also needed one fix to an existing, timing-sensitive
+agent could be started in that session); its fixes are in commit 8301197
+("Review fixes for the inbox and drift watcher"). CI also needed one fix to an existing, timing-sensitive
 test: the crawler test servers now allow plugin calls 1 s
 (TestCrawlersLimitAndReport lost counts when an instance was replaced on a
 busy runner).
