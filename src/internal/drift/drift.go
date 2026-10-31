@@ -526,9 +526,12 @@ func (c *Checker) probe(ctx context.Context, s *Spec, d string, addrs []string) 
 	if dial == nil {
 		dial = (&net.Dialer{}).DialContext
 	}
-	p := &probe{}
 	var lastErr error
 	for _, a := range addrs {
+		// Each address gets its own probe: a handshake cut off by the
+		// timeout may still finish on its own goroutine and write to it.
+		p := &probe{}
+		var mu sync.Mutex
 		target := net.JoinHostPort(a, strconv.Itoa(s.Port))
 		tr := &http.Transport{
 			DialContext: func(ctx context.Context, network, _ string) (net.Conn, error) { return dial(ctx, network, target) },
@@ -539,6 +542,8 @@ func (c *Checker) probe(ctx context.Context, s *Spec, d string, addrs []string) 
 					}
 					leaf := cs.PeerCertificates[0]
 					sum := sha256.Sum256(leaf.Raw)
+					mu.Lock()
+					defer mu.Unlock()
 					p.cert = &CertInfo{Subject: name(leaf.Subject.CommonName, leaf.DNSNames), Issuer: issuer(leaf),
 						NotAfter: leaf.NotAfter.UTC(), SHA256: hex.EncodeToString(sum[:]), Names: leaf.DNSNames}
 					inter := x509.NewCertPool()
@@ -556,18 +561,22 @@ func (c *Checker) probe(ctx context.Context, s *Spec, d string, addrs []string) 
 		resp, err := (&http.Client{Transport: tr, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}).Do(req)
 		tr.CloseIdleConnections()
 		if err != nil {
-			if p.cert != nil && s.HSTS {
+			mu.Lock()
+			gotCert := p.cert != nil
+			mu.Unlock()
+			if gotCert && s.HSTS {
 				// The certificate came, the HTTP answer didn't: the HSTS
 				// header is unknown, so the whole look is unchecked.
 				lastErr = fmt.Errorf("%s: the certificate came but no HTTP answer (%s)", a, short(err))
 			} else {
 				lastErr = fmt.Errorf("%s: %s", a, short(err))
 			}
-			p = &probe{}
 			continue
 		}
 		io.Copy(io.Discard, io.LimitReader(resp.Body, 64<<10))
 		resp.Body.Close()
+		mu.Lock()
+		defer mu.Unlock()
 		p.hsts = resp.Header.Get("Strict-Transport-Security")
 		p.hstsSeen = p.hsts != ""
 		return p, nil

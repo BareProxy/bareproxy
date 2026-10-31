@@ -109,14 +109,14 @@ Layout:
    webhook; allow a config with drift blocks and no sites (for CI).
 4. [done, pushed] CLI: `bareproxy inbox list|show|replay` (admin socket endpoints) and
    `bareproxy drift`.
-5. [in progress] Tests. Inbox: every operation; upstream down then back; a process
+5. [done, pushed] Tests. Inbox: every operation; upstream down then back; a process
    killed with SIGKILL mid-delivery and restarted; no event lost, none
    delivered twice unless marked; backoff honoured. Drift: expiring and
    changed certificates always alert; changed records alert with before and
    after; lookup failure or timeout is unchecked, never unchanged; one
    flapping lookup doesn't alert. All on local test servers and a stub
    resolver, no internet.
-6. [ ] Record results in `results/` (script in `live/`, like the others).
+6. [in progress] Record results in `results/` (script in `live/`, like the others).
 7. [ ] Independent review of the diff, fixes, re-record.
 8. [ ] README, docs, CHANGELOG 0.16.0, version bump in
    `src/internal/bp/server.go`; push; watch CI and the release; check the
@@ -127,5 +127,7 @@ Layout:
 
 ### If this session stops
 
-Start at the first step not marked done. Code is pushed after each step. Steps
-1 to 4 build and the old tests pass; their own tests are step 5. Build with Go 1.27.1 (`GOTOOLCHAIN=local`, `-mod=vendor`).
+Start at the first step not marked done. Code is pushed after each step. All tests
+pass, with -race too (`internal/inbox`, `internal/drift`, `bp/inbox_test.go`,
+`bp/drift_test.go`, `cmd/bareproxy/drift_test.go`). The SIGKILL test reruns
+the bp test binary as a real BareProxy (TestMain, `BP_TEST_RUN_CONFIG`). Build with Go 1.27.1 (`GOTOOLCHAIN=local`, `-mod=vendor`).

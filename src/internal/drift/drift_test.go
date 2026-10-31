@@ -357,7 +357,7 @@ func TestHSTSAndCAAGaps(t *testing.T) {
 	e.tls.Set("nohsts.test", e.ca.Issue(time.Now().Add(90*24*time.Hour), "nohsts.test"), "")
 	e.tls.Set("off.test", e.ca.Issue(time.Now().Add(90*24*time.Hour), "off.test"), "max-age=0")
 	e.res.Records("nocaa.test", "CAA")
-	e.res.Records("www.parent.test", "CAA")                   // none of its own,
+	e.res.Records("www.parent.test", "CAA")                  // none of its own,
 	e.res.Records("parent.test", "CAA", `0 issue "ca.test"`) // but its parent has one
 	s := e.spec("nohsts.test", "off.test", "nocaa.test", "www.parent.test")
 	want := []string{"nocaa.test caa-missing CAA", "nohsts.test hsts-missing hsts", "off.test hsts-missing hsts"}

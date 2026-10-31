@@ -241,6 +241,9 @@ func (rt *Runtime) stopDrift() {
 	}
 }
 
+// driftPause is the least a watch waits after a server starts it.
+var driftPause = 5 * time.Second
+
 func (rt *Runtime) driftLoop(ctx context.Context, spec *drift.Spec, logf func(string, ...any)) {
 	for {
 		wait := time.Duration(0)
@@ -249,7 +252,7 @@ func (rt *Runtime) driftLoop(ctx context.Context, spec *drift.Spec, logf func(st
 		}
 		// A short pause first, so an apply that replaces this runtime at
 		// once doesn't start a check that is cut off.
-		wait = max(wait, 5*time.Second)
+		wait = max(wait, driftPause)
 		select {
 		case <-ctx.Done():
 			return
